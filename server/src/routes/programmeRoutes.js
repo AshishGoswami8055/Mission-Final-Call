@@ -1,6 +1,7 @@
 import express from "express";
 import {
   createProgramme,
+  clearProgramme,
   deleteProgramme,
   getProgrammes,
   updateProgramme,
@@ -11,6 +12,7 @@ const router = express.Router();
 
 router.use(protect);
 router.route("/").get(getProgrammes).post(createProgramme);
+router.route("/:id/clear-course").post(clearProgramme);
 router.route("/:id").put(updateProgramme).delete(deleteProgramme);
 
 export default router;

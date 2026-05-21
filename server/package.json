@@ -5,7 +5,7 @@
   "type": "module",
   "main": "src/server.js",
   "scripts": {
-    "dev": "nodemon src/server.js",
+    "dev": "node src/server.js",
     "start": "node src/server.js"
   },
   "keywords": [],
@@ -20,12 +20,14 @@
     "express-validator": "^7.3.1",
     "googleapis": "^171.4.0",
     "helmet": "^8.1.0",
+    "input": "^1.0.1",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.2.3",
     "morgan": "^1.10.1",
     "multer": "^2.1.0",
     "openai": "^6.25.0",
     "pdf-parse": "^2.4.5",
+    "telegram": "^2.26.22",
     "tesseract.js": "^7.0.0",
     "xlsx": "^0.18.5"
   },

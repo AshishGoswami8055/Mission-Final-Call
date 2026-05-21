@@ -3,8 +3,10 @@ import { format } from "date-fns";
 import { FiCheckCircle, FiCircle, FiEdit2, FiFileText, FiMoreVertical, FiPlayCircle, FiTrash2 } from "react-icons/fi";
 import { Link } from "react-router-dom";
 import {
+  formatFileSize,
   getTelegramVideoUrl,
-  isTelegramVideo,
+  isTelegramLinkVideo,
+  isTelegramStreamContent,
   isYouTubeUrl,
   resolveContentSrc,
   toAbsoluteMediaUrl,
@@ -41,9 +43,11 @@ const ContentCard = ({ item, onToggleCompleted, onDelete, onEdit }) => {
   const pdfSrc = resolveContentSrc(item);
   const videoSrc = resolveContentSrc(item);
   const telegramLink = getTelegramVideoUrl(item);
-  const isTelegram = isTelegramVideo(item);
+  const isTelegramLink = isTelegramLinkVideo(item);
+  const isTelegramStream = isTelegramStreamContent(item);
   const isCloudinary = item.sourceType === "cloudinary";
   const cloudBadge = isCloudinary && item.cloudType ? item.cloudType : null;
+  const telegramBadge = isTelegramStream ? "Telegram" : null;
   const [durationLabel, setDurationLabel] = useState(null);
   const previewBackgroundClass =
     item.type === "video"
@@ -63,8 +67,13 @@ const ContentCard = ({ item, onToggleCompleted, onDelete, onEdit }) => {
       return;
     }
 
-    if (isTelegram) {
-      setDurationLabel("Telegram");
+    if (isTelegramLink) {
+      setDurationLabel("Telegram link");
+      return;
+    }
+
+    if (isTelegramStream && item.telegramFileSize) {
+      setDurationLabel(formatFileSize(item.telegramFileSize));
       return;
     }
 
@@ -187,6 +196,11 @@ const ContentCard = ({ item, onToggleCompleted, onDelete, onEdit }) => {
               {cloudBadge}
             </span>
           )}
+          {telegramBadge && (
+            <span className="pill-info" title="Streamed from Telegram">
+              {telegramBadge}
+            </span>
+          )}
           {item.type === "video" && durationLabel && (
             <span className="pill-neutral tabular-nums">{durationLabel}</span>
           )}
@@ -200,7 +214,7 @@ const ContentCard = ({ item, onToggleCompleted, onDelete, onEdit }) => {
             <a className="btn-primary flex-1 sm:flex-none" href={pdfSrc} target="_blank" rel="noreferrer">
               <FiFileText /> Open PDF
             </a>
-          ) : isTelegram && telegramLink ? (
+          ) : isTelegramLink && telegramLink ? (
             <a
               className="btn-primary flex-1 sm:flex-none"
               href={telegramLink}

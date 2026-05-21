@@ -29,7 +29,7 @@ import api from "../api/client";
 import StudyTracker from "../components/StudyTracker";
 import { useStudy } from "../context/StudyContext";
 import { useTheme } from "../context/ThemeContext";
-import { getTelegramVideoUrl, isTelegramVideo, isYouTubeUrl, resolveContentSrc } from "../utils/media";
+import { getTelegramVideoUrl, isTelegramLinkVideo, isTelegramStreamContent, isYouTubeUrl, resolveContentSrc } from "../utils/media";
 import { downloadDataUrl, loadScreenshotNotes, saveScreenshotNotes } from "../utils/screenshotNotes";
 import { getYouTubeThumbnailDataUrl } from "../utils/youtubeThumbnail";
 
@@ -200,11 +200,12 @@ const VideoPlayerPage = () => {
   const [timelineHover, setTimelineHover] = useState(null);
   const { addStudyMinutes, addToWatchHistory } = useStudy();
 
+  const isTelegramStream = item ? isTelegramStreamContent(item) : false;
+  const isTelegramLink = item ? isTelegramLinkVideo(item) : false;
   const telegramLink = item ? getTelegramVideoUrl(item) : "";
-  const isTelegram = isTelegramVideo(item);
   const rawSrc = item ? resolveContentSrc(item) : "";
-  const isYoutube = !isTelegram && isYouTubeUrl(rawSrc);
-  const src = isTelegram || isYoutube ? "" : rawSrc;
+  const isYoutube = !isTelegramLink && !isTelegramStream && isYouTubeUrl(rawSrc);
+  const src = isTelegramLink || isYoutube ? "" : rawSrc;
   const canUseAiAsk = false;
   const showAskPanel = false;
 
@@ -311,8 +312,8 @@ const VideoPlayerPage = () => {
       }
       const resolved = resolveContentSrc(currentItem);
       const isYt = isYouTubeUrl(resolved);
-      const isTg = isTelegramVideo(currentItem);
-      if ((isYt || isTg) && currentItem) {
+      const isTgLink = isTelegramLinkVideo(currentItem);
+      if ((isYt || isTgLink) && currentItem) {
         const sessionMinutes = (Date.now() - sessionStartRef.current) / 60000;
         if (sessionMinutes > 0 && sessionMinutes <= 240) addStudyMinutes(Math.min(sessionMinutes, 120), subjectId);
       }
@@ -500,13 +501,13 @@ const VideoPlayerPage = () => {
   const jumpToMoment = (timecode) => {
     const sec = parseTimecodeToSeconds(timecode);
     if (Number.isNaN(sec) || sec < 0) return;
-    if (!isYoutube && !isTelegram && videoRef.current) {
+    if (!isYoutube && !isTelegramLink && videoRef.current) {
       videoRef.current.currentTime = sec;
       setCurrentTime(sec);
       resetControlsTimer();
       return;
     }
-    if (isTelegram) {
+    if (isTelegramLink) {
       setCurrentTime(sec);
       window.open(telegramLink, "_blank", "noopener,noreferrer");
       return;
@@ -578,7 +579,7 @@ const VideoPlayerPage = () => {
 
   const handleCaptureScreenshot = async () => {
     if (!id) return;
-    if (isTelegram) {
+    if (isTelegramLink) {
       toast.error("Open the video in Telegram to capture frames.");
       return;
     }
@@ -741,7 +742,7 @@ const VideoPlayerPage = () => {
       const tag = document.activeElement?.tagName?.toLowerCase();
       if (tag === "input" || tag === "textarea") return;
       const key = event.key.toLowerCase();
-      if (isYoutube || isTelegram) return;
+      if (isYoutube || isTelegramLink) return;
 
       if (key === "arrowleft") {
         event.preventDefault();
@@ -784,7 +785,7 @@ const VideoPlayerPage = () => {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isYoutube, isTelegram, duration, volume, isPlaying]);
+  }, [isYoutube, isTelegramLink, duration, volume, isPlaying]);
 
   useEffect(() => {
     return () => {
@@ -848,7 +849,7 @@ const VideoPlayerPage = () => {
               </p>
               <div className="mt-4">
                 <div className="rounded-xl bg-black overflow-visible">
-                {isTelegram ? (
+                {isTelegramLink ? (
                   <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black">
                     {item?.thumbnail ? (
                       <img
@@ -933,6 +934,9 @@ const VideoPlayerPage = () => {
                           toast.success(`Resumed from ${formatTime(saved)}`);
                         }
                       }}
+                      onError={() => {
+                        toast.error("Video failed to load. Check Telegram connection and refresh.");
+                      }}
                       onTimeUpdate={(e) => {
                         const t = e.currentTarget.currentTime;
                         setCurrentTime(t);
@@ -1004,7 +1008,7 @@ const VideoPlayerPage = () => {
                           }}
                           className="yt-range w-full"
                         />
-                        {!isYoutube && !isTelegram && timelineHover && duration > 0 && src && (
+                        {!isYoutube && !isTelegramLink && timelineHover && duration > 0 && src && (
                           <div
                             className="absolute z-30 flex flex-col items-center pointer-events-none shrink-0"
                             style={{
@@ -1341,9 +1345,9 @@ const VideoPlayerPage = () => {
             <p className={`text-xs ${isDark ? "text-slate-400" : "text-slate-500"}`}>
               Capture key frames while watching. Click image to open in new tab, or click timestamp to jump in video.
             </p>
-            {(isYoutube || isTelegram) && (
+            {(isYoutube || isTelegramLink) && (
               <p className="mt-2 text-xs text-sky-500 dark:text-sky-400">
-                For externally hosted videos (YouTube, Telegram): notes use thumbnails where available; use Capture when
+                For externally hosted videos (YouTube, Telegram links): notes use thumbnails where available; use Capture when
                 the video plays inside this page.
               </p>
             )}

@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import DashboardPage from "./pages/DashboardPage";
+import TelegramImportPage from "./pages/TelegramImportPage";
 import HistoryPage from "./pages/HistoryPage";
 import LoginPage from "./pages/LoginPage";
 import OneWordSubstitutionPage from "./pages/OneWordSubstitutionPage";
@@ -33,6 +34,14 @@ function App() {
         element={
           <PrivateRoute>
             <DashboardPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/import/telegram"
+        element={
+          <PrivateRoute>
+            <TelegramImportPage />
           </PrivateRoute>
         }
       />

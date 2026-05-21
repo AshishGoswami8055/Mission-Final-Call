@@ -2,6 +2,10 @@ import Programme from "../models/Programme.js";
 import Subject from "../models/Subject.js";
 import { DEFAULT_COURSE_ID } from "../config/cdsCourses.js";
 import { slugifyFolderName } from "../utils/slugifyFolder.js";
+import {
+  clearProgrammeCourse,
+  deleteProgrammeCascade,
+} from "../services/programmeCleanupService.js";
 
 export const getProgrammes = async (req, res) => {
   const { cdsCycleId } = req.query;
@@ -45,13 +49,34 @@ export const deleteProgramme = async (req, res) => {
   const programme = await Programme.findById(req.params.id);
   if (!programme) return res.status(404).json({ message: "Coaching batch not found" });
 
+  const cascade = req.query.cascade === "true" || req.body?.cascade === true;
+  if (cascade) {
+    const result = await deleteProgrammeCascade(programme._id);
+    return res.json({
+      message: "Coaching batch and all course data deleted",
+      ...result,
+    });
+  }
+
   const count = await Subject.countDocuments({ programmeId: programme._id });
   if (count > 0) {
     return res.status(400).json({
-      message: `This batch has ${count} subject(s). Delete or move subjects before removing the batch.`,
+      message: `This batch has ${count} subject(s). Clear course content first or use cascade delete.`,
     });
   }
 
   await programme.deleteOne();
   res.json({ message: "Coaching batch deleted" });
+};
+
+export const clearProgramme = async (req, res) => {
+  try {
+    const result = await clearProgrammeCourse(req.params.id);
+    res.json({
+      message: "Course content cleared",
+      ...result,
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Could not clear course" });
+  }
 };

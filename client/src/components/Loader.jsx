@@ -45,6 +45,7 @@ const Loader = ({
   size = "md",
   label = "",
   fullPage = false,
+  percent = null,
   className = "",
 }) => {
   const indicator = variant === "dots" ? <Dots /> : <Spinner size={size} />;
@@ -52,11 +53,24 @@ const Loader = ({
   if (fullPage) {
     return (
       <div className="loader-overlay" role="status" aria-live="polite">
-        <div className="anim-scale-in flex flex-col items-center gap-4 rounded-2xl border border-slate-200 bg-white px-8 py-7 shadow-sm dark:border-slate-700/70 dark:bg-slate-900/80 dark:shadow-none">
+        <div className="anim-scale-in flex w-full max-w-sm flex-col items-center gap-4 rounded-2xl border border-slate-200 bg-white px-8 py-7 shadow-sm dark:border-slate-700/70 dark:bg-slate-900/80 dark:shadow-none">
           {indicator}
           <p className="text-sm font-medium text-slate-600 dark:text-slate-300">
             {label || "Loading…"}
           </p>
+          {percent != null && (
+            <>
+              <p className="font-display text-2xl font-bold tabular-nums text-teal-700 dark:text-teal-400">
+                {Math.round(percent)}%
+              </p>
+              <div className="progress-bar h-2 w-full">
+                <div
+                  className="progress-bar-fill progress-bar-fill-default h-full transition-all duration-300"
+                  style={{ width: `${Math.max(2, Math.min(100, percent))}%` }}
+                />
+              </div>
+            </>
+          )}
         </div>
       </div>
     );
@@ -66,11 +80,16 @@ const Loader = ({
     <div
       role="status"
       aria-live="polite"
-      className={`inline-flex items-center gap-3 text-slate-500 dark:text-slate-400 ${className}`}
+      className={`inline-flex flex-col items-center gap-2 text-slate-500 dark:text-slate-400 ${className}`}
     >
-      {indicator}
-      {label && (
-        <span className="text-sm font-medium text-slate-600 dark:text-slate-300">{label}</span>
+      <div className="inline-flex items-center gap-3">
+        {indicator}
+        {label && (
+          <span className="text-sm font-medium text-slate-600 dark:text-slate-300">{label}</span>
+        )}
+      </div>
+      {percent != null && (
+        <p className="text-xs font-semibold tabular-nums text-teal-700 dark:text-teal-400">{Math.round(percent)}%</p>
       )}
     </div>
   );

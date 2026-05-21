@@ -11,6 +11,7 @@ import Vocabulary from "./models/Vocabulary.js";
 import { migrateProgrammesAndSubjects } from "./services/programmeMigrationService.js";
 import { cleanupBrokenYoutubeTempFiles, organizeContentUploadsBySubject } from "./services/uploadOrganizationService.js";
 import { organizePaperUploadsByYear } from "./services/paperOrganizationService.js";
+import { startTelegramAutoSync } from "./services/telegramSyncService.js";
 
 dotenv.config();
 // Build the Cloudinary multi-account registry now that .env is loaded.
@@ -69,6 +70,7 @@ const start = async () => {
 
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+    startTelegramAutoSync(Number(process.env.TELEGRAM_SYNC_INTERVAL_MS) || 15 * 60 * 1000);
   });
 };
 

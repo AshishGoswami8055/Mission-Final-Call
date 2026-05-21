@@ -1,10 +1,6 @@
-import Chapter from "../models/Chapter.js";
-import Content from "../models/Content.js";
-import Progress from "../models/Progress.js";
 import Programme from "../models/Programme.js";
 import Subject from "../models/Subject.js";
-import SubjectCloudMapping from "../models/SubjectCloudMapping.js";
-import { destroyCloudinaryVideo } from "../services/cloudinaryUploadService.js";
+import { deleteSubjectTree } from "../services/subjectCleanupService.js";
 
 export const getSubjects = async (req, res) => {
   const { programmeId } = req.query;
@@ -47,33 +43,7 @@ export const updateSubject = async (req, res) => {
 
 export const deleteSubject = async (req, res) => {
   const { id } = req.params;
-  const subject = await Subject.findById(id);
-  if (!subject) return res.status(404).json({ message: "Subject not found" });
-
-  const chapters = await Chapter.find({ subjectId: id }).select("_id");
-  const chapterIds = chapters.map((chapter) => chapter._id);
-
-  const contents = await Content.find({ subjectId: id })
-    .select("_id sourceType cloudType publicId");
-  const contentIds = contents.map((content) => content._id);
-
-  // Free up Cloudinary storage for any video content tied to this subject.
-  const cloudVideos = contents.filter(
-    (c) => c.sourceType === "cloudinary" && c.publicId
-  );
-  await Promise.allSettled(
-    cloudVideos.map((c) =>
-      destroyCloudinaryVideo({ cloudType: c.cloudType, publicId: c.publicId })
-    )
-  );
-
-  await Progress.deleteMany({
-    $or: [{ chapterId: { $in: chapterIds } }, { contentId: { $in: contentIds } }],
-  });
-  await Content.deleteMany({ subjectId: id });
-  await Chapter.deleteMany({ subjectId: id });
-  await SubjectCloudMapping.deleteOne({ subjectId: id });
-  await subject.deleteOne();
-
+  const result = await deleteSubjectTree(id);
+  if (!result.deleted) return res.status(404).json({ message: "Subject not found" });
   res.json({ message: "Subject and related data deleted" });
 };

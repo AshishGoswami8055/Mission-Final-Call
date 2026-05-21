@@ -2,7 +2,7 @@ import Chapter from "../models/Chapter.js";
 import Content from "../models/Content.js";
 import Progress from "../models/Progress.js";
 import Subject from "../models/Subject.js";
-import { destroyCloudinaryVideo } from "../services/cloudinaryUploadService.js";
+import { destroyCloudinaryRaw, destroyCloudinaryVideo } from "../services/cloudinaryUploadService.js";
 
 export const getChapters = async (req, res) => {
   const { subjectId } = req.query;
@@ -88,12 +88,12 @@ export const deleteChapter = async (req, res) => {
     .select("_id sourceType cloudType publicId");
   const contentIds = contents.map((content) => content._id);
 
-  const cloudVideos = contents.filter(
-    (c) => c.sourceType === "cloudinary" && c.publicId
-  );
+  const cloudAssets = contents.filter((c) => c.sourceType === "cloudinary" && c.publicId);
   await Promise.allSettled(
-    cloudVideos.map((c) =>
-      destroyCloudinaryVideo({ cloudType: c.cloudType, publicId: c.publicId })
+    cloudAssets.map((c) =>
+      c.type === "pdf"
+        ? destroyCloudinaryRaw({ cloudType: c.cloudType, publicId: c.publicId })
+        : destroyCloudinaryVideo({ cloudType: c.cloudType, publicId: c.publicId })
     )
   );
 

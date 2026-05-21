@@ -17,6 +17,7 @@ import {
 import { getUploadFolderForCourseId } from "../config/cdsCourses.js";
 import { downloadYouTubeVideo } from "../services/youtubeDownloadService.js";
 import {
+  destroyCloudinaryRaw,
   destroyCloudinaryVideo,
   safeUnlink,
   uploadVideoToCloudinary,
@@ -799,10 +800,17 @@ export const deleteContent = async (req, res) => {
   if (!content) return res.status(404).json({ message: "Content not found" });
 
   if (content.sourceType === "cloudinary" && content.publicId) {
-    await destroyCloudinaryVideo({
-      cloudType: content.cloudType,
-      publicId: content.publicId,
-    });
+    if (content.type === "pdf") {
+      await destroyCloudinaryRaw({
+        cloudType: content.cloudType,
+        publicId: content.publicId,
+      });
+    } else {
+      await destroyCloudinaryVideo({
+        cloudType: content.cloudType,
+        publicId: content.publicId,
+      });
+    }
   } else if (content.sourceType === "upload") {
     removeLocalFile(content.filePath);
   }

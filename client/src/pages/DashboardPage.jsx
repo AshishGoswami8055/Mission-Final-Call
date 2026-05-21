@@ -11,12 +11,14 @@ import {
   FiLayers,
   FiPlay,
   FiPlus,
+  FiUploadCloud,
 } from "react-icons/fi";
 import ChapterModal from "../components/ChapterModal";
 import CloudMappingModal from "../components/CloudMappingModal";
 import ContentCard from "../components/ContentCard";
 import ContentEditModal from "../components/ContentEditModal";
 import ContentModal from "../components/ContentModal";
+import BatchCourseView from "../components/BatchCourseView";
 import CoachingBatchSection from "../components/CoachingBatchSection";
 import ExamCountdown from "../components/ExamCountdown";
 import Layout from "../components/Layout";
@@ -24,6 +26,7 @@ import { SkeletonCard } from "../components/Loader";
 import ProgrammeModal from "../components/ProgrammeModal";
 import StudyTracker from "../components/StudyTracker";
 import SubjectModal from "../components/SubjectModal";
+import { useLocation, useNavigate } from "react-router-dom";
 import { COURSES, getCourseById, getDefaultCourseId } from "../config/courses";
 
 const FILTERS_STORAGE_KEY = "cds_dashboard_filters";
@@ -69,6 +72,8 @@ const getInitialFilters = () => {
 };
 
 const DashboardPage = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const initialFilters = getInitialFilters();
   // If the persisted cycle id is no longer in the COURSES list (e.g. legacy
@@ -116,6 +121,9 @@ const DashboardPage = () => {
   const [editingContent, setEditingContent] = useState(null);
   const [programmeModalOpen, setProgrammeModalOpen] = useState(false);
   const [cloudMappingModalOpen, setCloudMappingModalOpen] = useState(false);
+  const [activeCourseSubjectId, setActiveCourseSubjectId] = useState("");
+  const [showLibraryView, setShowLibraryView] = useState(false);
+  const [courseContents, setCourseContents] = useState([]);
 
   const fetchSubjects = async () => {
     if (!selectedProgrammeId) {
@@ -138,6 +146,17 @@ const DashboardPage = () => {
       return acc;
     }, {});
     setChapterStats(mapped);
+  };
+
+  const fetchCourseContents = async () => {
+    if (!selectedProgrammeId) {
+      setCourseContents([]);
+      return;
+    }
+    const { data } = await api.get("/contents", {
+      params: { programmeId: selectedProgrammeId, sort: "chapter", page: 1, limit: 500 },
+    });
+    setCourseContents(data.items || []);
   };
 
   const fetchContents = async () => {
@@ -172,6 +191,7 @@ const DashboardPage = () => {
         fetchChapters(),
         fetchChapterStats(),
         fetchContents(),
+        fetchCourseContents(),
         fetchProgress(),
       ]);
     } catch (error) {
@@ -209,6 +229,22 @@ const DashboardPage = () => {
     }
     refreshAll();
   }, [selectedProgrammeId]);
+
+  useEffect(() => {
+    if (selectedProgrammeId) fetchCourseContents();
+  }, [selectedProgrammeId]);
+
+  useEffect(() => {
+    setActiveCourseSubjectId("");
+  }, [selectedProgrammeId]);
+
+  useEffect(() => {
+    if (!selectedProgrammeId || showLibraryView) return undefined;
+    const interval = setInterval(() => {
+      fetchCourseContents();
+    }, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [selectedProgrammeId, showLibraryView]);
 
   useEffect(() => {
     fetchContents();
@@ -261,6 +297,22 @@ const DashboardPage = () => {
       setSelectedChapterId("");
     }
   }, [chapters, selectedChapterId, visibleChapters]);
+
+  useEffect(() => {
+    if (!location.state?.refreshCourse) return;
+    setShowLibraryView(false);
+    setActiveCourseSubjectId("");
+    Promise.all([
+      fetchSubjects(),
+      fetchCourseContents(),
+      fetchChapters(),
+      fetchProgress(),
+      fetchChapterStats(),
+      fetchContents(),
+    ]).finally(() => {
+      navigate(".", { replace: true, state: {} });
+    });
+  }, [location.state]);
 
   const selectedSubject = useMemo(
     () => subjects.find((item) => item._id === selectedSubjectId),
@@ -333,19 +385,75 @@ const DashboardPage = () => {
   };
 
   const handleDeleteProgramme = async (p) => {
-    if (!window.confirm(`Delete coaching batch "${p.name}"? It must have no subjects.`)) return;
+    const subjectCount = subjects.length;
+    const message = subjectCount
+      ? `Delete coaching batch "${p.name}" and ALL ${subjectCount} subject(s) with their lessons? This cannot be undone.`
+      : `Delete coaching batch "${p.name}"?`;
+    if (!window.confirm(message)) return;
     try {
-      await api.delete(`/programmes/${p._id}`);
+      const url = subjectCount ? `/programmes/${p._id}?cascade=true` : `/programmes/${p._id}`;
+      await api.delete(url);
       const { data } = await api.get("/programmes", { params: { cdsCycleId: selectedCdsCycleId } });
       setProgrammes(data);
       setSelectedProgrammeId((prev) => {
         if (String(prev) !== String(p._id)) return prev;
         return data[0]?._id || "";
       });
-      toast.success("Batch removed");
+      setActiveCourseSubjectId("");
+      await refreshAll();
+      toast.success(subjectCount ? "Batch and course data removed" : "Batch removed");
     } catch (error) {
       toast.error(error.response?.data?.message || "Could not delete batch");
     }
+  };
+
+  const handleClearCourse = async () => {
+    if (!selectedProgrammeId) return;
+    const count = subjects.length;
+    if (!count) {
+      toast.error("No course content to clear");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Remove ALL ${count} subject(s) and lessons from "${selectedProgramme?.name || "this batch"}"? The batch itself will stay.`
+      )
+    ) {
+      return;
+    }
+    try {
+      const { data } = await api.post(`/programmes/${selectedProgrammeId}/clear-course`);
+      setActiveCourseSubjectId("");
+      await refreshAll();
+      toast.success(
+        `Cleared ${data.deletedSubjects || count} subject(s) · ${data.deletedContents || 0} lesson(s) removed`
+      );
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Could not clear course");
+    }
+  };
+
+  const handleDeleteSubjectById = async (subject) => {
+    if (!subject?._id) return;
+    if (!window.confirm(`Delete "${subject.name}" and all its lessons?`)) return;
+    try {
+      await api.delete(`/subjects/${subject._id}`);
+      if (activeCourseSubjectId === subject._id) setActiveCourseSubjectId("");
+      if (selectedSubjectId === subject._id) {
+        setSelectedSubjectId("");
+        setSelectedChapterId("");
+      }
+      await refreshAll();
+      toast.success("Subject deleted");
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Delete failed");
+    }
+  };
+
+  const handleDeleteContentItem = async (item) => {
+    if (!item?._id) return;
+    if (!window.confirm(`Delete "${item.title}"?`)) return;
+    await handleDeleteContent(item._id);
   };
 
   const handleCreateOrUpdateSubject = async (payload) => {
@@ -460,7 +568,7 @@ const DashboardPage = () => {
         await api.post("/contents", body, {
           headers: { "Content-Type": "multipart/form-data" },
         });
-        await Promise.all([fetchContents(), fetchProgress(), fetchChapterStats()]);
+        await Promise.all([fetchContents(), fetchCourseContents(), fetchProgress(), fetchChapterStats()]);
         toast.success("Content added");
         setContentModalOpen(false);
       } catch (error) {
@@ -569,7 +677,7 @@ const DashboardPage = () => {
   const handleDeleteContent = async (id) => {
     try {
       await api.delete(`/contents/${id}`);
-      await Promise.all([fetchContents(), fetchProgress(), fetchChapterStats()]);
+      await Promise.all([fetchContents(), fetchCourseContents(), fetchProgress(), fetchChapterStats()]);
       toast.success("Content deleted");
     } catch (error) {
       toast.error(error.response?.data?.message || "Delete failed");
@@ -581,7 +689,7 @@ const DashboardPage = () => {
     try {
       await api.put(`/contents/${editingContent._id}`, payload);
       setEditingContent(null);
-      await Promise.all([fetchContents(), fetchProgress(), fetchChapterStats()]);
+      await Promise.all([fetchContents(), fetchCourseContents(), fetchProgress(), fetchChapterStats()]);
       toast.success("Content updated");
     } catch (error) {
       toast.error(error.response?.data?.message || "Could not update content");
@@ -591,7 +699,7 @@ const DashboardPage = () => {
   const handleToggleCompleted = async (contentId) => {
     try {
       await api.post(`/progress/toggle/${contentId}`);
-      await Promise.all([fetchContents(), fetchProgress(), fetchChapterStats()]);
+      await Promise.all([fetchContents(), fetchCourseContents(), fetchProgress(), fetchChapterStats()]);
     } catch (error) {
       toast.error(error.response?.data?.message || "Could not update progress");
     }
@@ -615,7 +723,7 @@ const DashboardPage = () => {
     try {
       await api.delete(`/chapters/${selectedChapterId}`);
       setSelectedChapterId("");
-      await Promise.all([fetchContents(), fetchProgress(), fetchChapterStats()]);
+      await Promise.all([fetchContents(), fetchCourseContents(), fetchProgress(), fetchChapterStats()]);
       toast.success("Chapter deleted");
     } catch (error) {
       toast.error(error.response?.data?.message || "Delete failed");
@@ -630,6 +738,16 @@ const DashboardPage = () => {
           100
       )
     : 0;
+
+  const openTelegramImport = () => {
+    if (!selectedProgrammeId) {
+      toast.error("Select a coaching batch first");
+      return;
+    }
+    navigate(
+      `/import/telegram?programmeId=${encodeURIComponent(selectedProgrammeId)}&programmeName=${encodeURIComponent(selectedProgramme?.name || "")}`
+    );
+  };
 
   const headerSubtitle = `${cycleTitle} · ${
     selectedProgramme?.name || "no batch selected"
@@ -650,6 +768,23 @@ const DashboardPage = () => {
         onClick={() => setChapterModal({})}
       >
         Chapter
+      </button>
+      <button
+        type="button"
+        className="btn-ghost hidden text-sm sm:inline-flex"
+        onClick={() => setShowLibraryView((v) => !v)}
+      >
+        {showLibraryView ? "Course view" : "Library view"}
+      </button>
+      <button
+        type="button"
+        className="btn-secondary text-sm"
+        onClick={openTelegramImport}
+        disabled={!selectedProgrammeId}
+      >
+        <FiUploadCloud size={15} />
+        <span className="hidden sm:inline">Import batch</span>
+        <span className="sm:hidden">Import</span>
       </button>
       <button
         type="button"
@@ -773,6 +908,27 @@ const DashboardPage = () => {
           </div>
         )}
 
+        {/* Course view — subject grid + accordion lessons */}
+        {!showLibraryView && selectedProgrammeId && (
+          <BatchCourseView
+            batchName={selectedProgramme?.name || "Course batch"}
+            cycleTitle={cycleTitle}
+            subjects={subjects}
+            chapters={visibleChapters}
+            contents={courseContents}
+            activeSubjectId={activeCourseSubjectId}
+            onSelectSubject={(subject) => setActiveCourseSubjectId(subject._id)}
+            onBackToSubjects={() => setActiveCourseSubjectId("")}
+            onImportTelegram={openTelegramImport}
+            onDeleteSubject={handleDeleteSubjectById}
+            onDeleteContent={handleDeleteContentItem}
+            onClearCourse={handleClearCourse}
+          />
+        )}
+
+        {/* Admin library view — filters + content cards */}
+        {showLibraryView && (
+        <>
         {/* Filter bar */}
         <section className="card p-3 sm:p-4">
           <div className="grid gap-2 sm:grid-cols-3">
@@ -940,6 +1096,8 @@ const DashboardPage = () => {
               </div>
             </div>
           </>
+        )}
+        </>
         )}
       </div>
 

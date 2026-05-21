@@ -26,8 +26,36 @@ const contentSchema = new mongoose.Schema(
     },
     sourceType: {
       type: String,
-      enum: ["upload", "url", "cloudinary"],
+      enum: ["upload", "url", "cloudinary", "telegram"],
       required: true,
+    },
+    telegramSource: {
+      type: Boolean,
+      default: false,
+    },
+    telegramChannelId: {
+      type: String,
+      default: null,
+    },
+    telegramMessageId: {
+      type: Number,
+      default: null,
+    },
+    telegramFileName: {
+      type: String,
+      default: null,
+    },
+    telegramMimeType: {
+      type: String,
+      default: null,
+    },
+    telegramFileSize: {
+      type: Number,
+      default: null,
+    },
+    telegramTopicId: {
+      type: Number,
+      default: null,
     },
     filePath: {
       type: String,

@@ -167,15 +167,20 @@ const buildPaperFolder = (year) => {
   return y ? `cds-journey/papers/PYQ/${y}` : "cds-journey/papers/PYQ";
 };
 
-/**
- * Upload a local PDF to Cloudinary as a raw asset (PYQ papers — default cloud1).
- */
-export const uploadPdfToCloudinary = async ({
+const buildContentPdfFolder = ({ courseFolder, batchFolder, subjectName }) => {
+  const segments = [courseFolder, batchFolder, subjectName, "pdfs"]
+    .map(safeSegment)
+    .filter(Boolean);
+  return segments.length ? `cds-journey/${segments.join("/")}` : "cds-journey/pdfs";
+};
+
+const uploadRawFileChunked = async ({
   absoluteFilePath,
   cloudType,
-  year,
+  folder,
   titleHint,
   originalFilename,
+  onProgress,
 }) => {
   if (!absoluteFilePath || !fs.existsSync(absoluteFilePath)) {
     throw new Error("Local PDF file not found for Cloudinary upload");
@@ -186,11 +191,11 @@ export const uploadPdfToCloudinary = async ({
 
   const { cloudinary, config } = getCloudinaryFor(cloudType);
   const sdkCfg = pickCloudinarySdkConfig(config);
-  const folder = buildPaperFolder(year);
   const publicIdHint = buildPublicIdHint(
     titleHint,
     originalFilename || path.basename(absoluteFilePath)
   );
+  const fileSize = fs.statSync(absoluteFilePath).size;
 
   const options = {
     ...sdkCfg,
@@ -205,15 +210,89 @@ export const uploadPdfToCloudinary = async ({
   };
 
   return new Promise((resolve, reject) => {
-    cloudinary.uploader.upload_large(absoluteFilePath, options, (err, result) => {
+    const cloudStream = cloudinary.uploader.upload_chunked_stream(options, (err, result) => {
       if (err) return reject(err);
       if (!result?.secure_url || !result?.public_id) {
         return reject(new Error("Cloudinary returned an incomplete response for PDF upload"));
       }
       resolve(result);
     });
+
+    const fileStream = fs.createReadStream(absoluteFilePath, { highWaterMark: 1024 * 1024 });
+    let bytesUploaded = 0;
+    let lastEmitTs = 0;
+    let lastEmitBytes = 0;
+
+    fileStream.on("data", (chunk) => {
+      bytesUploaded += chunk.length;
+      const t = Date.now();
+      const reachedEnd = bytesUploaded >= fileSize;
+      if (typeof onProgress !== "function") return;
+      if (reachedEnd || t - lastEmitTs > 200) {
+        try {
+          onProgress({
+            bytesUploaded,
+            bytesTotal: fileSize,
+            percent: fileSize > 0 ? Math.min(100, (bytesUploaded / fileSize) * 100) : 0,
+            instantaneousBps:
+              t > lastEmitTs
+                ? Math.max(0, (bytesUploaded - lastEmitBytes) / ((t - lastEmitTs) / 1000))
+                : 0,
+          });
+        } catch {
+          /* ignore */
+        }
+        lastEmitTs = t;
+        lastEmitBytes = bytesUploaded;
+      }
+    });
+
+    fileStream.on("error", (err) => reject(err));
+    fileStream.pipe(cloudStream);
   });
 };
+
+/**
+ * Upload lesson PDF (Telegram import / content) to Cloudinary as raw asset.
+ */
+export const uploadContentPdfToCloudinary = async ({
+  absoluteFilePath,
+  cloudType,
+  courseFolder,
+  batchFolder,
+  subjectName,
+  titleHint,
+  originalFilename,
+  onProgress,
+}) =>
+  uploadRawFileChunked({
+    absoluteFilePath,
+    cloudType,
+    folder: buildContentPdfFolder({ courseFolder, batchFolder, subjectName }),
+    titleHint,
+    originalFilename,
+    onProgress,
+  });
+
+/**
+ * Upload a local PDF to Cloudinary as a raw asset (PYQ papers — default cloud1).
+ */
+export const uploadPdfToCloudinary = async ({
+  absoluteFilePath,
+  cloudType,
+  year,
+  titleHint,
+  originalFilename,
+  onProgress,
+}) =>
+  uploadRawFileChunked({
+    absoluteFilePath,
+    cloudType,
+    folder: buildPaperFolder(year),
+    titleHint,
+    originalFilename,
+    onProgress,
+  });
 
 export const destroyCloudinaryRaw = async ({ cloudType, publicId }) => {
   if (!publicId || !cloudType) return { ok: false, skipped: true };
