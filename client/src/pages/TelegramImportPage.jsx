@@ -17,7 +17,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import api from "../api/client";
 import Layout from "../components/Layout";
 import OperationProgressOverlay from "../components/OperationProgressOverlay";
-import { formatFileSize, buildTelegramPreviewStreamUrl } from "../utils/media";
+import { buildTelegramPreviewStreamUrl, formatDuration, formatFileSize, formatTelegramMediaMeta } from "../utils/media";
 import { createUploadId, pollUploadProgress } from "../utils/uploadProgress";
 
 const mediaDisplayName = (item) => item?.displayName || item?.fileName || "Untitled";
@@ -191,6 +191,7 @@ const TelegramImportPage = () => {
         mediaType: item.mediaType,
         fileName: mediaDisplayName(item),
         displayName: mediaDisplayName(item),
+        duration: item.duration ?? null,
         size: item.size,
         topicTitle: topic.title,
       },
@@ -237,6 +238,7 @@ const TelegramImportPage = () => {
         mediaType: item.mediaType,
         fileName: mediaDisplayName(item),
         displayName: mediaDisplayName(item),
+        duration: item.duration ?? null,
         size: item.size,
         topicTitle: activeTopic.title,
       }));
@@ -251,6 +253,7 @@ const TelegramImportPage = () => {
       mediaType: item.mediaType,
       fileName: mediaDisplayName(item),
       displayName: mediaDisplayName(item),
+      duration: item.duration ?? null,
       topicTitle: topic.title,
     });
   };
@@ -909,6 +912,11 @@ const TelegramImportPage = () => {
                                       {file.mediaType === "video" ? <FiPlay size={12} /> : <FiFileText size={12} />}
                                     </span>
                                     <span className="min-w-0 flex-1 truncate">{mediaDisplayName(file)}</span>
+                                    <span className="hidden shrink-0 text-xs tabular-nums text-slate-500 sm:inline">
+                                      {[file.mediaType === "video" && formatDuration(file.duration), formatFileSize(file.size)]
+                                        .filter(Boolean)
+                                        .join(" · ")}
+                                    </span>
                                     <span className="hidden text-xs text-slate-500 sm:inline">{file.topicTitle}</span>
                                     <button
                                       type="button"
@@ -1006,9 +1014,7 @@ const TelegramImportPage = () => {
                                   </button>
                                   <div className="min-w-0 flex-1">
                                     <p className="truncate font-medium">{mediaDisplayName(item)}</p>
-                                    <p className="text-xs text-slate-500">
-                                      {item.mediaType.toUpperCase()} · {formatFileSize(item.size)}
-                                    </p>
+                                    <p className="text-xs text-slate-500">{formatTelegramMediaMeta(item)}</p>
                                   </div>
                                   {isSelected && (
                                     <span className="rounded-full bg-teal-600 px-2 py-0.5 text-[10px] font-bold text-white">

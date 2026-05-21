@@ -111,3 +111,26 @@ export const formatFileSize = (bytes = 0) => {
   if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
   return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 };
+
+export const formatDuration = (seconds = 0) => {
+  const safe = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (!safe) return "";
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const secs = safe % 60;
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  }
+  return `${minutes}:${secs.toString().padStart(2, "0")}`;
+};
+
+export const formatTelegramMediaMeta = (item) => {
+  const mediaType = String(item?.mediaType || item?.type || "").toUpperCase();
+  const parts = [mediaType];
+  if (mediaType === "VIDEO") {
+    const duration = formatDuration(item?.duration);
+    if (duration) parts.push(duration);
+  }
+  if (item?.size) parts.push(formatFileSize(item.size));
+  return parts.filter(Boolean).join(" · ");
+};

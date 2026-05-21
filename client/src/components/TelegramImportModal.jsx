@@ -14,7 +14,7 @@ import {
   FiUploadCloud,
 } from "react-icons/fi";
 import api from "../api/client";
-import { formatFileSize } from "../utils/media";
+import { formatTelegramMediaMeta } from "../utils/media";
 
 const STEPS = { AUTH: "auth", CHANNELS: "channels", BROWSE: "browse", BATCH: "batch" };
 
@@ -532,7 +532,7 @@ const TelegramImportModal = ({
                       <span className="min-w-0 flex-1">
                         <p className="truncate font-medium">{msg.displayName || msg.fileName}</p>
                         <p className="text-xs text-slate-500">
-                          {msg.mediaType.toUpperCase()} · {formatFileSize(msg.size)} · {formatDate(msg.uploadDate)}
+                          {formatTelegramMediaMeta(msg)} · {formatDate(msg.uploadDate)}
                         </p>
                         {msg.imported && (
                           <p className="mt-1 text-xs font-semibold text-emerald-600">
