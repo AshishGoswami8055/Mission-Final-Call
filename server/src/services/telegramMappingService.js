@@ -583,8 +583,13 @@ export const importSelectedForumMessages = async ({
     const messageId = Number(item.messageId);
     if (!topicId || !messageId) continue;
     try {
-      const { meta } = await getTelegramMessageMedia({ channelId, messageId });
-      metas.push({ ...meta, topicId, topicTitle: item.topicTitle || topicById.get(topicId)?.title || "Subject" });
+      const { meta } = await getTelegramMessageMedia({ channelId, messageId, topicId });
+      metas.push({
+        ...meta,
+        topicId,
+        topicTitle: item.topicTitle || topicById.get(topicId)?.title || "Subject",
+        preferredTitle: String(item.displayName || "").trim() || null,
+      });
     } catch {
       skipped.push({ messageId, reason: "Could not fetch message" });
     }
@@ -622,7 +627,10 @@ export const importSelectedForumMessages = async ({
       topicTitle: meta.topicTitle,
     });
     const chapter = await getOrCreateChapterForSubject(subject._id, LESSONS_CHAPTER);
-    const title = resolveTelegramMediaTitle(meta) || `Lesson ${messageId}`;
+    const title =
+      meta.preferredTitle ||
+      resolveTelegramMediaTitle(meta) ||
+      `Lesson ${messageId}`;
 
     if (uploadId) {
       setProgress(uploadId, {

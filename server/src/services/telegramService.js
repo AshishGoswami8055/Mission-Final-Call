@@ -213,11 +213,124 @@ export const buildTelegramContentTitle = (fileName = "") => {
   return base || "Telegram media";
 };
 
+const BOT_NOISE_PATTERNS = [
+  /^download\s+video$/i,
+  /^download\s+pdf$/i,
+  /^join\s+channel/i,
+  /^subscribe/i,
+];
+
+export const isLikelyLessonTitle = (text) => {
+  const value = String(text || "").trim();
+  if (!value || value.length < 2) return false;
+  if (BOT_NOISE_PATTERNS.some((pattern) => pattern.test(value))) return false;
+  if (/^https?:\/\//i.test(value)) return false;
+  return true;
+};
+
 /** Prefer Telegram post caption (original lesson title) over auto-generated file names. */
 export const resolveTelegramMediaTitle = ({ fileName = "", caption = null } = {}) => {
   const cleanedCaption = String(caption || "").trim();
-  if (cleanedCaption) return cleanedCaption;
+  if (cleanedCaption && isLikelyLessonTitle(cleanedCaption)) return cleanedCaption;
   return buildTelegramContentTitle(fileName);
+};
+
+const extractPlainText = (message) => {
+  if (!message) return null;
+  const direct = String(message.message || message.text || "").trim();
+  if (direct) return direct;
+  if (typeof message.getMessageText === "function") {
+    try {
+      const parsed = String(message.getMessageText() || "").trim();
+      if (parsed) return parsed;
+    } catch {
+      // ignore parse errors
+    }
+  }
+  return null;
+};
+
+const hasMediaDocument = (message) => {
+  const media = message?.media;
+  return media instanceof Api.MessageMediaDocument;
+};
+
+const applyCaptionToMeta = (meta, caption) => {
+  if (!meta || !caption) return meta;
+  meta.caption = caption;
+  meta.displayName = resolveTelegramMediaTitle({ fileName: meta.fileName, caption });
+  return meta;
+};
+
+/** Bot uploads often put the lesson title in a nearby text message, not on the video file. */
+export const enrichCaptionsFromTopicContext = (rawMessages = []) => {
+  const sorted = [...rawMessages].sort((a, b) => Number(a.id) - Number(b.id));
+  const byId = new Map(sorted.map((message) => [Number(message.id), message]));
+  const captionByMediaId = new Map();
+  const groupText = new Map();
+
+  for (const message of sorted) {
+    const text = extractPlainText(message);
+    if (!text || !isLikelyLessonTitle(text) || hasMediaDocument(message)) continue;
+    if (message.groupedId) {
+      const groupId = String(message.groupedId);
+      if (!groupText.has(groupId)) groupText.set(groupId, text);
+    }
+  }
+
+  for (let index = 0; index < sorted.length; index++) {
+    const message = sorted[index];
+    if (!hasMediaDocument(message)) continue;
+
+    const messageId = Number(message.id);
+    let caption = extractPlainText(message);
+
+    if ((!caption || !isLikelyLessonTitle(caption)) && message.groupedId) {
+      caption = groupText.get(String(message.groupedId)) || caption;
+    }
+
+    if ((!caption || !isLikelyLessonTitle(caption)) && message.replyTo?.replyToMsgId) {
+      const replyId = Number(message.replyTo.replyToMsgId);
+      const topicRootId = Number(message.replyTo.replyToTopId || 0);
+      if (replyId && replyId !== topicRootId) {
+        const replyMessage = byId.get(replyId);
+        if (replyMessage && !hasMediaDocument(replyMessage)) {
+          const replyText = extractPlainText(replyMessage);
+          if (replyText && isLikelyLessonTitle(replyText)) caption = replyText;
+        }
+      }
+    }
+
+    if (!caption || !isLikelyLessonTitle(caption)) {
+      for (let prevIndex = index - 1; prevIndex >= Math.max(0, index - 3); prevIndex--) {
+        const prevMessage = sorted[prevIndex];
+        if (hasMediaDocument(prevMessage)) break;
+        const prevText = extractPlainText(prevMessage);
+        if (prevText && isLikelyLessonTitle(prevText)) {
+          caption = prevText;
+          break;
+        }
+      }
+    }
+
+    if (!caption || !isLikelyLessonTitle(caption)) {
+      for (let nextIndex = index + 1; nextIndex < Math.min(sorted.length, index + 4); nextIndex++) {
+        const nextMessage = sorted[nextIndex];
+        if (hasMediaDocument(nextMessage)) break;
+        const nextText = extractPlainText(nextMessage);
+        if (nextText && isLikelyLessonTitle(nextText)) {
+          caption = nextText;
+          break;
+        }
+      }
+    }
+
+    if (caption && isLikelyLessonTitle(caption)) {
+      captionByMediaId.set(messageId, caption);
+    }
+  }
+
+  return captionByMediaId;
 };
 
 const getDocumentMeta = (message) => {
@@ -247,7 +360,7 @@ const getDocumentMeta = (message) => {
 
   const topicId = getTopicIdFromMessage(message);
 
-  const caption = String(message.message || "").trim() || null;
+  const caption = extractPlainText(message);
 
   return {
     messageId: message.id,
@@ -386,10 +499,15 @@ export const fetchMediaInTopic = async ({ channelId, topicId, limit = 500 }) => 
     limit: Math.min(limit, 500),
   });
 
+  const captionByMediaId = enrichCaptionsFromTopicContext(rawMessages);
+
   const items = [];
   for (const message of rawMessages) {
     const meta = getDocumentMeta(message);
-    if (meta) items.push(meta);
+    if (!meta) continue;
+    const extraCaption = captionByMediaId.get(Number(meta.messageId));
+    if (extraCaption) applyCaptionToMeta(meta, extraCaption);
+    items.push(meta);
   }
   items.sort((a, b) => a.messageId - b.messageId);
   return items;
@@ -488,7 +606,7 @@ export const fetchAllChannelMedia = async ({ channelId, maxMessages = 2000 }) =>
   return items;
 };
 
-export const getTelegramMessageMedia = async ({ channelId, messageId }) => {
+export const getTelegramMessageMedia = async ({ channelId, messageId, topicId = null }) => {
   const client = await getTelegramClient();
   const entity = await client.getEntity(channelId);
   const messages = await client.getMessages(entity, { ids: Number(messageId) });
@@ -497,6 +615,15 @@ export const getTelegramMessageMedia = async ({ channelId, messageId }) => {
   if (!message) throw new Error("Telegram message not found.");
   const meta = getDocumentMeta(message);
   if (!meta) throw new Error("Message does not contain a streamable video or PDF.");
+
+  if (!meta.caption && topicId) {
+    const topicMessages = await client.getMessages(entity, {
+      replyTo: Number(topicId),
+      limit: 500,
+    });
+    const extraCaption = enrichCaptionsFromTopicContext(topicMessages).get(Number(messageId));
+    if (extraCaption) applyCaptionToMeta(meta, extraCaption);
+  }
 
   return { client, message, meta };
 };

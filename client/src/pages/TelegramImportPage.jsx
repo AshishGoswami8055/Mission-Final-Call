@@ -338,10 +338,11 @@ const TelegramImportPage = () => {
         importAll: false,
         autoSync,
         uploadId,
-        selectedItems: selectedFiles.map(({ topicId, messageId, topicTitle }) => ({
+        selectedItems: selectedFiles.map(({ topicId, messageId, topicTitle, displayName }) => ({
           topicId,
           messageId,
           topicTitle,
+          displayName,
         })),
       });
 
