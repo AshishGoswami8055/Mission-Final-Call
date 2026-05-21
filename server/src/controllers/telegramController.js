@@ -8,6 +8,7 @@ import {
   fetchForumTopicsPreview,
   getImportedContentMap,
   importBatchByForumTopics,
+  importSelectedForumMessages,
   importTelegramMessages,
   listChannelMappings,
   upsertChannelMapping,
@@ -212,8 +213,10 @@ export const telegramImportBatch = async (req, res) => {
       cleanSync = false,
       useForumTopics = true,
       uploadId = null,
+      selectedItems = null,
     } = req.body;
 
+    const hasSelectedItems = Array.isArray(selectedItems) && selectedItems.length > 0;
     const hasTopicFilter = Array.isArray(topicIds) && topicIds.length > 0;
 
     if (!channelId || !programmeId) {
@@ -221,6 +224,26 @@ export const telegramImportBatch = async (req, res) => {
     }
     if (!mongoose.Types.ObjectId.isValid(programmeId)) {
       return res.status(400).json({ message: "Invalid programmeId." });
+    }
+
+    if (hasSelectedItems && useForumTopics) {
+      const result = await importSelectedForumMessages({
+        channelId,
+        channelTitle,
+        programmeId,
+        selectedItems,
+        autoSync,
+        uploadId,
+      });
+      return res.status(201).json({
+        imported: result.created.length,
+        skipped: result.skipped.length,
+        topicsProcessed: result.topicsProcessed,
+        mode: "forum_selected_files",
+        items: result.created,
+        skippedItems: result.skipped,
+        mapping: result.mapping,
+      });
     }
 
     if (useForumTopics && (importAll || hasTopicFilter)) {

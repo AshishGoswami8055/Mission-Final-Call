@@ -46,10 +46,14 @@ const resolveApiBase = () => {
 
 export const getTelegramStreamUrl = (item) => {
   if (!isTelegramStreamContent(item)) return "";
+  return buildTelegramPreviewStreamUrl(item.telegramChannelId, item.telegramMessageId);
+};
+
+/** Preview / stream URL for Telegram media before import (channelId + messageId). */
+export const buildTelegramPreviewStreamUrl = (channelId, messageId) => {
+  if (!channelId || !messageId) return "";
   const apiBase = resolveApiBase();
-  const channelId = encodeURIComponent(item.telegramChannelId);
-  const messageId = encodeURIComponent(item.telegramMessageId);
-  let url = `${apiBase}/telegram/stream/${messageId}?channelId=${channelId}`;
+  let url = `${apiBase}/telegram/stream/${encodeURIComponent(messageId)}?channelId=${encodeURIComponent(channelId)}`;
   try {
     const token = localStorage.getItem("cds_token");
     if (token) url += `&token=${encodeURIComponent(token)}`;

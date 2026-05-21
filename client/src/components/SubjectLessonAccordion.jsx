@@ -5,6 +5,12 @@ import { isTelegramLinkVideo } from "../utils/media";
 
 const sortContents = (items, chapterOrder) => {
   return [...items].sort((a, b) => {
+    const aSort = a.importSortOrder;
+    const bSort = b.importSortOrder;
+    if (aSort != null && bSort != null && aSort !== bSort) return aSort - bSort;
+    if (aSort != null && bSort == null) return -1;
+    if (aSort == null && bSort != null) return 1;
+
     const aMsg = Number(a.telegramMessageId) || 0;
     const bMsg = Number(b.telegramMessageId) || 0;
     if (aMsg && bMsg && aMsg !== bMsg) return aMsg - bMsg;

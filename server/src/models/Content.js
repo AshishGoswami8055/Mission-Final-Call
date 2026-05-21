@@ -106,6 +106,11 @@ const contentSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    /** Preserves user selection order when importing specific Telegram files */
+    importSortOrder: {
+      type: Number,
+      default: null,
+    },
   },
   { timestamps: true }
 );

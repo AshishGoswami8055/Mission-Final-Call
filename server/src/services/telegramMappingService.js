@@ -261,6 +261,7 @@ const buildTelegramContentPayload = async ({
   uploadId = null,
   pdfFileIndex = 0,
   pdfFilesTotal = 1,
+  importSortOrder = null,
 }) => {
   const messageId = Number(meta.messageId);
   const base = {
@@ -276,6 +277,7 @@ const buildTelegramContentPayload = async ({
     telegramFileSize: meta.size,
     uploadedAt: meta.uploadDate ? new Date(meta.uploadDate) : new Date(),
     ...(topicId != null ? { telegramTopicId: topicId } : {}),
+    ...(importSortOrder != null ? { importSortOrder } : {}),
   };
 
   if (meta.mediaType === "video") {
@@ -554,6 +556,132 @@ export const importBatchByForumTopics = async ({
     skipped,
     maxMessageId,
     topicsProcessed: topics.length,
+    mapping,
+  };
+};
+
+export const importSelectedForumMessages = async ({
+  channelId,
+  channelTitle,
+  programmeId,
+  selectedItems = [],
+  autoSync = true,
+  uploadId = null,
+}) => {
+  if (!Array.isArray(selectedItems) || !selectedItems.length) {
+    throw new Error("No files selected for import.");
+  }
+
+  const topics = await fetchForumTopicsForChannel(channelId);
+  const topicById = new Map(topics.map((t) => [Number(t.id), t]));
+
+  const created = [];
+  const skipped = [];
+  let maxMessageId = 0;
+  let pdfIndex = 0;
+
+  const metas = [];
+  for (const item of selectedItems) {
+    const topicId = Number(item.topicId);
+    const messageId = Number(item.messageId);
+    if (!topicId || !messageId) continue;
+    try {
+      const { meta } = await getTelegramMessageMedia({ channelId, messageId });
+      metas.push({ ...meta, topicId, topicTitle: item.topicTitle || topicById.get(topicId)?.title || "Subject" });
+    } catch {
+      skipped.push({ messageId, reason: "Could not fetch message" });
+    }
+  }
+
+  const pdfTotal = metas.filter((m) => m.mediaType === "pdf").length;
+  if (uploadId) {
+    initProgress(uploadId, {
+      phase: "pending",
+      message: "Preparing file import…",
+      filesTotal: metas.length,
+      fileIndex: 0,
+    });
+  }
+
+  for (let sortOrder = 0; sortOrder < metas.length; sortOrder++) {
+    const meta = metas[sortOrder];
+    const messageId = Number(meta.messageId);
+    const topicId = Number(meta.topicId);
+    maxMessageId = Math.max(maxMessageId, messageId);
+
+    const existing = await Content.findOne({
+      telegramChannelId: String(channelId),
+      telegramMessageId: messageId,
+    });
+    if (existing) {
+      skipped.push({ messageId, fileName: meta.fileName, reason: "Already imported" });
+      continue;
+    }
+
+    const subject = await getOrCreateSubjectForTopic({
+      programmeId,
+      channelId,
+      topicId,
+      topicTitle: meta.topicTitle,
+    });
+    const chapter = await getOrCreateChapterForSubject(subject._id, LESSONS_CHAPTER);
+    const title =
+      buildTelegramContentTitle(meta.fileName) || meta.caption || `Lesson ${messageId}`;
+
+    if (uploadId) {
+      setProgress(uploadId, {
+        phase: meta.mediaType === "pdf" ? "uploading" : "importing",
+        message: `Importing ${meta.fileName}`,
+        currentFile: meta.fileName,
+        fileIndex: sortOrder + 1,
+        filesTotal: metas.length,
+        percent: Math.round(((sortOrder + 0.2) / metas.length) * 100),
+      });
+    }
+
+    const payload = await buildTelegramContentPayload({
+      channelId,
+      meta,
+      subject,
+      chapter,
+      title,
+      topicId,
+      uploadId,
+      pdfFileIndex: meta.mediaType === "pdf" ? pdfIndex++ : 0,
+      pdfFilesTotal: pdfTotal,
+      importSortOrder: sortOrder,
+    });
+
+    const doc = await Content.create(payload);
+    created.push({
+      ...doc.toObject(),
+      subjectName: subject.name,
+      topicTitle: meta.topicTitle,
+    });
+  }
+
+  const mapping = await upsertChannelMapping({
+    channelId,
+    channelTitle,
+    programmeId,
+    autoSync,
+    lastSyncedMessageId: maxMessageId,
+    importedCount: created.length,
+  });
+
+  if (uploadId) {
+    completeProgress(uploadId, {
+      message: `Imported ${created.length} selected file(s)`,
+      filesTotal: metas.length,
+      fileIndex: metas.length,
+    });
+  }
+
+  return {
+    created,
+    skipped,
+    maxMessageId,
+    topicsProcessed: new Set(metas.map((m) => m.topicId)).size,
     mapping,
   };
 };
