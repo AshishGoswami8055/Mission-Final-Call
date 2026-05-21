@@ -20,6 +20,8 @@ import OperationProgressOverlay from "../components/OperationProgressOverlay";
 import { formatFileSize, buildTelegramPreviewStreamUrl } from "../utils/media";
 import { createUploadId, pollUploadProgress } from "../utils/uploadProgress";
 
+const mediaDisplayName = (item) => item?.displayName || item?.fileName || "Untitled";
+
 const TelegramImportPage = () => {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -187,7 +189,8 @@ const TelegramImportPage = () => {
         topicId: topic.id,
         messageId: item.messageId,
         mediaType: item.mediaType,
-        fileName: item.fileName,
+        fileName: mediaDisplayName(item),
+        displayName: mediaDisplayName(item),
         size: item.size,
         topicTitle: topic.title,
       },
@@ -232,7 +235,8 @@ const TelegramImportPage = () => {
         topicId: activeTopic.id,
         messageId: item.messageId,
         mediaType: item.mediaType,
-        fileName: item.fileName,
+        fileName: mediaDisplayName(item),
+        displayName: mediaDisplayName(item),
         size: item.size,
         topicTitle: activeTopic.title,
       }));
@@ -245,7 +249,8 @@ const TelegramImportPage = () => {
       topicId: topic.id,
       messageId: item.messageId,
       mediaType: item.mediaType,
-      fileName: item.fileName,
+      fileName: mediaDisplayName(item),
+      displayName: mediaDisplayName(item),
       topicTitle: topic.title,
     });
   };
@@ -903,7 +908,7 @@ const TelegramImportPage = () => {
                                     <span className="shrink-0 text-teal-600">
                                       {file.mediaType === "video" ? <FiPlay size={12} /> : <FiFileText size={12} />}
                                     </span>
-                                    <span className="min-w-0 flex-1 truncate">{file.fileName}</span>
+                                    <span className="min-w-0 flex-1 truncate">{mediaDisplayName(file)}</span>
                                     <span className="hidden text-xs text-slate-500 sm:inline">{file.topicTitle}</span>
                                     <button
                                       type="button"
@@ -924,7 +929,7 @@ const TelegramImportPage = () => {
                             <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
                               <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2 dark:border-slate-800">
                                 <div className="min-w-0">
-                                  <p className="truncate text-sm font-medium">{previewFile.fileName}</p>
+                                  <p className="truncate text-sm font-medium">{mediaDisplayName(previewFile)}</p>
                                   <p className="text-xs text-slate-500">{previewFile.topicTitle}</p>
                                 </div>
                                 <button
@@ -947,7 +952,7 @@ const TelegramImportPage = () => {
                                   />
                                 ) : (
                                   <iframe
-                                    title={previewFile.fileName}
+                                    title={mediaDisplayName(previewFile)}
                                     src={previewStreamUrl}
                                     className="h-[420px] w-full rounded-lg bg-white"
                                   />
@@ -1000,7 +1005,7 @@ const TelegramImportPage = () => {
                                     {item.mediaType === "video" ? <FiPlay size={16} /> : <FiFileText size={16} />}
                                   </button>
                                   <div className="min-w-0 flex-1">
-                                    <p className="truncate font-medium">{item.fileName}</p>
+                                    <p className="truncate font-medium">{mediaDisplayName(item)}</p>
                                     <p className="text-xs text-slate-500">
                                       {item.mediaType.toUpperCase()} · {formatFileSize(item.size)}
                                     </p>

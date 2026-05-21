@@ -208,6 +208,18 @@ export const fetchTelegramChannels = async () => {
   return channels.sort((a, b) => a.title.localeCompare(b.title));
 };
 
+export const buildTelegramContentTitle = (fileName = "") => {
+  const base = String(fileName).replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
+  return base || "Telegram media";
+};
+
+/** Prefer Telegram post caption (original lesson title) over auto-generated file names. */
+export const resolveTelegramMediaTitle = ({ fileName = "", caption = null } = {}) => {
+  const cleanedCaption = String(caption || "").trim();
+  if (cleanedCaption) return cleanedCaption;
+  return buildTelegramContentTitle(fileName);
+};
+
 const getDocumentMeta = (message) => {
   const media = message?.media;
   if (!(media instanceof Api.MessageMediaDocument)) return null;
@@ -235,9 +247,12 @@ const getDocumentMeta = (message) => {
 
   const topicId = getTopicIdFromMessage(message);
 
+  const caption = String(message.message || "").trim() || null;
+
   return {
     messageId: message.id,
     fileName,
+    displayName: resolveTelegramMediaTitle({ fileName, caption }),
     mimeType,
     size,
     uploadDate: message.date ? new Date(message.date * 1000).toISOString() : null,
@@ -245,7 +260,7 @@ const getDocumentMeta = (message) => {
     mediaType: isVideo ? "video" : "pdf",
     thumbnail: null,
     topicId,
-    caption: String(message.message || "").trim() || null,
+    caption,
   };
 };
 
@@ -598,9 +613,4 @@ export const streamTelegramMedia = async ({ channelId, messageId, req, res }) =>
   }
 
   if (!res.writableEnded) res.end();
-};
-
-export const buildTelegramContentTitle = (fileName = "") => {
-  const base = String(fileName).replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
-  return base || "Telegram media";
 };

@@ -530,7 +530,7 @@ const TelegramImportModal = ({
                       </span>
                       <span className="mt-0.5 text-teal-600">{msg.mediaType === "video" ? <FiPlay size={16} /> : <FiFileText size={16} />}</span>
                       <span className="min-w-0 flex-1">
-                        <p className="truncate font-medium">{msg.fileName}</p>
+                        <p className="truncate font-medium">{msg.displayName || msg.fileName}</p>
                         <p className="text-xs text-slate-500">
                           {msg.mediaType.toUpperCase()} · {formatFileSize(msg.size)} · {formatDate(msg.uploadDate)}
                         </p>

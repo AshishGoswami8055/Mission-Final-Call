@@ -4,7 +4,7 @@ import Subject from "../models/Subject.js";
 import TelegramChannelMapping from "../models/TelegramChannelMapping.js";
 import { getOrCreateChapterForSubject } from "../utils/chapterHelpers.js";
 import { parseChapterAndTitleFromFilename } from "../utils/contentHelpers.js";
-import { buildTelegramContentTitle, getTelegramMessageMedia, fetchForumTopicsForChannel, fetchForumTopicsByIds, fetchMediaInTopic } from "./telegramService.js";
+import { resolveTelegramMediaTitle, getTelegramMessageMedia, fetchForumTopicsForChannel, fetchForumTopicsByIds, fetchMediaInTopic } from "./telegramService.js";
 import { buildTelegramPdfContentFields } from "./telegramPdfImportService.js";
 import { completeProgress, initProgress, setProgress } from "./uploadProgressBus.js";
 
@@ -168,11 +168,11 @@ export const importTelegramMessages = async ({
     }
 
     let chapterName = defaultChapterName;
-    let title = buildTelegramContentTitle(meta.fileName);
+    let title = resolveTelegramMediaTitle(meta);
     if (autoCreateChapters) {
       const parsed = parseChapterAndTitleFromFilename(meta.fileName);
       chapterName = parsed.chapterName || defaultChapterName;
-      title = parsed.title || title;
+      if (!meta.caption && parsed.title) title = parsed.title;
     }
 
     let chapter;
@@ -500,15 +500,12 @@ export const importBatchByForumTopics = async ({
         continue;
       }
 
-      const title =
-        buildTelegramContentTitle(meta.fileName) ||
-        meta.caption ||
-        `Lesson ${messageId}`;
+      const title = resolveTelegramMediaTitle(meta) || `Lesson ${messageId}`;
 
       if (uploadId) {
         setProgress(uploadId, {
           message: `Processing ${topic.title}`,
-          currentFile: meta.fileName,
+          currentFile: meta.displayName || meta.fileName,
         });
       }
 
@@ -625,14 +622,13 @@ export const importSelectedForumMessages = async ({
       topicTitle: meta.topicTitle,
     });
     const chapter = await getOrCreateChapterForSubject(subject._id, LESSONS_CHAPTER);
-    const title =
-      buildTelegramContentTitle(meta.fileName) || meta.caption || `Lesson ${messageId}`;
+    const title = resolveTelegramMediaTitle(meta) || `Lesson ${messageId}`;
 
     if (uploadId) {
       setProgress(uploadId, {
         phase: meta.mediaType === "pdf" ? "uploading" : "importing",
-        message: `Importing ${meta.fileName}`,
-        currentFile: meta.fileName,
+        message: `Importing ${meta.displayName || meta.fileName}`,
+        currentFile: meta.displayName || meta.fileName,
         fileIndex: sortOrder + 1,
         filesTotal: metas.length,
         percent: Math.round(((sortOrder + 0.2) / metas.length) * 100),
