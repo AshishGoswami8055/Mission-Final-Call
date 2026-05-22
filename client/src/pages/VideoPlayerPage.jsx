@@ -175,7 +175,6 @@ const VideoPlayerPage = () => {
   const isDark = pageDark;
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [isBuffering, setIsBuffering] = useState(false);
   const [bufferPercent, setBufferPercent] = useState(0);
   const [loadElapsedSec, setLoadElapsedSec] = useState(0);
   const loadStartedAtRef = useRef(null);
@@ -225,7 +224,6 @@ const VideoPlayerPage = () => {
   const hintedDuration = Number(item?.duration) || 0;
   const hasVideoDuration = duration > 0 && Number.isFinite(duration);
   const showInitialLoader = Boolean(src) && !hasVideoDuration;
-  const showBufferingOverlay = hasVideoDuration && isBuffering;
 
   const applyVideoDuration = useCallback((video) => {
     const dur = Number(video?.duration);
@@ -254,11 +252,9 @@ const VideoPlayerPage = () => {
 
   useEffect(() => {
     if (!src) {
-      setIsBuffering(false);
       setBufferPercent(0);
       return;
     }
-    setIsBuffering(false);
     setBufferPercent(0);
     setLoadElapsedSec(0);
     setDuration(0);
@@ -1017,15 +1013,7 @@ const VideoPlayerPage = () => {
                         updateBufferProgress(e.currentTarget);
                       }}
                       onProgress={(e) => updateBufferProgress(e.currentTarget)}
-                      onWaiting={() => {
-                        const video = videoRef.current;
-                        if (video && Number.isFinite(video.duration) && video.duration > 0) {
-                          setIsBuffering(true);
-                        }
-                      }}
-                      onPlaying={() => setIsBuffering(false)}
                       onError={() => {
-                        setIsBuffering(false);
                         toast.error("Video failed to load. Check Telegram connection and refresh.");
                       }}
                       onTimeUpdate={(e) => {
@@ -1087,15 +1075,6 @@ const VideoPlayerPage = () => {
                           <p className="text-[11px] tabular-nums text-slate-400">
                             {bufferPercent > 0 ? `${bufferPercent}% buffered` : "Connecting to stream…"}
                           </p>
-                        </div>
-                      </div>
-                    )}
-
-                    {showBufferingOverlay && (
-                      <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/45">
-                        <div className="flex items-center gap-2 rounded-full bg-black/70 px-4 py-2 text-sm text-white">
-                          <FiLoader className="animate-spin" />
-                          Buffering…
                         </div>
                       </div>
                     )}
