@@ -31,7 +31,6 @@ import StudyTracker from "../components/StudyTracker";
 import { useStudy } from "../context/StudyContext";
 import { useTheme } from "../context/ThemeContext";
 import { getTelegramVideoUrl, isTelegramLinkVideo, isTelegramStreamContent, isYouTubeUrl, resolveContentSrc } from "../utils/media";
-import { createUploadId, pollUploadProgress } from "../utils/uploadProgress";
 import { downloadDataUrl, loadScreenshotNotes, saveScreenshotNotes } from "../utils/screenshotNotes";
 import { getYouTubeThumbnailDataUrl } from "../utils/youtubeThumbnail";
 
@@ -82,7 +81,21 @@ const renderWithTimeHighlights = (text) => {
   });
 };
 
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const MIN_TELEGRAM_BUFFER_SECONDS = 12;
+const TELEGRAM_BUFFER_RETRY_MS = 250;
+
+const getBufferedAheadSeconds = (video) => {
+  if (!video || !Number.isFinite(video.currentTime) || video.buffered.length === 0) return 0;
+  const t = video.currentTime;
+  for (let i = 0; i < video.buffered.length; i += 1) {
+    const start = video.buffered.start(i);
+    const end = video.buffered.end(i);
+    if (t >= start && t <= end) {
+      return Math.max(0, end - t);
+    }
+  }
+  return 0;
+};
 
 const formatElapsed = (seconds = 0) => {
   const safe = Math.max(0, Math.floor(seconds));
@@ -189,8 +202,8 @@ const VideoPlayerPage = () => {
   const [exportingPdf, setExportingPdf] = useState(false);
   const [screenshotNotes, setScreenshotNotes] = useState([]);
   const [isScrubbing, setIsScrubbing] = useState(false);
-  const [cloudifying, setCloudifying] = useState(false);
-  const [cloudifyMessage, setCloudifyMessage] = useState("");
+  const [streamBuffering, setStreamBuffering] = useState(false);
+  const telegramAutoPlayBlockedRef = useRef(false);
   const videoRef = useRef(null);
   const playerRef = useRef(null);
   const hideTimerRef = useRef(null);
@@ -254,16 +267,55 @@ const VideoPlayerPage = () => {
   }, []);
 
   useEffect(() => {
+    if (!isTelegramStream || !src) return undefined;
+    const video = videoRef.current;
+    if (!video) return undefined;
+
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled) return;
+      const ahead = getBufferedAheadSeconds(video);
+      updateBufferProgress(video);
+
+      if (telegramAutoPlayBlockedRef.current) {
+        if (ahead >= MIN_TELEGRAM_BUFFER_SECONDS) {
+          telegramAutoPlayBlockedRef.current = false;
+          setStreamBuffering(false);
+          if (video.paused && !showInitialLoader) {
+            video.play().catch(() => {});
+          }
+        } else {
+          setStreamBuffering(true);
+        }
+      } else if (!video.paused && ahead < 4) {
+        video.pause();
+        telegramAutoPlayBlockedRef.current = true;
+        setStreamBuffering(true);
+      }
+
+      setTimeout(tick, TELEGRAM_BUFFER_RETRY_MS);
+    };
+
+    tick();
+    return () => {
+      cancelled = true;
+    };
+  }, [isTelegramStream, src, showInitialLoader, updateBufferProgress]);
+
+  useEffect(() => {
     if (!src) {
       setBufferPercent(0);
+      setStreamBuffering(false);
       return;
     }
     setBufferPercent(0);
     setLoadElapsedSec(0);
     setDuration(0);
     setCurrentTime(0);
+    setStreamBuffering(isTelegramStream);
+    telegramAutoPlayBlockedRef.current = isTelegramStream;
     loadStartedAtRef.current = Date.now();
-  }, [src, id]);
+  }, [src, id, isTelegramStream]);
 
   useEffect(() => {
     if (!showInitialLoader) {
@@ -396,27 +448,6 @@ const VideoPlayerPage = () => {
     };
     fetchItem();
   }, [id]);
-
-  const handleCloudifyPlayback = async () => {
-    if (!item?._id || cloudifying) return;
-    const uploadId = createUploadId();
-    setCloudifying(true);
-    setCloudifyMessage("Preparing smooth playback…");
-    const stopPoll = pollUploadProgress(uploadId, (data) => {
-      if (data.message) setCloudifyMessage(data.message);
-    });
-    try {
-      const { data } = await api.post(`/contents/${item._id}/cloudify`, { uploadId });
-      setItem(data.content);
-      toast.success("Smooth playback enabled — video is now on CDN");
-    } catch (error) {
-      toast.error(getApiErrorMessage(error, "Could not enable smooth playback"));
-    } finally {
-      stopPoll();
-      setCloudifying(false);
-      setCloudifyMessage("");
-    }
-  };
 
   useEffect(() => {
     let mounted = true;
@@ -640,6 +671,15 @@ const VideoPlayerPage = () => {
   const togglePlay = async () => {
     if (!videoRef.current) return;
     if (videoRef.current.paused) {
+      if (
+        isTelegramStream &&
+        getBufferedAheadSeconds(videoRef.current) < MIN_TELEGRAM_BUFFER_SECONDS
+      ) {
+        telegramAutoPlayBlockedRef.current = true;
+        setStreamBuffering(true);
+        videoRef.current.load();
+        return;
+      }
       await videoRef.current.play();
       setIsPlaying(true);
       resetControlsTimer();
@@ -934,36 +974,6 @@ const VideoPlayerPage = () => {
                 {item.subjectId?.name} / {item.chapterId?.chapterName}
               </p>
               <div className="mt-4">
-                {isTelegramStream ? (
-                  <div
-                    className={`mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm ${
-                      isDark
-                        ? "border-amber-500/30 bg-amber-500/10 text-amber-100"
-                        : "border-amber-200 bg-amber-50 text-amber-900"
-                    }`}
-                  >
-                    <div>
-                      <p className="font-medium">Playback may stutter</p>
-                      <p className={`text-xs ${isDark ? "text-amber-200/80" : "text-amber-800"}`}>
-                        This video streams live from Telegram. Upload it to Cloudinary for smooth CDN playback.
-                      </p>
-                      {cloudifyMessage ? (
-                        <p className={`mt-1 text-xs ${isDark ? "text-amber-200/70" : "text-amber-700"}`}>
-                          {cloudifyMessage}
-                        </p>
-                      ) : null}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleCloudifyPlayback}
-                      disabled={cloudifying}
-                      className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {cloudifying ? <FiLoader className="animate-spin" /> : <FiZap />}
-                      {cloudifying ? "Uploading…" : "Enable smooth playback"}
-                    </button>
-                  </div>
-                ) : null}
                 <div className="rounded-xl bg-black overflow-visible">
                 {isTelegramLink ? (
                   <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black">
@@ -1067,6 +1077,21 @@ const VideoPlayerPage = () => {
                         updateBufferProgress(e.currentTarget);
                       }}
                       onProgress={(e) => updateBufferProgress(e.currentTarget)}
+                      onWaiting={() => {
+                        if (isTelegramStream) setStreamBuffering(true);
+                      }}
+                      onPlaying={() => {
+                        if (isTelegramStream) setStreamBuffering(false);
+                      }}
+                      onCanPlay={(e) => {
+                        updateBufferProgress(e.currentTarget);
+                        if (
+                          isTelegramStream &&
+                          getBufferedAheadSeconds(e.currentTarget) >= MIN_TELEGRAM_BUFFER_SECONDS
+                        ) {
+                          setStreamBuffering(false);
+                        }
+                      }}
                       onError={() => {
                         toast.error("Video failed to load. Check Telegram connection and refresh.");
                       }}
@@ -1109,9 +1134,13 @@ const VideoPlayerPage = () => {
                       <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-black/85 px-6 text-center">
                         <FiLoader className="animate-spin text-3xl text-teal-400" />
                         <div className="space-y-1">
-                          <p className="text-sm font-semibold text-white">Loading video…</p>
+                          <p className="text-sm font-semibold text-white">
+                            {isTelegramStream ? "Preparing Telegram stream…" : "Loading video…"}
+                          </p>
                           <p className="text-xs tabular-nums text-slate-300">
-                            Waiting for duration · {formatTime(loadElapsedSec)} elapsed
+                            {isTelegramStream
+                              ? `Buffering ahead · ${formatTime(loadElapsedSec)} elapsed`
+                              : `Waiting for duration · ${formatTime(loadElapsedSec)} elapsed`}
                           </p>
                           {hintedDuration > 0 ? (
                             <p className="text-[11px] text-slate-500">
@@ -1127,8 +1156,20 @@ const VideoPlayerPage = () => {
                             />
                           </div>
                           <p className="text-[11px] tabular-nums text-slate-400">
-                            {bufferPercent > 0 ? `${bufferPercent}% buffered` : "Connecting to stream…"}
+                            {bufferPercent > 0
+                              ? `${bufferPercent}% buffered${isTelegramStream ? " · caching on server" : ""}`
+                              : isTelegramStream
+                                ? "Warming Telegram cache…"
+                                : "Connecting to stream…"}
                           </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {!showInitialLoader && streamBuffering && isTelegramStream && (
+                      <div className="pointer-events-none absolute inset-0 z-10 flex items-end justify-center pb-16">
+                        <div className="rounded-full bg-black/70 px-4 py-2 text-xs text-white backdrop-blur-sm">
+                          Buffering… {bufferPercent > 0 ? `${bufferPercent}%` : ""}
                         </div>
                       </div>
                     )}

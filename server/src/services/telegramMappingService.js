@@ -7,7 +7,6 @@ import { parseChapterAndTitleFromFilename } from "../utils/contentHelpers.js";
 import { resolveTelegramMediaTitle, getTelegramMessageMedia, fetchForumTopicsForChannel, fetchForumTopicsByIds, fetchMediaInTopic } from "./telegramService.js";
 import { deleteSubjectTree } from "./subjectCleanupService.js";
 import { buildTelegramPdfContentFields } from "./telegramPdfImportService.js";
-import { buildTelegramVideoContentFields } from "./telegramVideoImportService.js";
 import { completeProgress, initProgress, setProgress } from "./uploadProgressBus.js";
 
 const normalizeKey = (value = "") =>
@@ -345,15 +344,12 @@ const buildTelegramContentPayload = async ({
   };
 
   if (meta.mediaType === "video") {
-    const videoFields = await buildTelegramVideoContentFields({
-      channelId,
-      meta,
-      subject,
-      uploadId,
-      fileIndex,
-      filesTotal,
-    });
-    return { ...base, ...videoFields };
+    return {
+      ...base,
+      sourceType: "telegram",
+      videoSourceType: "telegram",
+      duration: meta.duration ?? null,
+    };
   }
 
   const pdfFields = await buildTelegramPdfContentFields({
