@@ -214,6 +214,7 @@ export const telegramImportBatch = async (req, res) => {
       useForumTopics = true,
       uploadId = null,
       selectedItems = null,
+      pruneUnselectedTopics = false,
     } = req.body;
 
     const hasSelectedItems = Array.isArray(selectedItems) && selectedItems.length > 0;
@@ -257,6 +258,7 @@ export const telegramImportBatch = async (req, res) => {
           cleanSync: importAll ? cleanSync : false,
           topicIds: hasTopicFilter ? topicIds : null,
           uploadId,
+          pruneUnselectedTopics: hasTopicFilter && !importAll && pruneUnselectedTopics !== false,
         });
         return res.status(201).json({
           imported: result.created.length,
@@ -266,6 +268,7 @@ export const telegramImportBatch = async (req, res) => {
           items: result.created,
           skippedItems: result.skipped,
           mapping: result.mapping,
+          pruned: result.pruned,
         });
       }
       return res.status(400).json({
@@ -333,14 +336,25 @@ export const telegramImportBatch = async (req, res) => {
 export const telegramSyncChannel = async (req, res) => {
   try {
     const { channelId } = req.params;
-    const { programmeId } = req.body;
+    const { programmeId, topicIds } = req.body;
     if (!programmeId) {
       return res.status(400).json({ message: "programmeId is required." });
     }
 
-    const mapping = await fetchChannelMapping({ channelId, programmeId });
+    let mapping = await fetchChannelMapping({ channelId, programmeId });
     if (!mapping) {
       return res.status(404).json({ message: "Channel mapping not found. Import batch first." });
+    }
+
+    if (Array.isArray(topicIds) && topicIds.length) {
+      mapping = await upsertChannelMapping({
+        channelId,
+        channelTitle: mapping.channelTitle,
+        programmeId,
+        autoSync: mapping.autoSync,
+        syncTopicIds: topicIds,
+        replaceSyncTopicIds: true,
+      });
     }
 
     const result = await syncChannelMapping(mapping);
@@ -374,12 +388,20 @@ export const telegramChannelMappings = async (req, res) => {
 
 export const telegramForumPreview = async (req, res) => {
   try {
-    const { channelId } = req.query;
+    const { channelId, programmeId } = req.query;
     if (!channelId) {
       return res.status(400).json({ message: "channelId is required." });
     }
     const preview = await fetchForumTopicsPreview({ channelId });
-    res.json(preview);
+    let mapping = null;
+    if (programmeId && mongoose.Types.ObjectId.isValid(programmeId)) {
+      mapping = await fetchChannelMapping({ channelId, programmeId });
+    }
+    res.json({
+      ...preview,
+      syncTopicIds: mapping?.syncTopicIds || [],
+      autoSyncEnabled: mapping?.autoSync ?? false,
+    });
   } catch (error) {
     res.status(400).json({ message: error.message || "Preview failed" });
   }

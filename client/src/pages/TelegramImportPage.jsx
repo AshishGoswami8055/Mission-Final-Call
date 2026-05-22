@@ -77,12 +77,24 @@ const TelegramImportPage = () => {
     setPreviewLoading(true);
     try {
       const { data } = await api.get("/telegram/forum-preview", {
-        params: { channelId: selectedChannel.id },
+        params: {
+          channelId: selectedChannel.id,
+          ...(programmeId ? { programmeId } : {}),
+        },
       });
       setPreview(data);
       const topics = data.topics || [];
-      setSelectedTopicId(topics[0]?.id ?? null);
-      setSelectedTopicIds(new Set(topics.map((t) => t.id)));
+      const trackedIds = (data.syncTopicIds || []).map(Number).filter(Boolean);
+      if (trackedIds.length) {
+        setSelectedTopicIds(new Set(trackedIds));
+        setSelectedTopicId(trackedIds[0] ?? topics[0]?.id ?? null);
+      } else {
+        setSelectedTopicIds(new Set());
+        setSelectedTopicId(topics[0]?.id ?? null);
+      }
+      if (typeof data.autoSyncEnabled === "boolean") {
+        setAutoSync(data.autoSyncEnabled);
+      }
       setSelectedFiles([]);
       setPreviewFile(null);
       setMediaFilter("all");
@@ -91,7 +103,7 @@ const TelegramImportPage = () => {
     } finally {
       setPreviewLoading(false);
     }
-  }, [selectedChannel?.id]);
+  }, [selectedChannel?.id, programmeId]);
 
   useEffect(() => {
     loadSession().catch(() => {});
@@ -404,21 +416,20 @@ const TelegramImportPage = () => {
       topicIds.map((id) => ({ id, title: `Subject ${id}`, newCount: 0 }));
 
     const cleanStep = importAll && cleanSync ? 1 : 0;
-    const totalSteps = cleanStep + topicsToImport.length;
-    let importedTotal = 0;
-    let skippedTotal = 0;
+    const uploadId = createUploadId();
 
     setBusy(true);
     setProgress({
       active: true,
       phase: cleanStep ? "cleaning" : "importing",
       percent: 2,
-      message: cleanStep ? "Removing old import…" : "Starting import…",
+      message: cleanStep ? "Removing old import…" : `Importing ${topicsToImport.length} subject(s)…`,
       current: 0,
-      total: totalSteps,
+      total: topicsToImport.length,
     });
 
     let stopTick = null;
+    let stopPoll = null;
     try {
       if (cleanStep) {
         stopTick = runWithProgressTick("cleaning", 5, 15);
@@ -430,96 +441,70 @@ const TelegramImportPage = () => {
         stopTick = null;
       }
 
-      for (let i = 0; i < topicsToImport.length; i++) {
-        const topic = topicsToImport[i];
-        const stepIndex = cleanStep + i + 1;
-        const basePercent = Math.round(((stepIndex - 1) / totalSteps) * 100);
-        const nextPercent = Math.round((stepIndex / totalSteps) * 100);
-        const uploadId = createUploadId();
-
+      stopPoll = pollUploadProgress(uploadId, (data) => {
         setProgress({
           active: true,
-          phase: "importing",
-          percent: Math.max(basePercent, 2),
-          message: `Importing ${topic.title}`,
-          current: stepIndex,
-          total: totalSteps,
-          currentLabel: topic.title,
-          detail: topic.newCount ? `${topic.newCount} new file(s)` : undefined,
+          phase: data.phase || "importing",
+          percent: Math.min(99, Number(data.percent) || 5),
+          message: data.message || "Importing selected subjects…",
+          currentLabel: data.currentFile,
+          currentFile: data.currentFile,
+          detail:
+            data.filesTotal > 0
+              ? `PDF ${Math.min(data.fileIndex + 1, data.filesTotal)}/${data.filesTotal}`
+              : `${topicsToImport.length} subject(s)`,
+          bytesLoaded: data.bytesLoaded,
+          bytesTotal: data.bytesTotal,
         });
+      });
 
-        const stopPoll = pollUploadProgress(uploadId, (data) => {
-          const slice = Math.max(nextPercent - basePercent, 1);
-          const inner = Math.max(0, Math.min(100, Number(data.percent) || 0));
-          const merged = Math.min(99, Math.round(basePercent + (inner / 100) * slice));
-          setProgress({
-            active: true,
-            phase: data.phase || "importing",
-            percent: merged,
-            message: data.message || `Importing ${topic.title}`,
-            current: stepIndex,
-            total: totalSteps,
-            currentLabel: data.currentFile || topic.title,
-            currentFile: data.currentFile,
-            detail:
-              data.filesTotal > 0
-                ? `PDF ${Math.min(data.fileIndex + 1, data.filesTotal)}/${data.filesTotal}`
-                : topic.newCount
-                  ? `${topic.newCount} new file(s)`
-                  : undefined,
-            bytesLoaded: data.bytesLoaded,
-            bytesTotal: data.bytesTotal,
-          });
-        });
+      const { data } = await api.post("/telegram/import-batch", {
+        channelId: selectedChannel.id,
+        channelTitle: selectedChannel.title,
+        programmeId,
+        importAll,
+        useForumTopics: true,
+        topicIds: importAll ? undefined : topicIds,
+        autoSync,
+        cleanSync: importAll && cleanSync,
+        uploadId,
+        pruneUnselectedTopics: !importAll,
+      });
 
-        const { data } = await api.post("/telegram/import-batch", {
-          channelId: selectedChannel.id,
-          channelTitle: selectedChannel.title,
-          programmeId,
-          importAll: false,
-          useForumTopics: true,
-          topicIds: [topic.id],
-          autoSync: i === topicsToImport.length - 1 ? autoSync : false,
-          cleanSync: false,
-          uploadId,
-        });
+      stopPoll();
+      stopPoll = null;
 
-        stopPoll();
-        importedTotal += data.imported || 0;
-        skippedTotal += data.skipped || 0;
-
-        setProgress({
-          active: true,
-          phase: "importing",
-          percent: nextPercent,
-          message: `Imported ${topic.title}`,
-          current: stepIndex,
-          total: totalSteps,
-          currentLabel: topic.title,
-          detail: `${data.imported || 0} added`,
-        });
-      }
-
+      const prunedSubjects = data.pruned?.deletedSubjects || 0;
       setProgress({
         active: true,
         phase: "done",
         percent: 100,
-        message: `Imported ${importedTotal} file(s) into ${topicsToImport.length} subject(s)`,
-        detail: skippedTotal ? `${skippedTotal} skipped` : undefined,
-        current: totalSteps,
-        total: totalSteps,
+        message: `Imported ${data.imported || 0} file(s) into ${topicsToImport.length} subject(s)`,
+        detail: [
+          data.skipped ? `${data.skipped} skipped` : null,
+          prunedSubjects ? `${prunedSubjects} unselected subject(s) removed` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ") || undefined,
+        current: topicsToImport.length,
+        total: topicsToImport.length,
       });
 
       toast.success(
-        `Imported ${importedTotal} files into ${topicsToImport.length} subject(s)` +
-          (skippedTotal ? ` (${skippedTotal} skipped)` : "")
+        `Imported ${data.imported || 0} files into ${topicsToImport.length} subject(s)` +
+          (data.skipped ? ` (${data.skipped} skipped)` : "") +
+          (prunedSubjects ? ` · removed ${prunedSubjects} unselected subject(s)` : "")
       );
+
+      setSelectedTopicIds(new Set(topicIds.map(Number)));
+      await loadPreview();
 
       setTimeout(() => {
         navigate("/", { state: { refreshCourse: true } });
       }, 1200);
     } catch (error) {
       if (stopTick) stopTick();
+      if (stopPoll) stopPoll();
       setProgress({
         active: true,
         phase: "error",
@@ -534,24 +519,31 @@ const TelegramImportPage = () => {
 
   const handleSync = async () => {
     if (!selectedChannel?.id || !programmeId) return;
+    if (!selectedTopicIds.size) {
+      toast.error("Select at least one subject to sync");
+      return;
+    }
     setBusy(true);
     setProgress({
       active: true,
       phase: "syncing",
       percent: 10,
-      message: "Syncing new uploads…",
+      message: "Syncing new uploads for selected subjects…",
     });
     const stopTick = runWithProgressTick("syncing", 10, 95);
     try {
-      await api.post(`/telegram/sync/${encodeURIComponent(selectedChannel.id)}`, { programmeId });
+      const { data } = await api.post(`/telegram/sync/${encodeURIComponent(selectedChannel.id)}`, {
+        programmeId,
+        topicIds: [...selectedTopicIds],
+      });
       stopTick();
       setProgress({
         active: true,
         phase: "done",
         percent: 100,
-        message: "Sync complete",
+        message: data.message || `Sync complete${data.imported ? ` · ${data.imported} new file(s)` : ""}`,
       });
-      toast.success("Sync complete");
+      toast.success(data.imported ? `Synced ${data.imported} new file(s)` : "Sync complete");
       await loadPreview();
       setTimeout(() => setProgress(null), 1000);
     } catch (error) {
@@ -742,9 +734,11 @@ const TelegramImportPage = () => {
                 <div className="flex flex-wrap items-center gap-4 border-b border-slate-100 px-4 py-2 text-sm dark:border-slate-800">
                   <label className="flex items-center gap-2">
                     <input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} disabled={busy} />
-                    Auto-sync new uploads
+                    Auto-sync new uploads (selected subjects only)
                   </label>
-                  <span className="text-xs text-slate-500">PDFs auto-upload to Cloudinary for fast viewing</span>
+                  <span className="text-xs text-slate-500">
+                    Only checked subjects are imported, synced, and kept in your course
+                  </span>
                   <label className="flex items-center gap-2 text-rose-700 dark:text-rose-400">
                     <input
                       type="checkbox"
@@ -785,7 +779,9 @@ const TelegramImportPage = () => {
                           />
                         </div>
                         <div className="flex items-center justify-between text-xs">
-                          <span className="text-slate-500">{selectedCount} selected</span>
+                          <span className="text-slate-500">
+                            {selectedCount} selected for import/sync
+                          </span>
                           <div className="flex gap-2">
                             <button type="button" className="font-medium text-teal-700 hover:underline dark:text-teal-400" onClick={selectAllTopics}>
                               All

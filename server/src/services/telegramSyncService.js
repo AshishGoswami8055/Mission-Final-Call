@@ -10,6 +10,13 @@ export const syncChannelMapping = async (mapping) => {
     return { imported: 0, skipped: 0 };
   }
 
+  const syncTopicIds = Array.isArray(mapping.syncTopicIds)
+    ? mapping.syncTopicIds.map(Number).filter(Boolean)
+    : [];
+  if (!syncTopicIds.length) {
+    return { imported: 0, skipped: 0, message: "No subjects selected for auto-sync." };
+  }
+
   const session = await getActiveSession();
   if (!session?.isActive) {
     return { imported: 0, skipped: 0, error: "No Telegram session" };
@@ -21,6 +28,7 @@ export const syncChannelMapping = async (mapping) => {
     programmeId: mapping.programmeId,
     autoSync: true,
     cleanSync: false,
+    topicIds: syncTopicIds,
   });
 
   return {

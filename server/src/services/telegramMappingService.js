@@ -5,7 +5,7 @@ import TelegramChannelMapping from "../models/TelegramChannelMapping.js";
 import { getOrCreateChapterForSubject } from "../utils/chapterHelpers.js";
 import { parseChapterAndTitleFromFilename } from "../utils/contentHelpers.js";
 import { resolveTelegramMediaTitle, getTelegramMessageMedia, fetchForumTopicsForChannel, fetchForumTopicsByIds, fetchMediaInTopic } from "./telegramService.js";
-import { buildTelegramPdfContentFields } from "./telegramPdfImportService.js";
+import { deleteSubjectTree } from "./subjectCleanupService.js";
 import { completeProgress, initProgress, setProgress } from "./uploadProgressBus.js";
 
 const normalizeKey = (value = "") =>
@@ -220,6 +220,8 @@ export const upsertChannelMapping = async ({
   autoSync,
   lastSyncedMessageId,
   importedCount = 0,
+  syncTopicIds = null,
+  replaceSyncTopicIds = false,
 }) => {
   const update = {
     $set: {
@@ -235,12 +237,51 @@ export const upsertChannelMapping = async ({
   if (importedCount) {
     update.$inc = { totalImported: importedCount };
   }
+  if (Array.isArray(syncTopicIds)) {
+    const normalized = [...new Set(syncTopicIds.map(Number).filter(Boolean))];
+    if (replaceSyncTopicIds) {
+      update.$set.syncTopicIds = normalized;
+    } else if (normalized.length) {
+      update.$addToSet = { syncTopicIds: { $each: normalized } };
+    }
+  }
 
   return TelegramChannelMapping.findOneAndUpdate(
     { channelId: String(channelId), programmeId },
     update,
     { upsert: true, new: true }
   );
+};
+
+export const pruneChannelSubjectsOutsideTopics = async ({
+  programmeId,
+  channelId,
+  allowedTopicIds = [],
+}) => {
+  const allowed = new Set(allowedTopicIds.map(Number).filter(Boolean));
+  if (!allowed.size) {
+    return { deletedSubjects: 0, deletedContents: 0 };
+  }
+
+  const subjects = await Subject.find({
+    programmeId,
+    telegramChannelId: String(channelId),
+  });
+
+  let deletedSubjects = 0;
+  let deletedContents = 0;
+
+  for (const subject of subjects) {
+    const topicId = Number(subject.telegramTopicId);
+    if (!topicId || allowed.has(topicId)) continue;
+    const result = await deleteSubjectTree(subject._id);
+    if (result.deleted) {
+      deletedSubjects += 1;
+      deletedContents += result.deletedContents || 0;
+    }
+  }
+
+  return { deletedSubjects, deletedContents };
 };
 
 export const fetchChannelMapping = async ({ channelId, programmeId }) =>
@@ -250,6 +291,20 @@ export const listChannelMappings = async (programmeId) =>
   TelegramChannelMapping.find({ programmeId }).sort({ updatedAt: -1 });
 
 const LESSONS_CHAPTER = "Lessons";
+
+const mapWithConcurrency = async (items, limit, worker) => {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length || 0) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await worker(items[index], index);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+};
 
 const buildTelegramContentPayload = async ({
   channelId,
@@ -387,14 +442,13 @@ export const cleanupChannelImport = async ({ programmeId, channelId }) => {
 
 export const fetchForumTopicsPreview = async ({ channelId }) => {
   const topics = await fetchForumTopicsForChannel(channelId);
-  const topicMedia = [];
   const allMessageIds = [];
 
-  for (const topic of topics) {
+  const topicMedia = await mapWithConcurrency(topics, 4, async (topic) => {
     const media = await fetchMediaInTopic({ channelId, topicId: topic.id });
     media.forEach((m) => allMessageIds.push(m.messageId));
-    topicMedia.push({ ...topic, media, mediaCount: media.length });
-  }
+    return { ...topic, media, mediaCount: media.length };
+  });
 
   const importedMap = await getImportedContentMap(channelId, allMessageIds);
 
@@ -433,6 +487,7 @@ export const importBatchByForumTopics = async ({
   cleanSync = false,
   topicIds = null,
   uploadId = null,
+  pruneUnselectedTopics = false,
 }) => {
   if (cleanSync) {
     await cleanupChannelImport({ programmeId, channelId });
@@ -531,6 +586,15 @@ export const importBatchByForumTopics = async ({
     }
   }
 
+  let pruneResult = { deletedSubjects: 0, deletedContents: 0 };
+  if (pruneUnselectedTopics && Array.isArray(topicIds) && topicIds.length) {
+    pruneResult = await pruneChannelSubjectsOutsideTopics({
+      programmeId,
+      channelId,
+      allowedTopicIds: topicIds,
+    });
+  }
+
   const mapping = await upsertChannelMapping({
     channelId,
     channelTitle,
@@ -538,6 +602,8 @@ export const importBatchByForumTopics = async ({
     autoSync,
     lastSyncedMessageId: maxMessageId,
     importedCount: created.length,
+    syncTopicIds: topics.map((topic) => topic.id),
+    replaceSyncTopicIds: true,
   });
 
   if (uploadId) {
@@ -554,6 +620,7 @@ export const importBatchByForumTopics = async ({
     maxMessageId,
     topicsProcessed: topics.length,
     mapping,
+    pruned: pruneResult,
   };
 };
 
@@ -664,6 +731,10 @@ export const importSelectedForumMessages = async ({
     });
   }
 
+  const selectedTopicIds = [
+    ...new Set(selectedItems.map((item) => Number(item.topicId)).filter(Boolean)),
+  ];
+
   const mapping = await upsertChannelMapping({
     channelId,
     channelTitle,
@@ -671,6 +742,8 @@ export const importSelectedForumMessages = async ({
     autoSync,
     lastSyncedMessageId: maxMessageId,
     importedCount: created.length,
+    syncTopicIds: selectedTopicIds,
+    replaceSyncTopicIds: false,
   });
 
   if (uploadId) {

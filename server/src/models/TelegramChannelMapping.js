@@ -35,6 +35,11 @@ const telegramChannelMappingSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    /** Forum topic IDs the user chose to import/sync (empty = sync nothing). */
+    syncTopicIds: {
+      type: [Number],
+      default: [],
+    },
   },
   { timestamps: true }
 );
