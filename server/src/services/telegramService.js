@@ -628,41 +628,87 @@ export const getTelegramMessageMedia = async ({ channelId, messageId, topicId = 
   return { client, message, meta };
 };
 
-export const downloadTelegramDocumentToFile = async ({
+const writeWithBackpressure = (writable, chunk) =>
+  new Promise((resolve, reject) => {
+    if (writable.destroyed || writable.writableEnded) return resolve();
+    const ok = writable.write(chunk, (err) => {
+      if (err) reject(err);
+    });
+    if (ok) return resolve();
+    writable.once("drain", resolve);
+    writable.once("error", reject);
+  });
+
+/** Stream a Telegram document/video to disk (handles large files without loading into RAM). */
+export const downloadTelegramMediaToFile = async ({
   channelId,
   messageId,
   destPath,
   onProgress,
 }) => {
-  const { message, meta } = await getTelegramMessageMedia({ channelId, messageId });
-  if (meta.mediaType !== "pdf") {
-    throw new Error("Telegram message is not a PDF document.");
-  }
-
-  const client = await getTelegramClient();
-  const buffer = await client.downloadMedia(message, {
-    progressCallback:
-      typeof onProgress === "function"
-        ? (downloaded, total) => {
-            onProgress({
-              bytesLoaded: Number(downloaded) || 0,
-              bytesTotal: Number(total) || meta.size || 0,
-              percent:
-                total > 0
-                  ? Math.min(100, (Number(downloaded) / Number(total)) * 100)
-                  : 0,
-            });
-          }
-        : undefined,
-  });
-
-  if (!buffer || !buffer.length) {
-    throw new Error("Failed to download Telegram PDF.");
+  const { client, message, meta } = await getTelegramMessageMedia({ channelId, messageId });
+  const totalSize = meta.size || 0;
+  if (!totalSize) {
+    throw new Error("Unknown Telegram file size.");
   }
 
   fs.mkdirSync(path.dirname(destPath), { recursive: true });
-  fs.writeFileSync(destPath, buffer);
-  return { size: buffer.length, fileName: meta.fileName };
+  const writeStream = fs.createWriteStream(destPath);
+  const iter = client.iterDownload({
+    file: message.media,
+    requestSize: 1024 * 1024,
+    offset: bigInt(0),
+    fileSize: bigInt(totalSize),
+  });
+
+  let bytesLoaded = 0;
+  try {
+    for await (const chunk of iter) {
+      const buffer = Buffer.from(chunk);
+      if (!buffer.length) continue;
+      await writeWithBackpressure(writeStream, buffer);
+      bytesLoaded += buffer.length;
+      if (typeof onProgress === "function") {
+        onProgress({
+          bytesLoaded,
+          bytesTotal: totalSize,
+          percent: totalSize > 0 ? Math.min(100, (bytesLoaded / totalSize) * 100) : 0,
+        });
+      }
+    }
+    writeStream.end();
+    await new Promise((resolve, reject) => {
+      writeStream.once("finish", resolve);
+      writeStream.once("error", reject);
+    });
+  } catch (error) {
+    writeStream.destroy();
+    try {
+      fs.unlinkSync(destPath);
+    } catch {
+      /* ignore */
+    }
+    throw error;
+  }
+
+  if (!bytesLoaded) {
+    throw new Error("Failed to download Telegram media.");
+  }
+
+  return { size: bytesLoaded, fileName: meta.fileName, mediaType: meta.mediaType };
+};
+
+export const downloadTelegramDocumentToFile = async (params) => {
+  const result = await downloadTelegramMediaToFile(params);
+  if (result.mediaType !== "pdf") {
+    try {
+      fs.unlinkSync(params.destPath);
+    } catch {
+      /* ignore */
+    }
+    throw new Error("Telegram message is not a PDF document.");
+  }
+  return result;
 };
 
 const parseRangeHeader = (rangeHeader, totalSize) => {
@@ -720,23 +766,40 @@ export const streamTelegramMedia = async ({ channelId, messageId, req, res }) =>
 
   const stream = client.iterDownload({
     file: message.media,
-    requestSize: 512 * 1024,
+    requestSize: 1024 * 1024,
     offset: bigInt(start),
     fileSize: bigInt(totalSize),
   });
 
+  let aborted = false;
+  const onClose = () => {
+    aborted = true;
+  };
+  req.on("close", onClose);
+  res.on("close", onClose);
+
   let sent = 0;
-  for await (const chunk of stream) {
-    if (res.writableEnded) break;
-    let buffer = Buffer.from(chunk);
-    if (sent + buffer.length > bytesToSend) {
-      buffer = buffer.subarray(0, bytesToSend - sent);
+  try {
+    for await (const chunk of stream) {
+      if (aborted || res.writableEnded) break;
+      let buffer = Buffer.from(chunk);
+      if (sent + buffer.length > bytesToSend) {
+        buffer = buffer.subarray(0, bytesToSend - sent);
+      }
+      if (buffer.length) {
+        await writeWithBackpressure(res, buffer);
+        sent += buffer.length;
+      }
+      if (sent >= bytesToSend) break;
     }
-    if (buffer.length) {
-      res.write(buffer);
-      sent += buffer.length;
+  } catch (error) {
+    if (!res.headersSent) {
+      return res.status(500).json({ message: "Telegram stream failed." });
     }
-    if (sent >= bytesToSend) break;
+    console.warn("[telegram-stream]", error.message);
+  } finally {
+    req.off("close", onClose);
+    res.off("close", onClose);
   }
 
   if (!res.writableEnded) res.end();

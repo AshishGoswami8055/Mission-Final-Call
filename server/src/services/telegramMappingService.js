@@ -7,6 +7,7 @@ import { parseChapterAndTitleFromFilename } from "../utils/contentHelpers.js";
 import { resolveTelegramMediaTitle, getTelegramMessageMedia, fetchForumTopicsForChannel, fetchForumTopicsByIds, fetchMediaInTopic } from "./telegramService.js";
 import { deleteSubjectTree } from "./subjectCleanupService.js";
 import { buildTelegramPdfContentFields } from "./telegramPdfImportService.js";
+import { buildTelegramVideoContentFields } from "./telegramVideoImportService.js";
 import { completeProgress, initProgress, setProgress } from "./uploadProgressBus.js";
 
 const normalizeKey = (value = "") =>
@@ -114,16 +115,18 @@ export const importTelegramMessages = async ({
   const skipped = [];
   let maxMessageId = 0;
 
-  const pdfMessages = messages.filter((m) => m.mediaType === "pdf");
+  const cloudifyMessages = messages.filter(
+    (m) => m.mediaType === "pdf" || m.mediaType === "video"
+  );
   if (uploadId) {
     initProgress(uploadId, {
       phase: "pending",
       message: "Preparing Telegram import…",
-      filesTotal: pdfMessages.length,
+      filesTotal: cloudifyMessages.length,
       fileIndex: 0,
     });
   }
-  let pdfIndex = 0;
+  let mediaIndex = 0;
 
   for (const meta of messages) {
     const messageId = Number(meta.messageId);
@@ -190,8 +193,9 @@ export const importTelegramMessages = async ({
       chapter,
       title,
       uploadId,
-      pdfFileIndex: meta.mediaType === "pdf" ? pdfIndex++ : 0,
-      pdfFilesTotal: pdfMessages.length,
+      mediaFileIndex:
+        meta.mediaType === "pdf" || meta.mediaType === "video" ? mediaIndex++ : 0,
+      mediaFilesTotal: cloudifyMessages.length,
     });
 
     const doc = await Content.create(payload);
@@ -206,7 +210,7 @@ export const importTelegramMessages = async ({
   if (uploadId) {
     completeProgress(uploadId, {
       message: `Imported ${created.length} item(s)`,
-      filesTotal: pdfMessages.length,
+      filesTotal: cloudifyMessages.length,
       fileIndex: pdfMessages.length,
     });
   }
@@ -315,10 +319,14 @@ const buildTelegramContentPayload = async ({
   title,
   topicId = null,
   uploadId = null,
-  pdfFileIndex = 0,
-  pdfFilesTotal = 1,
+  mediaFileIndex = 0,
+  mediaFilesTotal = 1,
+  pdfFileIndex = null,
+  pdfFilesTotal = null,
   importSortOrder = null,
 }) => {
+  const fileIndex = pdfFileIndex != null ? pdfFileIndex : mediaFileIndex;
+  const filesTotal = pdfFilesTotal != null ? pdfFilesTotal : mediaFilesTotal;
   const messageId = Number(meta.messageId);
   const base = {
     subjectId: subject._id,
@@ -337,12 +345,15 @@ const buildTelegramContentPayload = async ({
   };
 
   if (meta.mediaType === "video") {
-    return {
-      ...base,
-      sourceType: "telegram",
-      videoSourceType: "telegram",
-      duration: meta.duration ?? null,
-    };
+    const videoFields = await buildTelegramVideoContentFields({
+      channelId,
+      meta,
+      subject,
+      uploadId,
+      fileIndex,
+      filesTotal,
+    });
+    return { ...base, ...videoFields };
   }
 
   const pdfFields = await buildTelegramPdfContentFields({
@@ -350,8 +361,8 @@ const buildTelegramContentPayload = async ({
     meta,
     subject,
     uploadId,
-    fileIndex: pdfFileIndex,
-    filesTotal: pdfFilesTotal,
+    fileIndex,
+    filesTotal,
   });
 
   return { ...base, ...pdfFields };
@@ -519,17 +530,19 @@ export const importBatchByForumTopics = async ({
     const mediaItems = await fetchMediaInTopic({ channelId, topicId: topic.id });
     allMedia.push(...mediaItems.map((m) => ({ ...m, topicId: topic.id, topicTitle: topic.title })));
   }
-  const pdfTotal = allMedia.filter((m) => m.mediaType === "pdf").length;
+  const mediaTotal = allMedia.filter(
+    (m) => m.mediaType === "pdf" || m.mediaType === "video"
+  ).length;
 
   if (uploadId) {
     initProgress(uploadId, {
       phase: "pending",
       message: "Preparing subject import…",
-      filesTotal: pdfTotal,
+      filesTotal: mediaTotal,
       fileIndex: 0,
     });
   }
-  let pdfIndex = 0;
+  let mediaIndex = 0;
 
   for (const topic of topics) {
     const subject = await getOrCreateSubjectForTopic({
@@ -573,8 +586,9 @@ export const importBatchByForumTopics = async ({
         title,
         topicId: topic.id,
         uploadId,
-        pdfFileIndex: meta.mediaType === "pdf" ? pdfIndex++ : 0,
-        pdfFilesTotal: pdfTotal,
+        mediaFileIndex:
+          meta.mediaType === "pdf" || meta.mediaType === "video" ? mediaIndex++ : 0,
+        mediaFilesTotal: mediaTotal,
       });
 
       const doc = await Content.create(payload);
@@ -610,8 +624,8 @@ export const importBatchByForumTopics = async ({
   if (uploadId) {
     completeProgress(uploadId, {
       message: `Imported ${created.length} item(s) from ${topics.length} subject(s)`,
-      filesTotal: pdfTotal,
-      fileIndex: pdfTotal,
+      filesTotal: mediaTotal,
+      fileIndex: mediaTotal,
     });
   }
 
@@ -643,7 +657,6 @@ export const importSelectedForumMessages = async ({
   const created = [];
   const skipped = [];
   let maxMessageId = 0;
-  let pdfIndex = 0;
 
   const metas = [];
   for (const item of selectedItems) {
@@ -663,7 +676,10 @@ export const importSelectedForumMessages = async ({
     }
   }
 
-  const pdfTotal = metas.filter((m) => m.mediaType === "pdf").length;
+  const mediaTotal = metas.filter(
+    (m) => m.mediaType === "pdf" || m.mediaType === "video"
+  ).length;
+  let mediaIndex = 0;
   if (uploadId) {
     initProgress(uploadId, {
       phase: "pending",
@@ -719,8 +735,9 @@ export const importSelectedForumMessages = async ({
       title,
       topicId,
       uploadId,
-      pdfFileIndex: meta.mediaType === "pdf" ? pdfIndex++ : 0,
-      pdfFilesTotal: pdfTotal,
+      mediaFileIndex:
+        meta.mediaType === "pdf" || meta.mediaType === "video" ? mediaIndex++ : 0,
+      mediaFilesTotal: mediaTotal || metas.length,
       importSortOrder: sortOrder,
     });
 

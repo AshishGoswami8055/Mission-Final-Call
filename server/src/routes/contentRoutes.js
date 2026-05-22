@@ -1,6 +1,7 @@
 import express from "express";
 import {
   bulkUploadContents,
+  cloudifyContent,
   createContent,
   deleteContent,
   getContentById,
@@ -17,6 +18,7 @@ router.use(protect);
 router.get("/upload-progress/:uploadId", getUploadProgress);
 router.route("/").get(getContents).post(upload.single("file"), createContent);
 router.post("/bulk-upload", upload.array("files", 100), bulkUploadContents);
+router.post("/:id/cloudify", cloudifyContent);
 router.get("/:id", getContentById);
 router.route("/:id").put(updateContent).delete(deleteContent);
 

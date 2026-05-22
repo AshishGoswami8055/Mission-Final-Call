@@ -31,6 +31,7 @@ import StudyTracker from "../components/StudyTracker";
 import { useStudy } from "../context/StudyContext";
 import { useTheme } from "../context/ThemeContext";
 import { getTelegramVideoUrl, isTelegramLinkVideo, isTelegramStreamContent, isYouTubeUrl, resolveContentSrc } from "../utils/media";
+import { createUploadId, pollUploadProgress } from "../utils/uploadProgress";
 import { downloadDataUrl, loadScreenshotNotes, saveScreenshotNotes } from "../utils/screenshotNotes";
 import { getYouTubeThumbnailDataUrl } from "../utils/youtubeThumbnail";
 
@@ -188,6 +189,8 @@ const VideoPlayerPage = () => {
   const [exportingPdf, setExportingPdf] = useState(false);
   const [screenshotNotes, setScreenshotNotes] = useState([]);
   const [isScrubbing, setIsScrubbing] = useState(false);
+  const [cloudifying, setCloudifying] = useState(false);
+  const [cloudifyMessage, setCloudifyMessage] = useState("");
   const videoRef = useRef(null);
   const playerRef = useRef(null);
   const hideTimerRef = useRef(null);
@@ -393,6 +396,27 @@ const VideoPlayerPage = () => {
     };
     fetchItem();
   }, [id]);
+
+  const handleCloudifyPlayback = async () => {
+    if (!item?._id || cloudifying) return;
+    const uploadId = createUploadId();
+    setCloudifying(true);
+    setCloudifyMessage("Preparing smooth playback…");
+    const stopPoll = pollUploadProgress(uploadId, (data) => {
+      if (data.message) setCloudifyMessage(data.message);
+    });
+    try {
+      const { data } = await api.post(`/contents/${item._id}/cloudify`, { uploadId });
+      setItem(data.content);
+      toast.success("Smooth playback enabled — video is now on CDN");
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Could not enable smooth playback"));
+    } finally {
+      stopPoll();
+      setCloudifying(false);
+      setCloudifyMessage("");
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -910,6 +934,36 @@ const VideoPlayerPage = () => {
                 {item.subjectId?.name} / {item.chapterId?.chapterName}
               </p>
               <div className="mt-4">
+                {isTelegramStream ? (
+                  <div
+                    className={`mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm ${
+                      isDark
+                        ? "border-amber-500/30 bg-amber-500/10 text-amber-100"
+                        : "border-amber-200 bg-amber-50 text-amber-900"
+                    }`}
+                  >
+                    <div>
+                      <p className="font-medium">Playback may stutter</p>
+                      <p className={`text-xs ${isDark ? "text-amber-200/80" : "text-amber-800"}`}>
+                        This video streams live from Telegram. Upload it to Cloudinary for smooth CDN playback.
+                      </p>
+                      {cloudifyMessage ? (
+                        <p className={`mt-1 text-xs ${isDark ? "text-amber-200/70" : "text-amber-700"}`}>
+                          {cloudifyMessage}
+                        </p>
+                      ) : null}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCloudifyPlayback}
+                      disabled={cloudifying}
+                      className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {cloudifying ? <FiLoader className="animate-spin" /> : <FiZap />}
+                      {cloudifying ? "Uploading…" : "Enable smooth playback"}
+                    </button>
+                  </div>
+                ) : null}
                 <div className="rounded-xl bg-black overflow-visible">
                 {isTelegramLink ? (
                   <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black">

@@ -28,13 +28,13 @@ export const isTelegramUrl = (url = "") =>
   /^https?:\/\/(?:t\.me|telegram\.me)\//i.test(String(url || "").trim()) ||
   /^tg:\/\//i.test(String(url || "").trim());
 
-/** GramJS-streamed Telegram media stored as metadata only. */
+/** GramJS-streamed Telegram media stored as metadata only (not yet on Cloudinary). */
 export const isTelegramStreamContent = (item) =>
   Boolean(
     item &&
       item.telegramMessageId &&
       item.telegramChannelId &&
-      (item.sourceType === "telegram" || item.telegramSource === true)
+      item.sourceType === "telegram"
   );
 
 const resolveApiBase = () => {

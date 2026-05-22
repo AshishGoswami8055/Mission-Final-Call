@@ -32,13 +32,8 @@ import {
   initProgress,
   setProgress,
 } from "../services/uploadProgressBus.js";
-import {
-  autofitCompressVideo,
-  compressDefaults,
-  needsCompression,
-  probeVideo,
-} from "../services/videoCompressService.js";
-const CLOUDINARY_FREE_LIMIT_BYTES = 95 * 1024 * 1024; // 95 MB safety margin under 100 MB
+import { prepareVideoForCloud } from "../services/videoCloudPrepService.js";
+import { migrateTelegramVideoContentToCloudinary } from "../services/telegramVideoImportService.js";
 
 const isProductionMediaMode = () => process.env.NODE_ENV === "production";
 
@@ -81,103 +76,6 @@ const getOrCreateChapterForSubject = async (subjectId, chapterName) => {
     }
     throw err;
   }
-};
-
-const compressedTempPathFor = (sourceAbsolutePath) => {
-  const base = path.basename(sourceAbsolutePath, path.extname(sourceAbsolutePath));
-  const stamp = Date.now().toString(36);
-  return path.join(TEMP_VIDEO_UPLOAD_DIR, `${base}_${stamp}_720p.mp4`);
-};
-
-/**
- * Re-encode the video to 720p H.264 + AAC + faststart when it's too large
- * for Cloudinary or in a less compatible format. Emits live progress to
- * the upload bus under phase "compressing". Returns the path that should
- * be uploaded to Cloudinary (compressed temp file or the original) and a
- * cleanup callback.
- */
-const prepareVideoForCloud = async ({ sourcePath, originalSizeBytes, uploadId }) => {
-  let probe = null;
-  let probeError = null;
-  try {
-    probe = await probeVideo(sourcePath);
-  } catch (err) {
-    probeError = err;
-    probe = null;
-    console.warn(`[content] probeVideo failed: ${err.message}`);
-  }
-
-  // Always compress for the Cloudinary path. The whole point is to (a) fit
-  // under the free 100 MB limit and (b) deliver a consistent web-friendly
-  // 720p H.264 + faststart MP4 to viewers. Set
-  // VIDEO_COMPRESS_ALWAYS=0 in server/.env to fall back to the old "skip if
-  // already small + H.264 + ≤720p" logic.
-  const alwaysCompress = String(process.env.VIDEO_COMPRESS_ALWAYS || "1") !== "0";
-  const sizeBytes = Number(originalSizeBytes || 0);
-  const sizeOverThreshold = sizeBytes >= compressDefaults.SKIP_IF_BELOW_BYTES;
-  const shouldCompress = alwaysCompress
-    ? true
-    : probe
-      ? needsCompression(probe)
-      : sizeOverThreshold;
-
-  if (!shouldCompress) {
-    return {
-      pathToUpload: sourcePath,
-      compressedPath: null,
-      probe,
-      compressed: false,
-    };
-  }
-
-  const target = compressedTempPathFor(sourcePath);
-  if (uploadId) {
-    setProgress(uploadId, {
-      phase: "compressing",
-      percent: 0,
-      message: `Compressing to ${compressDefaults.TARGET_HEIGHT}p (CRF ${compressDefaults.CRF})`,
-      bytesLoaded: 0,
-      bytesTotal: 0,
-      bytesPerSecond: 0,
-    });
-  }
-
-  const result = await autofitCompressVideo({
-    inputPath: sourcePath,
-    outputPath: target,
-    maxBytes: CLOUDINARY_FREE_LIMIT_BYTES,
-    onProgress: uploadId
-      ? ({ percent, currentSeconds, totalSeconds, speed, label, attempt, attempts }) => {
-          setProgress(uploadId, {
-            phase: "compressing",
-            percent,
-            bytesLoaded: Math.round(currentSeconds || 0),
-            bytesTotal: Math.round(totalSeconds || 0),
-            bytesPerSecond: 0,
-            compressSpeed: speed || null,
-            message: attempts > 1
-              ? `Compressing (${label}) · attempt ${attempt}/${attempts}`
-              : `Compressing (${label})`,
-          });
-        }
-      : undefined,
-  });
-
-  if (!result.fits) {
-    throw new Error(
-      `Compressed video is still ${(result.sizeBytes / 1024 / 1024).toFixed(1)} MB after maximum compression (${result.attemptLabel}). Cloudinary free-plan limit is 100 MB per asset. Trim the video, split it into shorter parts, or upgrade your Cloudinary plan.`
-    );
-  }
-
-  return {
-    pathToUpload: target,
-    compressedPath: target,
-    probe,
-    compressed: true,
-    originalSizeBytes,
-    finalSizeBytes: result.sizeBytes,
-    attemptLabel: result.attemptLabel,
-  };
 };
 
 const toUploadsRelativePath = (absolutePath) => {
@@ -793,6 +691,37 @@ export const updateContent = async (req, res) => {
     .populate("subjectId", "name")
     .populate("chapterId", "chapterName");
   res.json(mapContent(populated));
+};
+
+/** Upload an existing Telegram-stream video to Cloudinary for smooth CDN playback. */
+export const cloudifyContent = async (req, res) => {
+  const content = await Content.findById(req.params.id);
+  if (!content) return res.status(404).json({ message: "Content not found" });
+  if (content.type !== "video") {
+    return res.status(400).json({ message: "Only videos can be moved to Cloudinary." });
+  }
+  if (content.sourceType === "cloudinary" && content.videoUrl) {
+    const populated = await Content.findById(content._id)
+      .populate("subjectId", "name")
+      .populate("chapterId", "chapterName");
+    return res.json({ message: "Already on Cloudinary", content: mapContent(populated) });
+  }
+
+  const uploadId = String(req.body?.uploadId || "").trim() || null;
+  try {
+    const updated = await migrateTelegramVideoContentToCloudinary(content, { uploadId });
+    const populated = await Content.findById(updated._id)
+      .populate("subjectId", "name")
+      .populate("chapterId", "chapterName");
+    res.json({
+      message: "Video uploaded to Cloudinary — playback should be smooth now.",
+      content: mapContent(populated),
+    });
+  } catch (error) {
+    if (uploadId) failProgress(uploadId, error.message || "Cloudify failed");
+    console.error("[content.cloudify]", error);
+    res.status(500).json({ message: error.message || "Could not upload video to Cloudinary." });
+  }
 };
 
 export const deleteContent = async (req, res) => {
