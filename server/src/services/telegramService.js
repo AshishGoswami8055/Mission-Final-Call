@@ -2,7 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { applyCorsHeaders } from "../config/cors.js";
-import { streamTelegramMediaWithCache } from "./telegramStreamCacheService.js";
 import TelegramSession from "../models/TelegramSession.js";
 
 const require = createRequire(import.meta.url);
@@ -712,11 +711,96 @@ export const downloadTelegramDocumentToFile = async (params) => {
   return result;
 };
 
-export const streamTelegramMedia = async ({ channelId, messageId, req, res }) =>
-  streamTelegramMediaWithCache({
-    channelId,
-    messageId,
-    req,
-    res,
-    getMedia: getTelegramMessageMedia,
+const parseRangeHeader = (rangeHeader, totalSize) => {
+  if (!rangeHeader || !/^bytes=/i.test(rangeHeader)) {
+    return { start: 0, end: totalSize - 1, partial: false };
+  }
+
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(String(rangeHeader).trim());
+  if (!match) {
+    return { start: 0, end: totalSize - 1, partial: false };
+  }
+
+  let start = match[1] ? parseInt(match[1], 10) : 0;
+  let end = match[2] ? parseInt(match[2], 10) : totalSize - 1;
+
+  if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= totalSize) {
+    return { invalid: true };
+  }
+
+  end = Math.min(end, totalSize - 1);
+  return { start, end, partial: true };
+};
+
+export const streamTelegramMedia = async ({ channelId, messageId, req, res }) => {
+  const { client, message, meta } = await getTelegramMessageMedia({ channelId, messageId });
+  const totalSize = meta.size || 0;
+
+  if (!totalSize) {
+    return res.status(416).json({ message: "Unknown file size." });
+  }
+
+  const range = parseRangeHeader(req.headers.range, totalSize);
+  if (range.invalid) {
+    res.setHeader("Content-Range", `bytes */${totalSize}`);
+    return res.status(416).end();
+  }
+
+  const { start, end, partial } = range;
+  const bytesToSend = end - start + 1;
+
+  res.setHeader("Accept-Ranges", "bytes");
+  res.setHeader("Content-Type", meta.mimeType || "video/mp4");
+  res.setHeader("Content-Disposition", `inline; filename="${meta.fileName.replace(/"/g, "")}"`);
+  res.setHeader("Cache-Control", "private, max-age=3600");
+  applyCorsHeaders(req, res);
+
+  if (partial) {
+    res.status(206);
+    res.setHeader("Content-Range", `bytes ${start}-${end}/${totalSize}`);
+    res.setHeader("Content-Length", String(bytesToSend));
+  } else {
+    res.status(200);
+    res.setHeader("Content-Length", String(totalSize));
+  }
+
+  const stream = client.iterDownload({
+    file: message.media,
+    requestSize: 1024 * 1024,
+    offset: bigInt(start),
+    fileSize: bigInt(totalSize),
   });
+
+  let aborted = false;
+  const onClose = () => {
+    aborted = true;
+  };
+  req.on("close", onClose);
+  res.on("close", onClose);
+
+  let sent = 0;
+  try {
+    for await (const chunk of stream) {
+      if (aborted || res.writableEnded) break;
+      let buffer = Buffer.from(chunk);
+      if (sent + buffer.length > bytesToSend) {
+        buffer = buffer.subarray(0, bytesToSend - sent);
+      }
+      if (buffer.length) {
+        await writeWithBackpressure(res, buffer);
+        sent += buffer.length;
+      }
+      if (sent >= bytesToSend) break;
+    }
+  } catch (error) {
+    if (!res.headersSent) {
+      return res.status(500).json({ message: "Telegram stream failed." });
+    }
+    console.warn("[telegram-stream]", error.message);
+  } finally {
+    req.off("close", onClose);
+    res.off("close", onClose);
+  }
+
+  if (!res.writableEnded) res.end();
+};

@@ -229,6 +229,11 @@ const VideoPlayerPage = () => {
       setDuration(dur);
       return true;
     }
+    const hint = Number(itemRef.current?.duration) || 0;
+    if (hint > 0) {
+      setDuration(hint);
+      return true;
+    }
     return false;
   }, []);
 
@@ -976,15 +981,23 @@ const VideoPlayerPage = () => {
                   >
                     <div className="overflow-hidden rounded-xl relative">
                     <video
+                      key={src}
                       ref={videoRef}
                       className="aspect-video w-full"
                       src={src}
                       controls={false}
                       preload="auto"
+                      playsInline
                       onLoadStart={() => {
-                        setDuration(0);
                         setBufferPercent(0);
                         loadStartedAtRef.current = Date.now();
+                        const hint = Number(itemRef.current?.duration) || 0;
+                        const telegram = itemRef.current
+                          ? isTelegramStreamContent(itemRef.current)
+                          : false;
+                        if (!telegram || hint <= 0) {
+                          setDuration(0);
+                        }
                       }}
                       onLoadedMetadata={(e) => {
                         const video = e.currentTarget;
