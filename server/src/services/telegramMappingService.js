@@ -6,6 +6,7 @@ import { getOrCreateChapterForSubject } from "../utils/chapterHelpers.js";
 import { parseChapterAndTitleFromFilename } from "../utils/contentHelpers.js";
 import { resolveTelegramMediaTitle, getTelegramMessageMedia, fetchForumTopicsForChannel, fetchForumTopicsByIds, fetchMediaInTopic } from "./telegramService.js";
 import { deleteSubjectTree } from "./subjectCleanupService.js";
+import { buildTelegramPdfContentFields } from "./telegramPdfImportService.js";
 import { completeProgress, initProgress, setProgress } from "./uploadProgressBus.js";
 
 const normalizeKey = (value = "") =>
