@@ -3,7 +3,7 @@
  *   <Loader />                       inline default spinner
  *   <Loader label="Loading…" />      spinner + helper text
  *   <Loader variant="dots" />        animated three-dot loader
- *   <Loader fullPage />              fixed full-page overlay with backdrop blur
+ *   <Loader fullPage brand label="Loading your workspace" subtitle="…" />
  *   <Skeleton lines={3} />           shimmer placeholder block
  */
 
@@ -44,6 +44,8 @@ const Loader = ({
   variant = "spinner",
   size = "md",
   label = "",
+  subtitle = "",
+  brand = false,
   fullPage = false,
   percent = null,
   className = "",
@@ -52,25 +54,66 @@ const Loader = ({
 
   if (fullPage) {
     return (
-      <div className="loader-overlay" role="status" aria-live="polite">
-        <div className="anim-scale-in flex w-full max-w-sm flex-col items-center gap-4 rounded-2xl border border-slate-200 bg-white px-8 py-7 shadow-sm dark:border-slate-700/70 dark:bg-slate-900/80 dark:shadow-none">
-          {indicator}
-          <p className="text-sm font-medium text-slate-600 dark:text-slate-300">
-            {label || "Loading…"}
-          </p>
-          {percent != null && (
-            <>
-              <p className="font-display text-2xl font-bold tabular-nums text-teal-700 dark:text-teal-400">
-                {Math.round(percent)}%
-              </p>
-              <div className="progress-bar h-2 w-full">
-                <div
-                  className="progress-bar-fill progress-bar-fill-default h-full transition-all duration-300"
-                  style={{ width: `${Math.max(2, Math.min(100, percent))}%` }}
-                />
-              </div>
-            </>
+      <div
+        className="loader-overlay loader-overlay--splash"
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+      >
+        <div className="loader-splash-bg" aria-hidden="true">
+          <div className="loader-splash-orb loader-splash-orb--blue" />
+          <div className="loader-splash-orb loader-splash-orb--violet" />
+          <svg className="loader-splash-grid" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <pattern id="loader-grid" width="24" height="24" patternUnits="userSpaceOnUse">
+                <circle cx="2" cy="2" r="1" fill="currentColor" />
+              </pattern>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#loader-grid)" />
+          </svg>
+        </div>
+
+        <div className="loader-splash-panel anim-scale-in">
+          {brand && (
+            <div className="loader-splash-brand">
+              <span className="loader-splash-mark" aria-hidden="true">
+                C
+              </span>
+              <span className="loader-splash-name">CDS Journey</span>
+            </div>
           )}
+
+          <div className="loader-splash-body">
+            {indicator}
+            <div className="loader-splash-copy">
+              <p className="loader-splash-title">{label || "Loading…"}</p>
+              {subtitle ? <p className="loader-splash-subtitle">{subtitle}</p> : null}
+            </div>
+
+            {percent != null ? (
+              <div className="loader-splash-progress w-full">
+                <p className="loader-splash-percent">{Math.round(percent)}%</p>
+                <div className="progress-bar h-2 w-full">
+                  <div
+                    className="progress-bar-fill progress-bar-fill-default h-full transition-all duration-300"
+                    style={{ width: `${Math.max(2, Math.min(100, percent))}%` }}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="loader-splash-track" aria-hidden="true">
+                <div className="loader-splash-track-fill" />
+              </div>
+            )}
+
+            {brand && (
+              <div className="loader-splash-preview" aria-hidden="true">
+                <Skeleton height="h-2.5" width="w-full" />
+                <Skeleton height="h-2.5" width="w-11/12" />
+                <Skeleton height="h-2.5" width="w-4/6" />
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );

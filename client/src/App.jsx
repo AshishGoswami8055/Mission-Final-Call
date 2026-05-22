@@ -18,7 +18,17 @@ import StudyCompleteCelebration from "./components/StudyCompleteCelebration";
 
 const PrivateRoute = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
-  if (loading) return <Loader fullPage label="Loading your workspace…" />;
+  if (loading) {
+    return (
+      <Loader
+        fullPage
+        brand
+        size="lg"
+        label="Loading your workspace"
+        subtitle="Preparing courses, subjects, and your study dashboard…"
+      />
+    );
+  }
   return isAuthenticated ? children : <Navigate to="/login" replace />;
 };
 
