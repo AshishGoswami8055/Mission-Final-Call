@@ -175,8 +175,6 @@ const VideoPlayerPage = () => {
   const isDark = pageDark;
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [isVideoLoading, setIsVideoLoading] = useState(false);
-  const [isVideoReady, setIsVideoReady] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
   const [bufferPercent, setBufferPercent] = useState(0);
   const [loadElapsedSec, setLoadElapsedSec] = useState(0);
@@ -224,8 +222,19 @@ const VideoPlayerPage = () => {
     item?.thumbnail ||
     (youtubeVideoId ? `https://img.youtube.com/vi/${youtubeVideoId}/hqdefault.jpg` : "");
 
-  const expectedDuration = duration > 0 ? duration : Number(item?.duration) || 0;
-  const showVideoLoader = Boolean(src) && (!isVideoReady || isBuffering);
+  const hintedDuration = Number(item?.duration) || 0;
+  const hasVideoDuration = duration > 0 && Number.isFinite(duration);
+  const showInitialLoader = Boolean(src) && !hasVideoDuration;
+  const showBufferingOverlay = hasVideoDuration && isBuffering;
+
+  const applyVideoDuration = useCallback((video) => {
+    const dur = Number(video?.duration);
+    if (Number.isFinite(dur) && dur > 0) {
+      setDuration(dur);
+      return true;
+    }
+    return false;
+  }, []);
 
   const updateBufferProgress = useCallback((video) => {
     if (!video) return;
@@ -243,33 +252,25 @@ const VideoPlayerPage = () => {
     }
   }, []);
 
-  const markVideoReady = useCallback(() => {
-    setIsVideoReady(true);
-    setIsVideoLoading(false);
-    setIsBuffering(false);
-    loadStartedAtRef.current = null;
-  }, []);
-
   useEffect(() => {
     if (!src) {
-      setIsVideoLoading(false);
-      setIsVideoReady(true);
       setIsBuffering(false);
       setBufferPercent(0);
       return;
     }
-    setIsVideoLoading(true);
-    setIsVideoReady(false);
     setIsBuffering(false);
     setBufferPercent(0);
     setLoadElapsedSec(0);
-    setDuration(Number(item?.duration) || 0);
+    setDuration(0);
     setCurrentTime(0);
     loadStartedAtRef.current = Date.now();
-  }, [src, id, item?.duration]);
+  }, [src, id]);
 
   useEffect(() => {
-    if (!isVideoLoading || isVideoReady) return undefined;
+    if (!showInitialLoader) {
+      loadStartedAtRef.current = null;
+      return undefined;
+    }
     setLoadElapsedSec(
       loadStartedAtRef.current
         ? Math.floor((Date.now() - loadStartedAtRef.current) / 1000)
@@ -280,18 +281,7 @@ const VideoPlayerPage = () => {
       setLoadElapsedSec(Math.floor((Date.now() - loadStartedAtRef.current) / 1000));
     }, 1000);
     return () => clearInterval(interval);
-  }, [isVideoLoading, isVideoReady]);
-
-  useEffect(() => {
-    if (!isVideoLoading || isVideoReady || !src) return undefined;
-    const fallback = setTimeout(() => {
-      const video = videoRef.current;
-      if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-        markVideoReady();
-      }
-    }, 12000);
-    return () => clearTimeout(fallback);
-  }, [isVideoLoading, isVideoReady, src, markVideoReady]);
+  }, [showInitialLoader]);
 
   useEffect(() => {
     if (!processingStartedAt) {
@@ -998,24 +988,22 @@ const VideoPlayerPage = () => {
                       controls={false}
                       preload="auto"
                       onLoadStart={() => {
-                        setIsVideoLoading(true);
-                        setIsVideoReady(false);
+                        setDuration(0);
                         setBufferPercent(0);
                         loadStartedAtRef.current = Date.now();
                       }}
                       onLoadedMetadata={(e) => {
                         const video = e.currentTarget;
-                        const dur = video.duration || Number(item?.duration) || 0;
-                        if (Number.isFinite(dur) && dur > 0) setDuration(dur);
+                        applyVideoDuration(video);
                         setVolume(video.volume);
                         updateBufferProgress(video);
-                        if (!id) return;
+                        const dur = video.duration || 0;
+                        if (!id || !(dur > 0)) return;
                         const saved = loadVideoPosition(id);
                         if (
                           saved != null &&
                           Number.isFinite(saved) &&
                           saved >= MIN_RESUME_SECONDS &&
-                          dur > 0 &&
                           saved < dur - MIN_RESUME_SECONDS
                         ) {
                           video.currentTime = saved;
@@ -1024,35 +1012,19 @@ const VideoPlayerPage = () => {
                           toast.success(`Resumed from ${formatTime(saved)}`);
                         }
                       }}
-                      onProgress={(e) => updateBufferProgress(e.currentTarget)}
-                      onCanPlay={(e) => {
-                        const video = e.currentTarget;
-                        updateBufferProgress(video);
-                        const dur =
-                          Number.isFinite(video.duration) && video.duration > 0
-                            ? video.duration
-                            : Number(item?.duration) || 0;
-                        let pct = 0;
-                        if (dur > 0 && video.buffered.length > 0) {
-                          pct = (video.buffered.end(video.buffered.length - 1) / dur) * 100;
-                        }
-                        if (dur > 0 && pct >= 10) {
-                          markVideoReady();
-                        }
-                      }}
-                      onCanPlayThrough={(e) => {
+                      onDurationChange={(e) => {
+                        applyVideoDuration(e.currentTarget);
                         updateBufferProgress(e.currentTarget);
-                        markVideoReady();
                       }}
+                      onProgress={(e) => updateBufferProgress(e.currentTarget)}
                       onWaiting={() => {
-                        if (isVideoReady) setIsBuffering(true);
+                        const video = videoRef.current;
+                        if (video && Number.isFinite(video.duration) && video.duration > 0) {
+                          setIsBuffering(true);
+                        }
                       }}
-                      onPlaying={() => {
-                        setIsBuffering(false);
-                        if (!isVideoReady) markVideoReady();
-                      }}
+                      onPlaying={() => setIsBuffering(false)}
                       onError={() => {
-                        setIsVideoLoading(false);
                         setIsBuffering(false);
                         toast.error("Video failed to load. Check Telegram connection and refresh.");
                       }}
@@ -1091,39 +1063,45 @@ const VideoPlayerPage = () => {
                       <track kind="captions" />
                     </video>
 
-                    {showVideoLoader && (
-                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-black/80 px-6 text-center">
+                    {showInitialLoader && (
+                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-black/85 px-6 text-center">
                         <FiLoader className="animate-spin text-3xl text-teal-400" />
                         <div className="space-y-1">
-                          <p className="text-sm font-semibold text-white">
-                            {isBuffering ? "Buffering video…" : "Loading video…"}
-                          </p>
+                          <p className="text-sm font-semibold text-white">Loading video…</p>
                           <p className="text-xs tabular-nums text-slate-300">
-                            {expectedDuration > 0
-                              ? `0:00 / ${formatTime(expectedDuration)}`
-                              : `Preparing stream · ${formatTime(loadElapsedSec)}`}
+                            Waiting for duration · {formatTime(loadElapsedSec)} elapsed
                           </p>
+                          {hintedDuration > 0 ? (
+                            <p className="text-[11px] text-slate-500">
+                              Expected ~ {formatTime(hintedDuration)}
+                            </p>
+                          ) : null}
                         </div>
                         <div className="w-full max-w-xs space-y-2">
                           <div className="h-1.5 overflow-hidden rounded-full bg-white/15">
                             <div
                               className="h-full rounded-full bg-teal-500 transition-[width] duration-300 ease-out"
-                              style={{
-                                width: `${Math.max(bufferPercent, isVideoLoading && !bufferPercent ? 8 : 0)}%`,
-                              }}
+                              style={{ width: `${Math.max(bufferPercent, 6)}%` }}
                             />
                           </div>
-                          <div className="flex items-center justify-between text-[11px] tabular-nums text-slate-400">
-                            <span>
-                              {bufferPercent > 0 ? `${bufferPercent}% buffered` : "Connecting…"}
-                            </span>
-                            <span>Elapsed {formatTime(loadElapsedSec)}</span>
-                          </div>
+                          <p className="text-[11px] tabular-nums text-slate-400">
+                            {bufferPercent > 0 ? `${bufferPercent}% buffered` : "Connecting to stream…"}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {showBufferingOverlay && (
+                      <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/45">
+                        <div className="flex items-center gap-2 rounded-full bg-black/70 px-4 py-2 text-sm text-white">
+                          <FiLoader className="animate-spin" />
+                          Buffering…
                         </div>
                       </div>
                     )}
                     </div>
 
+                    {!showInitialLoader && (
                     <div
                       className={`absolute bottom-0 left-0 right-0 z-10 overflow-visible bg-linear-to-t from-black/75 to-transparent p-3 transition ${
                         showControls || !isPlaying ? "opacity-100" : "pointer-events-none opacity-0"
@@ -1198,7 +1176,7 @@ const VideoPlayerPage = () => {
                             {isPlaying ? <FiPause /> : <FiPlay />}
                           </button>
                           <span className="tabular-nums">
-                            {formatTime(currentTime)} / {formatTime(expectedDuration || duration)}
+                            {formatTime(currentTime)} / {formatTime(duration)}
                           </span>
                         </div>
                         <div className="flex items-center gap-2">
@@ -1271,6 +1249,7 @@ const VideoPlayerPage = () => {
                         </div>
                       </div>
                     </div>
+                    )}
                   </div>
                 )}
                 </div>
