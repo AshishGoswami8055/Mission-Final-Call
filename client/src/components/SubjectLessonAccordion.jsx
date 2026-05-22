@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { FiChevronDown, FiFileText, FiPlayCircle, FiTrash2, FiVideo } from "react-icons/fi";
+import { FiChevronDown, FiEdit2, FiFileText, FiPlayCircle, FiTrash2, FiVideo } from "react-icons/fi";
 import { Link } from "react-router-dom";
 import { isTelegramLinkVideo } from "../utils/media";
 
@@ -22,7 +22,42 @@ const sortContents = (items, chapterOrder) => {
   });
 };
 
-const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent }) => {
+const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent, onRenameContent }) => {
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [savingRename, setSavingRename] = useState(false);
+
+  const startRename = (item, event) => {
+    event.stopPropagation();
+    setRenamingId(item._id);
+    setRenameValue(item.title || "");
+  };
+
+  const cancelRename = (event) => {
+    event?.stopPropagation?.();
+    setRenamingId(null);
+    setRenameValue("");
+  };
+
+  const saveRename = async (item, event) => {
+    event?.stopPropagation?.();
+    const nextTitle = renameValue.trim();
+    if (!nextTitle) return;
+    if (nextTitle === item.title) {
+      cancelRename();
+      return;
+    }
+    if (!onRenameContent) return;
+    setSavingRename(true);
+    try {
+      await onRenameContent(item, nextTitle);
+      setRenamingId(null);
+      setRenameValue("");
+    } finally {
+      setSavingRename(false);
+    }
+  };
+
   if (!items.length) {
     return (
       <p className="rounded-xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400 dark:border-slate-700">
@@ -59,15 +94,62 @@ const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent }) => {
                 {type === "video" ? <FiPlayCircle size={16} /> : <FiFileText size={16} />}
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
-                  {index + 1}. {item.title}
-                </span>
-                <span className="mt-0.5 block truncate text-xs text-slate-500 dark:text-slate-400">
-                  {chapterName}
-                  {item.completed ? " · Completed" : ""}
-                </span>
+                {renamingId === item._id ? (
+                  <div
+                    className="flex flex-wrap items-center gap-2"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <input
+                      className="input min-w-0 flex-1 py-1.5 text-sm"
+                      value={renameValue}
+                      onChange={(event) => setRenameValue(event.target.value)}
+                      autoFocus
+                      disabled={savingRename}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") saveRename(item, event);
+                        if (event.key === "Escape") cancelRename(event);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn-primary px-3 py-1.5 text-xs"
+                      disabled={savingRename || !renameValue.trim()}
+                      onClick={(event) => saveRename(item, event)}
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary px-3 py-1.5 text-xs"
+                      disabled={savingRename}
+                      onClick={cancelRename}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <span className="block truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
+                      {index + 1}. {item.title}
+                    </span>
+                    <span className="mt-0.5 block truncate text-xs text-slate-500 dark:text-slate-400">
+                      {chapterName}
+                      {item.completed ? " · Completed" : ""}
+                    </span>
+                  </>
+                )}
               </span>
-              {onDeleteContent && (
+              {onRenameContent && renamingId !== item._id && (
+                <button
+                  type="button"
+                  aria-label={`Rename ${item.title}`}
+                  className="shrink-0 rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10 dark:hover:text-slate-200"
+                  onClick={(event) => startRename(item, event)}
+                >
+                  <FiEdit2 size={15} />
+                </button>
+              )}
+              {onDeleteContent && renamingId !== item._id && (
                 <button
                   type="button"
                   aria-label={`Delete ${item.title}`}
@@ -115,7 +197,7 @@ const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent }) => {
   );
 };
 
-const SubjectLessonAccordion = ({ contents = [], chapters = [], onDeleteContent }) => {
+const SubjectLessonAccordion = ({ contents = [], chapters = [], onDeleteContent, onRenameContent }) => {
   const [expandedId, setExpandedId] = useState(null);
   const [activeTab, setActiveTab] = useState("videos");
 
@@ -192,6 +274,7 @@ const SubjectLessonAccordion = ({ contents = [], chapters = [], onDeleteContent 
           expandedId={expandedId}
           onToggle={setExpandedId}
           onDeleteContent={onDeleteContent}
+          onRenameContent={onRenameContent}
         />
       ) : (
         <LessonList
@@ -200,6 +283,7 @@ const SubjectLessonAccordion = ({ contents = [], chapters = [], onDeleteContent 
           expandedId={expandedId}
           onToggle={setExpandedId}
           onDeleteContent={onDeleteContent}
+          onRenameContent={onRenameContent}
         />
       )}
     </div>

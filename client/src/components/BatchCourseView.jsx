@@ -15,6 +15,7 @@ const BatchCourseView = ({
   onImportTelegram,
   onDeleteSubject,
   onDeleteContent,
+  onRenameContent,
   onClearCourse,
 }) => {
   const sortedSubjects = useMemo(() => {
@@ -87,6 +88,7 @@ const BatchCourseView = ({
           contents={subjectContents}
           chapters={subjectChapters}
           onDeleteContent={onDeleteContent}
+          onRenameContent={onRenameContent}
         />
       </section>
     );

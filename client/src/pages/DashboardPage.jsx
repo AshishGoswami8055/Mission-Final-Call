@@ -456,6 +456,18 @@ const DashboardPage = () => {
     await handleDeleteContent(item._id);
   };
 
+  const handleRenameContentItem = async (item, title) => {
+    if (!item?._id) return;
+    try {
+      await api.put(`/contents/${item._id}`, { title: title.trim() });
+      await Promise.all([fetchContents(), fetchCourseContents(), fetchProgress(), fetchChapterStats()]);
+      toast.success("Lesson renamed");
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Could not rename lesson");
+      throw error;
+    }
+  };
+
   const handleCreateOrUpdateSubject = async (payload) => {
     try {
       if (subjectModal?._id) {
@@ -922,6 +934,7 @@ const DashboardPage = () => {
             onImportTelegram={openTelegramImport}
             onDeleteSubject={handleDeleteSubjectById}
             onDeleteContent={handleDeleteContentItem}
+            onRenameContent={handleRenameContentItem}
             onClearCourse={handleClearCourse}
           />
         )}
