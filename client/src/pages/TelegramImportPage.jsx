@@ -601,20 +601,27 @@ const TelegramImportPage = () => {
                           />
                         </div>
                         <p className="text-xs text-slate-500">
-                          Check subjects not yet in your course, then click Add to course.
+                          <span className="inline-block h-2 w-2 rounded-sm bg-emerald-200 align-middle dark:bg-emerald-800" />{" "}
+                          Green = already in your batch · check others to add
                         </p>
                       </div>
                       <div className="max-h-[60vh] overflow-y-auto">
                         {filteredTopics.map((topic) => {
                           const isActive = selectedTopicId === topic.id;
                           const canAdd = topic.importedCount === 0;
+                          const inCourse = topic.importedCount > 0;
                           const isChecked = selectedToAddIds.has(topic.id);
+                          const rowClass = inCourse
+                            ? isActive
+                              ? "border-l-4 border-emerald-500 bg-emerald-100/90 dark:border-emerald-400 dark:bg-emerald-950/50"
+                              : "border-l-4 border-emerald-400/80 bg-emerald-50/80 dark:border-emerald-600 dark:bg-emerald-950/25"
+                            : isActive
+                              ? "border-l-4 border-teal-500 bg-teal-50 dark:border-teal-400 dark:bg-teal-950/30"
+                              : "border-l-4 border-transparent hover:bg-slate-50 dark:hover:bg-white/3";
                           return (
                             <div
                               key={topic.id}
-                              className={`flex items-start gap-2 border-b border-slate-100 px-3 py-3 transition dark:border-slate-800/80 ${
-                                isActive ? "bg-teal-50 dark:bg-teal-950/30" : "hover:bg-slate-50 dark:hover:bg-white/3"
-                              }`}
+                              className={`flex items-start gap-2 border-b border-slate-100 px-3 py-3 transition dark:border-slate-800/80 ${rowClass}`}
                             >
                               {canAdd ? (
                                 <input
@@ -634,7 +641,14 @@ const TelegramImportPage = () => {
                                 className="min-w-0 flex-1 text-left"
                                 onClick={() => setSelectedTopicId(topic.id)}
                               >
-                                <span className="block font-medium text-slate-800 dark:text-slate-100">{topic.title}</span>
+                                <span className="flex flex-wrap items-center gap-1.5">
+                                  <span className="font-medium text-slate-800 dark:text-slate-100">{topic.title}</span>
+                                  {inCourse && (
+                                    <span className="rounded bg-emerald-600/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300">
+                                      In batch
+                                    </span>
+                                  )}
+                                </span>
                                 <span className="mt-0.5 flex flex-wrap items-center gap-2">
                                   <StatusBadge topic={topic} />
                                   <span className="text-xs text-slate-400">
