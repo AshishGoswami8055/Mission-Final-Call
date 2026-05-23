@@ -7,6 +7,7 @@ const SubjectGridCard = ({
   index,
   onClick,
   onDelete,
+  onUpdateSubject,
   updateInfo,
   compact = false,
 }) => {

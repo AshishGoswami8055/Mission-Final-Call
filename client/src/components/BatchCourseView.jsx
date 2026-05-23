@@ -340,6 +340,7 @@ const BatchCourseView = ({
               updateInfo={subjectUpdates[String(subject._id)]}
               onClick={onSelectSubject}
               onDelete={onDeleteSubject}
+              onUpdateSubject={onUpdateSubject}
               compact
             />
           ))}
