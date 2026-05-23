@@ -338,12 +338,12 @@ const DashboardPage = () => {
 
     const count = status.subjectsWithUpdates || 0;
     if (!count) {
-      toast.success("All subjects are up to date");
+      toast.success("All lessons are up to date");
       return;
     }
     if (
       !window.confirm(
-        `Import new content for ${count} subject${count === 1 ? "" : "s"}? This may take a few minutes.`
+        `Download new lessons for ${count} subject${count === 1 ? "" : "s"}? This may take a few minutes.`
       )
     ) {
       return;
@@ -353,7 +353,7 @@ const DashboardPage = () => {
       active: true,
       phase: "syncing",
       percent: 10,
-      message: `Updating ${count} subject${count === 1 ? "" : "s"}…`,
+      message: `Downloading new lessons for ${count} subject${count === 1 ? "" : "s"}…`,
     });
     try {
       const { data } = await api.post("/telegram/update-batch", {
@@ -363,9 +363,9 @@ const DashboardPage = () => {
         active: true,
         phase: "done",
         percent: 100,
-        message: data.message || "Batch updated",
+        message: data.message || "Downloaded new lessons",
       });
-      toast.success(data.message || "Batch updated");
+      toast.success(data.message || "Downloaded new lessons");
       await Promise.all([
         fetchCourseContents(),
         fetchSubjects(),
@@ -378,9 +378,9 @@ const DashboardPage = () => {
         active: true,
         phase: "error",
         percent: 0,
-        message: error.response?.data?.message || "Batch update failed",
+        message: error.response?.data?.message || "Download failed",
       });
-      toast.error(error.response?.data?.message || "Batch update failed");
+      toast.error(error.response?.data?.message || "Download failed");
     } finally {
       setBatchUpdating(false);
     }
@@ -936,7 +936,7 @@ const DashboardPage = () => {
         disabled={!selectedProgrammeId}
       >
         <FiUploadCloud size={15} />
-        <span className="hidden sm:inline">Import batch</span>
+        <span className="hidden sm:inline">Add from Telegram</span>
         <span className="sm:hidden">Import</span>
       </button>
       <button

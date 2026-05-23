@@ -7,7 +7,7 @@ const PHASE_META = {
   importing: { label: "Importing from Telegram", icon: FiUploadCloud },
   "telegram-download": { label: "Downloading PDF from Telegram", icon: FiLoader },
   uploading: { label: "Uploading PDF to Cloudinary", icon: FiUploadCloud },
-  syncing: { label: "Syncing new uploads", icon: FiLoader },
+  syncing: { label: "Downloading new lessons", icon: FiLoader },
   finalizing: { label: "Finalizing import", icon: FiLoader },
   done: { label: "Complete", icon: FiCheck },
   error: { label: "Failed", icon: FiTrash2 },

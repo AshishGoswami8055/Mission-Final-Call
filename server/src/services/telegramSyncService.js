@@ -6,7 +6,7 @@ let syncInterval = null;
 let syncRunning = false;
 
 export const syncChannelMapping = async (mapping) => {
-  if (!mapping?.autoSync || !mapping.channelId || !mapping.programmeId) {
+  if (!mapping?.channelId || !mapping.programmeId) {
     return { imported: 0, skipped: 0 };
   }
 
@@ -43,7 +43,9 @@ export const syncAllAutoChannels = async () => {
   if (syncRunning) return { skipped: true };
   syncRunning = true;
   try {
-    const mappings = await TelegramChannelMapping.find({ autoSync: true });
+    const mappings = await TelegramChannelMapping.find({
+      "syncTopicIds.0": { $exists: true },
+    });
     const results = [];
     for (const mapping of mappings) {
       try {
@@ -66,5 +68,5 @@ export const startTelegramAutoSync = (intervalMs = 15 * 60 * 1000) => {
       console.warn("[telegram-sync]", err.message);
     });
   }, intervalMs);
-  console.log(`[telegram-sync] Auto-sync enabled (every ${Math.round(intervalMs / 60000)} min)`);
+  console.log(`[telegram-sync] Background lesson download enabled (every ${Math.round(intervalMs / 60000)} min)`);
 };

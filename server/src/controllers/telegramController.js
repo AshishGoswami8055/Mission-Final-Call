@@ -211,7 +211,7 @@ export const telegramImportBatch = async (req, res) => {
       messageIds,
       topicIds,
       importAll = false,
-      autoSync = false,
+      autoSync = true,
       cleanSync = false,
       useForumTopics = true,
       uploadId = null,

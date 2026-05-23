@@ -69,7 +69,7 @@ const SubjectGridCard = ({
                 }}
               >
                 <FiRefreshCw size={11} className={updating ? "animate-spin" : ""} />
-                Update
+                Download
               </button>
             )}
           </div>

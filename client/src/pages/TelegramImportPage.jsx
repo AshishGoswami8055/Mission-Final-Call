@@ -17,10 +17,18 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import api from "../api/client";
 import Layout from "../components/Layout";
 import OperationProgressOverlay from "../components/OperationProgressOverlay";
-import { buildTelegramPreviewStreamUrl, formatDuration, formatFileSize, formatTelegramMediaMeta } from "../utils/media";
+import { buildTelegramPreviewStreamUrl, formatTelegramMediaMeta } from "../utils/media";
 import { createUploadId, pollUploadProgress } from "../utils/uploadProgress";
 
 const mediaDisplayName = (item) => item?.displayName || item?.fileName || "Untitled";
+
+const topicStatus = (topic) => {
+  if (topic.importedCount > 0 && topic.newCount === 0) return "upToDate";
+  if (topic.newCount > 0 && topic.importedCount > 0) return "hasUpdates";
+  if (topic.newCount > 0) return "new";
+  if (topic.importedCount > 0) return "upToDate";
+  return "notInCourse";
+};
 
 const TelegramImportPage = () => {
   const navigate = useNavigate();
@@ -42,14 +50,10 @@ const TelegramImportPage = () => {
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [selectedTopicId, setSelectedTopicId] = useState(null);
-  const [selectedTopicIds, setSelectedTopicIds] = useState(new Set());
+  const [selectedToAddIds, setSelectedToAddIds] = useState(new Set());
   const [topicSearch, setTopicSearch] = useState("");
   const [mediaFilter, setMediaFilter] = useState("all");
-  const [selectedFiles, setSelectedFiles] = useState([]);
   const [previewFile, setPreviewFile] = useState(null);
-
-  const [autoSync, setAutoSync] = useState(true);
-  const [cleanSync, setCleanSync] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(null);
 
@@ -84,22 +88,13 @@ const TelegramImportPage = () => {
       });
       setPreview(data);
       const topics = data.topics || [];
-      const trackedIds = (data.syncTopicIds || []).map(Number).filter(Boolean);
-      if (trackedIds.length) {
-        setSelectedTopicIds(new Set(trackedIds));
-        setSelectedTopicId(trackedIds[0] ?? topics[0]?.id ?? null);
-      } else {
-        setSelectedTopicIds(new Set());
-        setSelectedTopicId(topics[0]?.id ?? null);
-      }
-      if (typeof data.autoSyncEnabled === "boolean") {
-        setAutoSync(data.autoSyncEnabled);
-      }
-      setSelectedFiles([]);
+      const notInCourse = topics.filter((t) => t.importedCount === 0).map((t) => t.id);
+      setSelectedToAddIds(new Set(notInCourse));
+      setSelectedTopicId(topics[0]?.id ?? null);
       setPreviewFile(null);
       setMediaFilter("all");
     } catch (error) {
-      toast.error(error.response?.data?.message || "Could not load topics");
+      toast.error(error.response?.data?.message || "Could not load subjects");
     } finally {
       setPreviewLoading(false);
     }
@@ -171,58 +166,17 @@ const TelegramImportPage = () => {
   );
 
   const activeTopic = preview?.topics?.find((t) => t.id === selectedTopicId);
-  const selectedCount = selectedTopicIds.size;
-  const selectedFileCount = selectedFiles.length;
-  const allTopicIds = preview?.topics?.map((t) => t.id) || [];
 
-  const fileKey = (topicId, messageId) => `${topicId}:${messageId}`;
-
-  const isFileSelected = (topicId, messageId) =>
-    selectedFiles.some((f) => f.topicId === topicId && f.messageId === messageId);
-
-  const getFileSelectionIndex = (topicId, messageId) =>
-    selectedFiles.findIndex((f) => f.topicId === topicId && f.messageId === messageId);
-
-  const toggleFileSelection = (item, topic) => {
-    if (item.imported || busy) return;
-    const exists = isFileSelected(topic.id, item.messageId);
-    if (exists) {
-      setSelectedFiles((prev) =>
-        prev.filter((f) => !(f.topicId === topic.id && f.messageId === item.messageId))
-      );
-      setPreviewFile((prev) =>
-        prev?.topicId === topic.id && prev?.messageId === item.messageId ? null : prev
-      );
-      return;
-    }
-    setSelectedFiles((prev) => [
-      ...prev,
-      {
-        topicId: topic.id,
-        messageId: item.messageId,
-        mediaType: item.mediaType,
-        fileName: mediaDisplayName(item),
-        displayName: mediaDisplayName(item),
-        duration: item.duration ?? null,
-        size: item.size,
-        topicTitle: topic.title,
-      },
-    ]);
-  };
-
-  const removeSelectedFile = (topicId, messageId) => {
-    setSelectedFiles((prev) =>
-      prev.filter((f) => !(f.topicId === topicId && f.messageId === messageId))
-    );
-    setPreviewFile((prev) =>
-      prev?.topicId === topicId && prev?.messageId === messageId ? null : prev
-    );
-  };
-
-  const clearSelectedFiles = () => {
-    setSelectedFiles([]);
-    setPreviewFile(null);
-  };
+  const stats = useMemo(() => {
+    const topics = preview?.topics || [];
+    return {
+      total: topics.length,
+      inCourse: topics.filter((t) => t.importedCount > 0).length,
+      totalNew: preview?.totalNew ?? 0,
+      notInCourse: topics.filter((t) => t.importedCount === 0).length,
+      withUpdates: topics.filter((t) => t.newCount > 0 && t.importedCount > 0).length,
+    };
+  }, [preview]);
 
   const filteredMedia = useMemo(() => {
     const media = activeTopic?.media || [];
@@ -240,24 +194,6 @@ const TelegramImportPage = () => {
     };
   }, [activeTopic?.media]);
 
-  const selectAllVisibleFiles = () => {
-    if (!activeTopic) return;
-    const toAdd = filteredMedia
-      .filter((item) => !item.imported && !isFileSelected(activeTopic.id, item.messageId))
-      .map((item) => ({
-        topicId: activeTopic.id,
-        messageId: item.messageId,
-        mediaType: item.mediaType,
-        fileName: mediaDisplayName(item),
-        displayName: mediaDisplayName(item),
-        duration: item.duration ?? null,
-        size: item.size,
-        topicTitle: activeTopic.title,
-      }));
-    if (!toAdd.length) return;
-    setSelectedFiles((prev) => [...prev, ...toAdd]);
-  };
-
   const openPreview = (item, topic) => {
     setPreviewFile({
       topicId: topic.id,
@@ -265,7 +201,6 @@ const TelegramImportPage = () => {
       mediaType: item.mediaType,
       fileName: mediaDisplayName(item),
       displayName: mediaDisplayName(item),
-      duration: item.duration ?? null,
       topicTitle: topic.title,
     });
   };
@@ -275,21 +210,13 @@ const TelegramImportPage = () => {
       ? buildTelegramPreviewStreamUrl(selectedChannel.id, previewFile.messageId)
       : "";
 
-  const toggleTopicSelection = (topicId, checked) => {
-    setSelectedTopicIds((prev) => {
+  const toggleAddSelection = (topicId, checked) => {
+    setSelectedToAddIds((prev) => {
       const next = new Set(prev);
       if (checked) next.add(topicId);
       else next.delete(topicId);
       return next;
     });
-  };
-
-  const selectAllTopics = () => {
-    setSelectedTopicIds(new Set(allTopicIds));
-  };
-
-  const clearTopicSelection = () => {
-    setSelectedTopicIds(new Set());
   };
 
   const runWithProgressTick = (phase, startPercent, endPercent, intervalMs = 400) => {
@@ -301,13 +228,80 @@ const TelegramImportPage = () => {
     return () => clearInterval(timer);
   };
 
-  const handleImportSelectedFiles = async () => {
+  const finishAndRefresh = async (message) => {
+    setProgress({ active: true, phase: "done", percent: 100, message });
+    toast.success(message);
+    await loadPreview();
+    setTimeout(() => {
+      navigate("/", { state: { refreshCourse: true } });
+    }, 1200);
+  };
+
+  /** Download new lessons for subjects already in the course. */
+  const handleDownloadNew = async (topicIds = null) => {
+    if (!programmeId) {
+      toast.error("Select a batch on the dashboard first");
+      return;
+    }
+    setBusy(true);
+    setProgress({
+      active: true,
+      phase: "syncing",
+      percent: 10,
+      message: "Downloading new lessons…",
+    });
+    const stopTick = runWithProgressTick("syncing", 10, 95);
+    try {
+      if (topicIds?.length === 1) {
+        const subjectRes = await api.get("/subjects", { params: { programmeId } });
+        const subject = (subjectRes.data || []).find(
+          (s) => Number(s.telegramTopicId) === Number(topicIds[0])
+        );
+        if (!subject) {
+          throw new Error("Subject not found in course");
+        }
+        const { data } = await api.post("/telegram/update-subject", {
+          programmeId,
+          subjectId: subject._id,
+        });
+        stopTick();
+        await finishAndRefresh(data.message || "Downloaded new lessons");
+        return;
+      }
+
+      const { data } = await api.post("/telegram/update-batch", { programmeId });
+      stopTick();
+      await finishAndRefresh(data.message || `Downloaded ${data.imported || 0} new lesson(s)`);
+    } catch (error) {
+      stopTick();
+      setProgress({
+        active: true,
+        phase: "error",
+        percent: 0,
+        message: error.response?.data?.message || "Download failed",
+      });
+      toast.error(error.response?.data?.message || "Download failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Add new subjects (not yet in course) from Telegram. */
+  const handleAddSubjects = async (topicIdsOverride = null) => {
     if (!selectedChannel?.id || !programmeId) {
       toast.error("Select a batch on the dashboard first");
       return;
     }
-    if (!selectedFiles.length) {
-      toast.error("Select at least one file to import");
+
+    const topicIds = topicIdsOverride?.length
+      ? topicIdsOverride
+      : [...selectedToAddIds].filter((id) => {
+          const t = preview?.topics?.find((x) => x.id === id);
+          return t && t.importedCount === 0;
+        });
+
+    if (!topicIds.length) {
+      toast.error("Select at least one subject to add");
       return;
     }
 
@@ -316,145 +310,19 @@ const TelegramImportPage = () => {
     setProgress({
       active: true,
       phase: "importing",
-      percent: 2,
-      message: "Importing selected files…",
-      current: 0,
-      total: selectedFiles.length,
+      percent: 5,
+      message: `Adding ${topicIds.length} subject(s) to your course…`,
     });
 
-    const stopPoll = pollUploadProgress(uploadId, (data) => {
-      setProgress({
-        active: true,
-        phase: data.phase || "importing",
-        percent: Math.min(99, Number(data.percent) || 2),
-        message: data.message || "Importing selected files…",
-        current: Math.min(data.fileIndex || 0, selectedFiles.length),
-        total: selectedFiles.length,
-        currentLabel: data.currentFile,
-        currentFile: data.currentFile,
-        detail:
-          data.filesTotal > 0
-            ? `File ${Math.min(data.fileIndex + 1, data.filesTotal)}/${data.filesTotal}`
-            : undefined,
-        bytesLoaded: data.bytesLoaded,
-        bytesTotal: data.bytesTotal,
-      });
-    });
-
-    try {
-      const { data } = await api.post("/telegram/import-batch", {
-        channelId: selectedChannel.id,
-        channelTitle: selectedChannel.title,
-        programmeId,
-        useForumTopics: true,
-        importAll: false,
-        autoSync,
-        uploadId,
-        selectedItems: selectedFiles.map(({ topicId, messageId, topicTitle, displayName }) => ({
-          topicId,
-          messageId,
-          topicTitle,
-          displayName,
-        })),
-      });
-
-      stopPoll();
-      setProgress({
-        active: true,
-        phase: "done",
-        percent: 100,
-        message: `Imported ${data.imported || 0} file(s) in your selected order`,
-        detail: data.skipped ? `${data.skipped} skipped` : undefined,
-        current: selectedFiles.length,
-        total: selectedFiles.length,
-      });
-
-      toast.success(
-        `Imported ${data.imported || 0} file(s)` +
-          (data.skipped ? ` (${data.skipped} skipped)` : "")
-      );
-
-      setSelectedFiles([]);
-      setPreviewFile(null);
-      await loadPreview();
-
-      setTimeout(() => {
-        navigate("/", { state: { refreshCourse: true } });
-      }, 1200);
-    } catch (error) {
-      stopPoll();
-      setProgress({
-        active: true,
-        phase: "error",
-        percent: 0,
-        message: error.response?.data?.message || "Import failed",
-      });
-      toast.error(error.response?.data?.message || "Import failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleImport = async (importAll = true, topicIdsOverride = null) => {
-    if (!selectedChannel?.id || !programmeId) {
-      toast.error("Select a batch on the dashboard first");
-      return;
-    }
-
-    const topicIds = topicIdsOverride?.length
-      ? topicIdsOverride
-      : importAll
-        ? allTopicIds
-        : [...selectedTopicIds];
-    if (!topicIds.length) {
-      toast.error("Select at least one subject to import");
-      return;
-    }
-
-    const topicsToImport =
-      preview?.topics?.filter((t) => topicIds.includes(t.id)) ||
-      topicIds.map((id) => ({ id, title: `Subject ${id}`, newCount: 0 }));
-
-    const cleanStep = importAll && cleanSync ? 1 : 0;
-    const uploadId = createUploadId();
-
-    setBusy(true);
-    setProgress({
-      active: true,
-      phase: cleanStep ? "cleaning" : "importing",
-      percent: 2,
-      message: cleanStep ? "Removing old import…" : `Importing ${topicsToImport.length} subject(s)…`,
-      current: 0,
-      total: topicsToImport.length,
-    });
-
-    let stopTick = null;
     let stopPoll = null;
     try {
-      if (cleanStep) {
-        stopTick = runWithProgressTick("cleaning", 5, 15);
-        await api.post("/telegram/cleanup-import", {
-          channelId: selectedChannel.id,
-          programmeId,
-        });
-        stopTick();
-        stopTick = null;
-      }
-
       stopPoll = pollUploadProgress(uploadId, (data) => {
         setProgress({
           active: true,
           phase: data.phase || "importing",
           percent: Math.min(99, Number(data.percent) || 5),
-          message: data.message || "Importing selected subjects…",
-          currentLabel: data.currentFile,
+          message: data.message || "Adding subjects…",
           currentFile: data.currentFile,
-          detail:
-            data.filesTotal > 0
-              ? `PDF ${Math.min(data.fileIndex + 1, data.filesTotal)}/${data.filesTotal}`
-              : `${topicsToImport.length} subject(s)`,
-          bytesLoaded: data.bytesLoaded,
-          bytesTotal: data.bytesTotal,
         });
       });
 
@@ -462,99 +330,27 @@ const TelegramImportPage = () => {
         channelId: selectedChannel.id,
         channelTitle: selectedChannel.title,
         programmeId,
-        importAll,
+        importAll: false,
         useForumTopics: true,
-        topicIds: importAll ? undefined : topicIds,
-        autoSync,
-        cleanSync: importAll && cleanSync,
+        topicIds,
+        autoSync: true,
         uploadId,
-        pruneUnselectedTopics: !importAll,
+        pruneUnselectedTopics: false,
       });
 
       stopPoll();
-      stopPoll = null;
-
-      const prunedSubjects = data.pruned?.deletedSubjects || 0;
-      setProgress({
-        active: true,
-        phase: "done",
-        percent: 100,
-        message: `Imported ${data.imported || 0} file(s) into ${topicsToImport.length} subject(s)`,
-        detail: [
-          data.skipped ? `${data.skipped} skipped` : null,
-          prunedSubjects ? `${prunedSubjects} unselected subject(s) removed` : null,
-        ]
-          .filter(Boolean)
-          .join(" · ") || undefined,
-        current: topicsToImport.length,
-        total: topicsToImport.length,
-      });
-
-      toast.success(
-        `Imported ${data.imported || 0} files into ${topicsToImport.length} subject(s)` +
-          (data.skipped ? ` (${data.skipped} skipped)` : "") +
-          (prunedSubjects ? ` · removed ${prunedSubjects} unselected subject(s)` : "")
+      await finishAndRefresh(
+        `Added ${data.imported || 0} lesson(s) from ${topicIds.length} subject(s)`
       );
-
-      setSelectedTopicIds(new Set(topicIds.map(Number)));
-      await loadPreview();
-
-      setTimeout(() => {
-        navigate("/", { state: { refreshCourse: true } });
-      }, 1200);
     } catch (error) {
-      if (stopTick) stopTick();
       if (stopPoll) stopPoll();
       setProgress({
         active: true,
         phase: "error",
         percent: 0,
-        message: error.response?.data?.message || "Import failed",
+        message: error.response?.data?.message || "Could not add subjects",
       });
-      toast.error(error.response?.data?.message || "Import failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleSync = async () => {
-    if (!selectedChannel?.id || !programmeId) return;
-    if (!selectedTopicIds.size) {
-      toast.error("Select at least one subject to sync");
-      return;
-    }
-    setBusy(true);
-    setProgress({
-      active: true,
-      phase: "syncing",
-      percent: 10,
-      message: "Syncing new uploads for selected subjects…",
-    });
-    const stopTick = runWithProgressTick("syncing", 10, 95);
-    try {
-      const { data } = await api.post(`/telegram/sync/${encodeURIComponent(selectedChannel.id)}`, {
-        programmeId,
-        topicIds: [...selectedTopicIds],
-      });
-      stopTick();
-      setProgress({
-        active: true,
-        phase: "done",
-        percent: 100,
-        message: data.message || `Sync complete${data.imported ? ` · ${data.imported} new file(s)` : ""}`,
-      });
-      toast.success(data.imported ? `Synced ${data.imported} new file(s)` : "Sync complete");
-      await loadPreview();
-      setTimeout(() => setProgress(null), 1000);
-    } catch (error) {
-      stopTick();
-      setProgress({
-        active: true,
-        phase: "error",
-        percent: 0,
-        message: error.response?.data?.message || "Sync failed",
-      });
-      toast.error(error.response?.data?.message || "Sync failed");
+      toast.error(error.response?.data?.message || "Could not add subjects");
     } finally {
       setBusy(false);
     }
@@ -564,20 +360,18 @@ const TelegramImportPage = () => {
     if (!programmeId) return;
     if (
       !window.confirm(
-        "Remove all imported subjects and lessons from this batch? The batch itself will stay."
+        "Remove all subjects and lessons from this batch? The batch name will stay. You can add subjects again from Telegram."
       )
     ) {
       return;
     }
 
-    const subjectCount = preview?.topics?.length || 0;
     setBusy(true);
     setProgress({
       active: true,
       phase: "deleting",
       percent: 8,
-      message: "Clearing course content…",
-      detail: subjectCount ? `${subjectCount} subjects` : undefined,
+      message: "Clearing course…",
     });
     const stopTick = runWithProgressTick("deleting", 8, 92);
 
@@ -588,10 +382,9 @@ const TelegramImportPage = () => {
         active: true,
         phase: "done",
         percent: 100,
-        message: `Cleared ${data.deletedSubjects || 0} subject(s)`,
-        detail: `${data.deletedContents || 0} lesson(s) removed`,
+        message: `Removed ${data.deletedSubjects || 0} subject(s)`,
       });
-      toast.success(`Cleared ${data.deletedSubjects || 0} subjects`);
+      toast.success("Course cleared");
       await loadPreview();
       setTimeout(() => setProgress(null), 1200);
     } catch (error) {
@@ -610,10 +403,41 @@ const TelegramImportPage = () => {
 
   const dismissProgress = () => setProgress(null);
 
+  const addableSelectedCount = [...selectedToAddIds].filter((id) => {
+    const t = preview?.topics?.find((x) => x.id === id);
+    return t && t.importedCount === 0;
+  }).length;
+
+  const StatusBadge = ({ topic }) => {
+    const status = topicStatus(topic);
+    if (status === "upToDate") {
+      return (
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+          <span className="h-2 w-2 rounded-full bg-emerald-500" />
+          Up to date
+        </span>
+      );
+    }
+    if (status === "hasUpdates" || status === "new") {
+      return (
+        <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 dark:text-amber-300">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-amber-400 ring-2 ring-amber-200 dark:ring-amber-900" />
+          {topic.newCount} new
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-slate-500">
+        <span className="h-2 w-2 rounded-full bg-slate-300 dark:bg-slate-600" />
+        Not in course
+      </span>
+    );
+  };
+
   return (
     <Layout
-      title="Import course from Telegram"
-      subtitle={`${programmeName} · Forum topics → Subjects · Videos & PDFs`}
+      title="Add content from Telegram"
+      subtitle={`${programmeName} · Pick subjects once — new lessons download automatically`}
       actions={
         <Link to="/" className="btn-secondary text-sm">
           <FiArrowLeft size={14} /> Dashboard
@@ -629,7 +453,7 @@ const TelegramImportPage = () => {
         {!session.connected ? (
           <div className="card mx-auto max-w-lg p-6">
             <h2 className="text-lg font-semibold">Connect Telegram</h2>
-            <p className="mt-1 text-sm text-slate-500">Log in once to import from your private channels.</p>
+            <p className="mt-1 text-sm text-slate-500">Log in once. After that, new lessons are handled for you.</p>
             {!needsPassword ? (
               <form className="mt-4 space-y-3" onSubmit={otp ? handleVerifyOtp : handleLogin}>
                 <input className="input" type="tel" placeholder="+91XXXXXXXXXX" value={phone} onChange={(e) => setPhone(e.target.value)} required />
@@ -652,11 +476,20 @@ const TelegramImportPage = () => {
               <div className="card p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <p className="text-sm text-slate-500">Logged in as {session.phone}</p>
-                  <button type="button" className="btn-ghost text-xs" onClick={() => api.post("/telegram/logout").then(() => { setSession({ connected: false }); toast.success("Logged out"); })}>
+                  <button
+                    type="button"
+                    className="btn-ghost text-xs"
+                    onClick={() =>
+                      api.post("/telegram/logout").then(() => {
+                        setSession({ connected: false });
+                        toast.success("Logged out");
+                      })
+                    }
+                  >
                     <FiLogOut size={12} /> Logout
                   </button>
                 </div>
-                <h2 className="font-semibold">Select Telegram channel / group</h2>
+                <h2 className="font-semibold">Choose your Telegram channel</h2>
                 {channelsLoading ? (
                   <p className="py-8 text-center text-sm text-slate-400">Loading…</p>
                 ) : (
@@ -683,79 +516,68 @@ const TelegramImportPage = () => {
 
             {selectedChannel && (
               <div className="flex min-h-[70vh] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-[#1a1a1a]">
-                <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-                  <button type="button" className="btn-ghost text-sm" disabled={busy} onClick={() => { setSelectedChannel(null); setPreview(null); }}>
-                    <FiArrowLeft size={14} /> Channels
-                  </button>
-                  <span className="font-semibold">{selectedChannel.title}</span>
-                  {preview && (
-                    <span className="text-xs text-slate-500">
-                      {preview.topics?.length || 0} subjects · {preview.totalMedia} files · {preview.totalNew} new
-                    </span>
-                  )}
-                  <div className="ml-auto flex flex-wrap gap-2">
-                    <button type="button" className="btn-ghost text-sm" disabled={busy} onClick={handleSync}>
-                      <FiRefreshCw size={14} className={busy && progress?.phase === "syncing" ? "animate-spin" : ""} /> Sync
-                    </button>
+                <div className="border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+                  <div className="flex flex-wrap items-center gap-3">
                     <button
                       type="button"
-                      className="btn-secondary text-sm"
-                      disabled={busy || !programmeId || selectedFileCount === 0}
-                      onClick={handleImportSelectedFiles}
+                      className="btn-ghost text-sm"
+                      disabled={busy}
+                      onClick={() => {
+                        setSelectedChannel(null);
+                        setPreview(null);
+                      }}
                     >
-                      <FiUploadCloud size={14} />
-                      {busy && progress?.phase === "importing" && selectedFileCount > 0
-                        ? "Importing…"
-                        : `Import selected files (${selectedFileCount})`}
+                      <FiArrowLeft size={14} /> Channels
                     </button>
-                    <button
-                      type="button"
-                      className="btn-secondary text-sm"
-                      disabled={busy || !programmeId || selectedCount === 0}
-                      onClick={() => handleImport(false)}
-                    >
-                      <FiUploadCloud size={14} />
-                      {busy && progress?.phase === "importing" && selectedFileCount === 0
-                        ? "Importing…"
-                        : `Import selected subjects (${selectedCount})`}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-primary text-sm"
-                      disabled={busy || !programmeId}
-                      onClick={() => handleImport(true)}
-                    >
-                      <FiUploadCloud size={14} />
-                      {busy && progress?.phase === "importing" ? "Importing…" : "Import all subjects"}
-                    </button>
+                    <span className="font-semibold">{selectedChannel.title}</span>
+                    {preview && !previewLoading && (
+                      <span className="text-xs text-slate-500">
+                        {stats.inCourse} in course · {stats.totalNew} new lesson{stats.totalNew === 1 ? "" : "s"}
+                      </span>
+                    )}
+                    <div className="ml-auto flex flex-wrap gap-2">
+                      {stats.totalNew > 0 && (
+                        <button
+                          type="button"
+                          className="btn-primary text-sm"
+                          disabled={busy || !programmeId}
+                          onClick={() => handleDownloadNew()}
+                        >
+                          <FiRefreshCw size={14} className={busy ? "animate-spin" : ""} />
+                          Download new lessons ({stats.totalNew})
+                        </button>
+                      )}
+                      {addableSelectedCount > 0 && (
+                        <button
+                          type="button"
+                          className="btn-secondary text-sm"
+                          disabled={busy || !programmeId}
+                          onClick={() => handleAddSubjects()}
+                        >
+                          <FiUploadCloud size={14} />
+                          Add to course ({addableSelectedCount})
+                        </button>
+                      )}
+                    </div>
                   </div>
+
+                  <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-white/5 dark:text-slate-400">
+                    <strong className="font-semibold text-slate-800 dark:text-slate-200">How it works:</strong>{" "}
+                    Check subjects you want in your course, click <em>Add to course</em>. After that, new Telegram
+                    uploads are picked up automatically — use <em>Download new lessons</em> anytime, or update from
+                    the dashboard.
+                  </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-4 border-b border-slate-100 px-4 py-2 text-sm dark:border-slate-800">
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} disabled={busy} />
-                    Auto-sync new uploads (selected subjects only)
-                  </label>
-                  <span className="text-xs text-slate-500">
-                    Only checked subjects are imported, synced, and kept in your course
-                  </span>
-                  <label className="flex items-center gap-2 text-rose-700 dark:text-rose-400">
-                    <input
-                      type="checkbox"
-                      checked={cleanSync}
-                      onChange={(e) => setCleanSync(e.target.checked)}
-                      disabled={busy}
-                    />
-                    Clean old import first (full batch only)
-                  </label>
+                <div className="flex justify-end border-b border-slate-100 px-4 py-2 dark:border-slate-800">
                   {programmeId && (
                     <button
                       type="button"
-                      className="ml-auto text-xs font-medium text-rose-600 hover:underline disabled:opacity-50 dark:text-rose-400"
+                      className="text-xs font-medium text-rose-600 hover:underline disabled:opacity-50 dark:text-rose-400"
                       disabled={busy}
                       onClick={handleClearCourse}
                     >
-                      Clear entire course
+                      Remove all subjects from this batch
                     </button>
                   )}
                 </div>
@@ -778,54 +600,53 @@ const TelegramImportPage = () => {
                             onChange={(e) => setTopicSearch(e.target.value)}
                           />
                         </div>
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-slate-500">
-                            {selectedCount} selected for import/sync
-                          </span>
-                          <div className="flex gap-2">
-                            <button type="button" className="font-medium text-teal-700 hover:underline dark:text-teal-400" onClick={selectAllTopics}>
-                              All
-                            </button>
-                            <button type="button" className="font-medium text-slate-500 hover:underline" onClick={clearTopicSelection}>
-                              None
-                            </button>
-                          </div>
-                        </div>
+                        <p className="text-xs text-slate-500">
+                          Check subjects not yet in your course, then click Add to course.
+                        </p>
                       </div>
                       <div className="max-h-[60vh] overflow-y-auto">
                         {filteredTopics.map((topic) => {
                           const isActive = selectedTopicId === topic.id;
-                          const isChecked = selectedTopicIds.has(topic.id);
+                          const canAdd = topic.importedCount === 0;
+                          const isChecked = selectedToAddIds.has(topic.id);
                           return (
                             <div
                               key={topic.id}
                               className={`flex items-start gap-2 border-b border-slate-100 px-3 py-3 transition dark:border-slate-800/80 ${
-                                isActive ? "bg-teal-50 dark:bg-teal-950/30" : "hover:bg-slate-50 dark:hover:bg-white/[0.03]"
+                                isActive ? "bg-teal-50 dark:bg-teal-950/30" : "hover:bg-slate-50 dark:hover:bg-white/3"
                               }`}
                             >
-                              <input
-                                type="checkbox"
-                                className="mt-1 shrink-0"
-                                checked={isChecked}
-                                disabled={busy}
-                                onChange={(e) => toggleTopicSelection(topic.id, e.target.checked)}
-                              />
+                              {canAdd ? (
+                                <input
+                                  type="checkbox"
+                                  className="mt-1 shrink-0"
+                                  checked={isChecked}
+                                  disabled={busy}
+                                  onChange={(e) => toggleAddSelection(topic.id, e.target.checked)}
+                                />
+                              ) : (
+                                <span className="mt-1 flex h-4 w-4 shrink-0 items-center justify-center text-emerald-600">
+                                  <FiCheck size={14} />
+                                </span>
+                              )}
                               <button
                                 type="button"
                                 className="min-w-0 flex-1 text-left"
                                 onClick={() => setSelectedTopicId(topic.id)}
                               >
                                 <span className="block font-medium text-slate-800 dark:text-slate-100">{topic.title}</span>
-                                <span className="text-xs text-slate-500">
-                                  {topic.mediaCount} files · {topic.newCount} new
-                                  {topic.importedCount > 0 ? ` · ${topic.importedCount} added` : ""}
+                                <span className="mt-0.5 flex flex-wrap items-center gap-2">
+                                  <StatusBadge topic={topic} />
+                                  <span className="text-xs text-slate-400">
+                                    {topic.mediaCount} lesson{topic.mediaCount === 1 ? "" : "s"}
+                                  </span>
                                 </span>
                               </button>
                             </div>
                           );
                         })}
                         {!filteredTopics.length && (
-                          <p className="p-6 text-center text-sm text-slate-400">No forum topics found in this channel.</p>
+                          <p className="p-6 text-center text-sm text-slate-400">No subjects found in this channel.</p>
                         )}
                       </div>
                     </div>
@@ -836,113 +657,58 @@ const TelegramImportPage = () => {
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div>
                               <h3 className="text-lg font-semibold">{activeTopic.title}</h3>
-                              <p className="text-xs text-slate-500">
-                                {activeTopic.mediaCount} videos & PDFs in this subject
-                              </p>
+                              <div className="mt-1">
+                                <StatusBadge topic={activeTopic} />
+                              </div>
                             </div>
-                            <button
-                              type="button"
-                              className="btn-secondary text-xs"
-                              disabled={busy || !programmeId || !selectedTopicIds.has(activeTopic.id)}
-                              onClick={() => handleImport(false, [activeTopic.id])}
-                            >
-                              Import this subject
-                            </button>
-                          </div>
-
-                          <div className="mt-3 flex flex-wrap items-center gap-2">
-                            <div className="inline-flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
-                              {[
-                                { id: "all", label: "All", count: mediaCounts.all },
-                                { id: "video", label: "Videos", count: mediaCounts.video },
-                                { id: "pdf", label: "PDFs", count: mediaCounts.pdf },
-                              ].map((tab) => (
-                                <button
-                                  key={tab.id}
-                                  type="button"
-                                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
-                                    mediaFilter === tab.id
-                                      ? "bg-teal-600 text-white"
-                                      : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/5"
-                                  }`}
-                                  onClick={() => setMediaFilter(tab.id)}
-                                >
-                                  {tab.label} ({tab.count})
-                                </button>
-                              ))}
-                            </div>
-                            <button
-                              type="button"
-                              className="text-xs font-medium text-teal-700 hover:underline dark:text-teal-400"
-                              disabled={busy}
-                              onClick={selectAllVisibleFiles}
-                            >
-                              Select visible
-                            </button>
-                            {selectedFileCount > 0 && (
+                            {activeTopic.newCount > 0 && activeTopic.importedCount > 0 && (
                               <button
                                 type="button"
-                                className="text-xs font-medium text-slate-500 hover:underline"
-                                disabled={busy}
-                                onClick={clearSelectedFiles}
+                                className="btn-primary text-xs"
+                                disabled={busy || !programmeId}
+                                onClick={() => handleDownloadNew([activeTopic.id])}
                               >
-                                Clear file selection
+                                <FiRefreshCw size={12} /> Download {activeTopic.newCount} new
+                              </button>
+                            )}
+                            {activeTopic.importedCount === 0 && (
+                              <button
+                                type="button"
+                                className="btn-secondary text-xs"
+                                disabled={busy || !programmeId}
+                                onClick={() => handleAddSubjects([activeTopic.id])}
+                              >
+                                <FiUploadCloud size={12} /> Add to course
                               </button>
                             )}
                           </div>
 
-                          {selectedFileCount > 0 && (
-                            <div className="mt-3 rounded-xl border border-teal-200 bg-teal-50/60 p-3 dark:border-teal-900/40 dark:bg-teal-950/20">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-teal-800 dark:text-teal-300">
-                                Import order ({selectedFileCount})
-                              </p>
-                              <ol className="mt-2 space-y-1">
-                                {selectedFiles.map((file, index) => (
-                                  <li
-                                    key={fileKey(file.topicId, file.messageId)}
-                                    className="flex items-center gap-2 rounded-lg bg-white/80 px-2 py-1.5 text-sm dark:bg-black/20"
-                                  >
-                                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-teal-600 text-[10px] font-bold text-white">
-                                      {index + 1}
-                                    </span>
-                                    <span className="shrink-0 text-teal-600">
-                                      {file.mediaType === "video" ? <FiPlay size={12} /> : <FiFileText size={12} />}
-                                    </span>
-                                    <span className="min-w-0 flex-1 truncate">{mediaDisplayName(file)}</span>
-                                    <span className="hidden shrink-0 text-xs tabular-nums text-slate-500 sm:inline">
-                                      {[file.mediaType === "video" && formatDuration(file.duration), formatFileSize(file.size)]
-                                        .filter(Boolean)
-                                        .join(" · ")}
-                                    </span>
-                                    <span className="hidden text-xs text-slate-500 sm:inline">{file.topicTitle}</span>
-                                    <button
-                                      type="button"
-                                      className="btn-ghost p-1 text-slate-400 hover:text-rose-600"
-                                      disabled={busy}
-                                      onClick={() => removeSelectedFile(file.topicId, file.messageId)}
-                                      aria-label="Remove from selection"
-                                    >
-                                      <FiX size={14} />
-                                    </button>
-                                  </li>
-                                ))}
-                              </ol>
-                            </div>
-                          )}
+                          <div className="mt-3 inline-flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
+                            {[
+                              { id: "all", label: "All", count: mediaCounts.all },
+                              { id: "video", label: "Videos", count: mediaCounts.video },
+                              { id: "pdf", label: "PDFs", count: mediaCounts.pdf },
+                            ].map((tab) => (
+                              <button
+                                key={tab.id}
+                                type="button"
+                                className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                                  mediaFilter === tab.id
+                                    ? "bg-teal-600 text-white"
+                                    : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/5"
+                                }`}
+                                onClick={() => setMediaFilter(tab.id)}
+                              >
+                                {tab.label} ({tab.count})
+                              </button>
+                            ))}
+                          </div>
 
                           {previewFile && previewStreamUrl && (
                             <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
                               <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2 dark:border-slate-800">
-                                <div className="min-w-0">
-                                  <p className="truncate text-sm font-medium">{mediaDisplayName(previewFile)}</p>
-                                  <p className="text-xs text-slate-500">{previewFile.topicTitle}</p>
-                                </div>
-                                <button
-                                  type="button"
-                                  className="btn-ghost p-1"
-                                  onClick={() => setPreviewFile(null)}
-                                  aria-label="Close preview"
-                                >
+                                <p className="truncate text-sm font-medium">{mediaDisplayName(previewFile)}</p>
+                                <button type="button" className="btn-ghost p-1" onClick={() => setPreviewFile(null)} aria-label="Close preview">
                                   <FiX size={16} />
                                 </button>
                               </div>
@@ -967,71 +733,39 @@ const TelegramImportPage = () => {
                           )}
 
                           <div className="mt-4 space-y-2">
-                            {filteredMedia.map((item) => {
-                              const selectedIndex = getFileSelectionIndex(activeTopic.id, item.messageId);
-                              const isSelected = selectedIndex >= 0;
-                              const isPreviewing =
-                                previewFile?.topicId === activeTopic.id &&
-                                previewFile?.messageId === item.messageId;
-
-                              return (
-                                <div
-                                  key={item.messageId}
-                                  className={`flex items-start gap-3 rounded-xl border p-3 transition ${
-                                    item.imported
-                                      ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/40 dark:bg-emerald-950/20"
-                                      : isSelected
-                                        ? "border-teal-300 bg-teal-50/50 dark:border-teal-800 dark:bg-teal-950/20"
-                                        : isPreviewing
-                                          ? "border-sky-300 bg-sky-50/40 dark:border-sky-800 dark:bg-sky-950/20"
-                                          : "border-slate-200 dark:border-slate-700"
-                                  }`}
+                            {filteredMedia.map((item) => (
+                              <div
+                                key={item.messageId}
+                                className={`flex items-start gap-3 rounded-xl border p-3 ${
+                                  item.imported
+                                    ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/40 dark:bg-emerald-950/20"
+                                    : "border-slate-200 dark:border-slate-700"
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  className="mt-0.5 shrink-0 text-teal-600"
+                                  disabled={busy}
+                                  onClick={() => openPreview(item, activeTopic)}
+                                  title="Preview"
                                 >
-                                  {!item.imported ? (
-                                    <input
-                                      type="checkbox"
-                                      className="mt-1 shrink-0"
-                                      checked={isSelected}
-                                      disabled={busy}
-                                      onChange={() => toggleFileSelection(item, activeTopic)}
-                                    />
-                                  ) : (
-                                    <span className="mt-1 flex h-4 w-4 shrink-0 items-center justify-center text-emerald-600">
-                                      <FiCheck size={14} />
-                                    </span>
-                                  )}
-                                  <button
-                                    type="button"
-                                    className="mt-0.5 shrink-0 text-teal-600 hover:text-teal-800 dark:hover:text-teal-400"
-                                    disabled={busy}
-                                    onClick={() => openPreview(item, activeTopic)}
-                                    title="Preview before import"
-                                  >
-                                    {item.mediaType === "video" ? <FiPlay size={16} /> : <FiFileText size={16} />}
-                                  </button>
-                                  <div className="min-w-0 flex-1">
-                                    <p className="truncate font-medium">{mediaDisplayName(item)}</p>
-                                    <p className="text-xs text-slate-500">{formatTelegramMediaMeta(item)}</p>
-                                  </div>
-                                  {isSelected && (
-                                    <span className="rounded-full bg-teal-600 px-2 py-0.5 text-[10px] font-bold text-white">
-                                      #{selectedIndex + 1}
-                                    </span>
-                                  )}
-                                  {item.imported ? (
-                                    <span className="flex items-center gap-1 text-xs font-semibold text-emerald-600">
-                                      <FiCheck size={12} /> Added
-                                    </span>
-                                  ) : (
-                                    <span className="text-xs font-medium text-sky-600">New</span>
-                                  )}
+                                  {item.mediaType === "video" ? <FiPlay size={16} /> : <FiFileText size={16} />}
+                                </button>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate font-medium">{mediaDisplayName(item)}</p>
+                                  <p className="text-xs text-slate-500">{formatTelegramMediaMeta(item)}</p>
                                 </div>
-                              );
-                            })}
+                                {item.imported ? (
+                                  <span className="flex items-center gap-1 text-xs font-semibold text-emerald-600">
+                                    <FiCheck size={12} /> In course
+                                  </span>
+                                ) : (
+                                  <span className="text-xs font-medium text-amber-600">New</span>
+                                )}
+                              </div>
+                            ))}
                             {!filteredMedia.length && (
-                              <p className="text-sm text-slate-400">
-                                No {mediaFilter === "all" ? "videos or PDFs" : `${mediaFilter}s`} in this topic.
-                              </p>
+                              <p className="text-sm text-slate-400">No lessons in this subject yet.</p>
                             )}
                           </div>
                         </>
@@ -1048,7 +782,7 @@ const TelegramImportPage = () => {
 
         {!programmeId && session.connected && (
           <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-            Select a coaching batch on the Dashboard first, then open Import again.
+            Open a coaching batch on the Dashboard first, then use Import batch again.
           </p>
         )}
       </div>

@@ -21,7 +21,7 @@ const telegramChannelMappingSchema = new mongoose.Schema(
     },
     autoSync: {
       type: Boolean,
-      default: false,
+      default: true,
     },
     lastSyncedMessageId: {
       type: Number,

@@ -92,7 +92,7 @@ const BatchCourseView = ({
                     size={14}
                     className={updatingSubjectId === activeSubjectId ? "animate-spin" : ""}
                   />
-                  Update subject
+                  Download new
                   {subjectUpdates[activeSubjectId]?.newCount
                     ? ` (${subjectUpdates[activeSubjectId].newCount} new)`
                     : ""}
@@ -156,7 +156,7 @@ const BatchCourseView = ({
                   size={14}
                   className={batchUpdating || updatesLoading ? "animate-spin" : ""}
                 />
-                Update batch
+                Download new lessons
                 {updatesAvailable?.subjectsWithUpdates > 0 && (
                   <span className="ml-1 rounded-full bg-white/25 px-1.5 py-0.5 text-[10px] font-bold">
                     {updatesAvailable.subjectsWithUpdates}
@@ -165,7 +165,7 @@ const BatchCourseView = ({
               </button>
             )}
             <button type="button" className="btn-secondary text-sm" onClick={onImportTelegram}>
-              <FiUploadCloud size={15} /> Import batch
+              <FiUploadCloud size={15} /> Add from Telegram
             </button>
           </div>
         </div>
@@ -191,7 +191,7 @@ const BatchCourseView = ({
               No subjects yet. Import your Telegram batch to sync forum topics as subjects.
             </p>
             <button type="button" className="btn-primary mt-4 text-sm" onClick={onImportTelegram}>
-              <FiUploadCloud size={15} /> Import from Telegram
+              <FiUploadCloud size={15} /> Add from Telegram
             </button>
           </div>
         )}
