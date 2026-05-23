@@ -256,7 +256,12 @@ export const telegramImportBatch = async (req, res) => {
       } catch {
         topics = [];
       }
-      if (topics.length > 0 || hasTopicFilter) {
+
+      const flatVirtualTopicIds =
+        hasTopicFilter && topicIds.every((id) => Number(id) >= 900_000_000);
+      const useForumImport = topics.length > 0 && !flatVirtualTopicIds;
+
+      if (useForumImport) {
         const result = await importBatchByForumTopics({
           channelId,
           channelTitle,

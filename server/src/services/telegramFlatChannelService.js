@@ -149,7 +149,9 @@ export const importBatchByFlatSubjects = async ({
 
   if (!topics.length) {
     throw new Error(
-      "No subjects detected in this channel. Messages need Topic: or Batch: in the caption."
+      Array.isArray(topicIds) && topicIds.length
+        ? "Selected subjects were not found. Refresh the page and try again."
+        : "No subjects detected in this channel. Messages need Topic: or Batch: in the caption."
     );
   }
 
