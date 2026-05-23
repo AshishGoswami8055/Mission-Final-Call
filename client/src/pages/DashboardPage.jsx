@@ -366,7 +366,7 @@ const DashboardPage = () => {
     }
     if (
       !window.confirm(
-        `Update ${count} subject${count === 1 ? "" : "s"} with new lessons from Telegram? This may take a few minutes.`
+        `Update all ${count} subject${count === 1 ? "" : "s"} with new lessons from Telegram? This may take a few minutes.`
       )
     ) {
       return;
