@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { FiArrowLeft, FiTrash2, FiUploadCloud } from "react-icons/fi";
+import { FiArrowLeft, FiRefreshCw, FiTrash2, FiUploadCloud } from "react-icons/fi";
 import SubjectGridCard from "./SubjectGridCard";
 import SubjectLessonAccordion from "./SubjectLessonAccordion";
 
@@ -17,6 +17,13 @@ const BatchCourseView = ({
   onDeleteContent,
   onRenameContent,
   onClearCourse,
+  subjectUpdates = {},
+  updatesLoading = false,
+  updatesAvailable = null,
+  onUpdateBatch,
+  onUpdateSubject,
+  updatingSubjectId = null,
+  batchUpdating = false,
 }) => {
   const sortedSubjects = useMemo(() => {
     return [...subjects].sort((a, b) => {
@@ -73,15 +80,34 @@ const BatchCourseView = ({
                 {subjectContents.filter((c) => c.type === "pdf").length} PDFs
               </p>
             </div>
-            {onDeleteSubject && (
-              <button
-                type="button"
-                className="btn-ghost text-sm text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/30"
-                onClick={() => onDeleteSubject(activeSubject)}
-              >
-                <FiTrash2 size={14} /> Delete subject
-              </button>
-            )}
+            <div className="flex flex-wrap gap-2">
+              {subjectUpdates[activeSubjectId]?.hasUpdate && onUpdateSubject && (
+                <button
+                  type="button"
+                  className="btn-primary text-sm"
+                  disabled={updatingSubjectId === activeSubjectId}
+                  onClick={() => onUpdateSubject(activeSubject)}
+                >
+                  <FiRefreshCw
+                    size={14}
+                    className={updatingSubjectId === activeSubjectId ? "animate-spin" : ""}
+                  />
+                  Update subject
+                  {subjectUpdates[activeSubjectId]?.newCount
+                    ? ` (${subjectUpdates[activeSubjectId].newCount} new)`
+                    : ""}
+                </button>
+              )}
+              {onDeleteSubject && (
+                <button
+                  type="button"
+                  className="btn-ghost text-sm text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/30"
+                  onClick={() => onDeleteSubject(activeSubject)}
+                >
+                  <FiTrash2 size={14} /> Delete subject
+                </button>
+              )}
+            </div>
           </div>
         </div>
         <SubjectLessonAccordion
@@ -119,6 +145,25 @@ const BatchCourseView = ({
                 <FiTrash2 size={14} /> Clear course
               </button>
             )}
+            {onUpdateBatch && displaySubjects.some((s) => s.telegramTopicId != null) && (
+              <button
+                type="button"
+                className={`text-sm ${updatesAvailable?.subjectsWithUpdates > 0 ? "btn-primary" : "btn-secondary"}`}
+                disabled={batchUpdating || updatesLoading}
+                onClick={onUpdateBatch}
+              >
+                <FiRefreshCw
+                  size={14}
+                  className={batchUpdating || updatesLoading ? "animate-spin" : ""}
+                />
+                Update batch
+                {updatesAvailable?.subjectsWithUpdates > 0 && (
+                  <span className="ml-1 rounded-full bg-white/25 px-1.5 py-0.5 text-[10px] font-bold">
+                    {updatesAvailable.subjectsWithUpdates}
+                  </span>
+                )}
+              </button>
+            )}
             <button type="button" className="btn-secondary text-sm" onClick={onImportTelegram}>
               <FiUploadCloud size={15} /> Import batch
             </button>
@@ -133,8 +178,11 @@ const BatchCourseView = ({
             subject={subject}
             index={index}
             stats={subjectStats[subject._id]}
+            updateInfo={subjectUpdates[subject._id]}
             onClick={onSelectSubject}
             onDelete={onDeleteSubject}
+            onUpdateSubject={onUpdateSubject}
+            updating={updatingSubjectId === subject._id}
           />
         ))}
         {!displaySubjects.length && (

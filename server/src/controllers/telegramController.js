@@ -7,10 +7,12 @@ import {
   fetchChannelMapping,
   fetchForumTopicsPreview,
   getImportedContentMap,
+  getProgrammeSubjectUpdates,
   importBatchByForumTopics,
   importSelectedForumMessages,
   importTelegramMessages,
   listChannelMappings,
+  updateProgrammeSubjects,
   upsertChannelMapping,
 } from "../services/telegramMappingService.js";
 import {
@@ -383,6 +385,48 @@ export const telegramChannelMappings = async (req, res) => {
     res.json({ mappings });
   } catch (error) {
     res.status(400).json({ message: error.message || "Could not load mappings" });
+  }
+};
+
+export const telegramBatchUpdates = async (req, res) => {
+  try {
+    const { programmeId } = req.query;
+    if (!programmeId || !mongoose.Types.ObjectId.isValid(programmeId)) {
+      return res.status(400).json({ message: "programmeId is required." });
+    }
+    const result = await getProgrammeSubjectUpdates({ programmeId });
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Could not check updates" });
+  }
+};
+
+export const telegramUpdateSubject = async (req, res) => {
+  try {
+    const { programmeId, subjectId } = req.body;
+    if (!programmeId || !mongoose.Types.ObjectId.isValid(programmeId)) {
+      return res.status(400).json({ message: "programmeId is required." });
+    }
+    if (!subjectId || !mongoose.Types.ObjectId.isValid(subjectId)) {
+      return res.status(400).json({ message: "subjectId is required." });
+    }
+    const result = await updateProgrammeSubjects({ programmeId, subjectId });
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Subject update failed" });
+  }
+};
+
+export const telegramUpdateBatch = async (req, res) => {
+  try {
+    const { programmeId } = req.body;
+    if (!programmeId || !mongoose.Types.ObjectId.isValid(programmeId)) {
+      return res.status(400).json({ message: "programmeId is required." });
+    }
+    const result = await updateProgrammeSubjects({ programmeId, allWithUpdates: true });
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Batch update failed" });
   }
 };
 

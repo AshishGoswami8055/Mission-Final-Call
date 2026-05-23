@@ -20,6 +20,7 @@ import ContentEditModal from "../components/ContentEditModal";
 import ContentModal from "../components/ContentModal";
 import BatchCourseView from "../components/BatchCourseView";
 import CoachingBatchSection from "../components/CoachingBatchSection";
+import OperationProgressOverlay from "../components/OperationProgressOverlay";
 import ExamCountdown from "../components/ExamCountdown";
 import Layout from "../components/Layout";
 import { SkeletonCard } from "../components/Loader";
@@ -124,6 +125,12 @@ const DashboardPage = () => {
   const [activeCourseSubjectId, setActiveCourseSubjectId] = useState("");
   const [showLibraryView, setShowLibraryView] = useState(false);
   const [courseContents, setCourseContents] = useState([]);
+  const [subjectUpdates, setSubjectUpdates] = useState({});
+  const [updatesAvailable, setUpdatesAvailable] = useState(null);
+  const [updatesLoading, setUpdatesLoading] = useState(false);
+  const [updatingSubjectId, setUpdatingSubjectId] = useState("");
+  const [batchUpdating, setBatchUpdating] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState(null);
 
   const fetchSubjects = async () => {
     if (!selectedProgrammeId) {
@@ -157,6 +164,34 @@ const DashboardPage = () => {
       params: { programmeId: selectedProgrammeId, sort: "chapter", page: 1, limit: 500 },
     });
     setCourseContents(data.items || []);
+  };
+
+  const fetchSubjectUpdates = async ({ silent = false } = {}) => {
+    if (!selectedProgrammeId) {
+      setSubjectUpdates({});
+      setUpdatesAvailable(null);
+      return null;
+    }
+    if (!silent) setUpdatesLoading(true);
+    try {
+      const { data } = await api.get("/telegram/batch-updates", {
+        params: { programmeId: selectedProgrammeId },
+      });
+      const map = {};
+      for (const item of data.subjects || []) {
+        map[item.subjectId] = item;
+      }
+      setSubjectUpdates(map);
+      setUpdatesAvailable(data);
+      return data;
+    } catch (error) {
+      if (!silent) {
+        toast.error(error.response?.data?.message || "Could not check for updates");
+      }
+      return null;
+    } finally {
+      if (!silent) setUpdatesLoading(false);
+    }
   };
 
   const fetchContents = async () => {
@@ -236,15 +271,120 @@ const DashboardPage = () => {
 
   useEffect(() => {
     setActiveCourseSubjectId("");
+    setSubjectUpdates({});
+    setUpdatesAvailable(null);
   }, [selectedProgrammeId]);
 
   useEffect(() => {
     if (!selectedProgrammeId || showLibraryView) return undefined;
+    fetchSubjectUpdates({ silent: true });
     const interval = setInterval(() => {
       fetchCourseContents();
+      fetchSubjectUpdates({ silent: true });
     }, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [selectedProgrammeId, showLibraryView]);
+
+  const handleUpdateSubject = async (subject) => {
+    if (!selectedProgrammeId || !subject?._id) return;
+    setUpdatingSubjectId(subject._id);
+    setUpdateProgress({
+      active: true,
+      phase: "syncing",
+      percent: 15,
+      message: `Updating ${subject.name}…`,
+    });
+    try {
+      const { data } = await api.post("/telegram/update-subject", {
+        programmeId: selectedProgrammeId,
+        subjectId: subject._id,
+      });
+      setUpdateProgress({
+        active: true,
+        phase: "done",
+        percent: 100,
+        message: data.message || "Subject updated",
+      });
+      toast.success(data.message || "Subject updated");
+      await Promise.all([fetchCourseContents(), fetchSubjects(), fetchSubjectUpdates({ silent: true })]);
+      setTimeout(() => setUpdateProgress(null), 900);
+    } catch (error) {
+      setUpdateProgress({
+        active: true,
+        phase: "error",
+        percent: 0,
+        message: error.response?.data?.message || "Update failed",
+      });
+      toast.error(error.response?.data?.message || "Update failed");
+    } finally {
+      setUpdatingSubjectId("");
+    }
+  };
+
+  const handleUpdateBatch = async () => {
+    if (!selectedProgrammeId) return;
+
+    let status = updatesAvailable;
+    if (!status || updatesLoading) {
+      status = await fetchSubjectUpdates();
+    } else if (!status.available) {
+      status = await fetchSubjectUpdates();
+    }
+
+    if (!status?.available) {
+      toast(status?.reason || "Cannot check updates", { icon: "ℹ️" });
+      return;
+    }
+
+    const count = status.subjectsWithUpdates || 0;
+    if (!count) {
+      toast.success("All subjects are up to date");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Import new content for ${count} subject${count === 1 ? "" : "s"}? This may take a few minutes.`
+      )
+    ) {
+      return;
+    }
+    setBatchUpdating(true);
+    setUpdateProgress({
+      active: true,
+      phase: "syncing",
+      percent: 10,
+      message: `Updating ${count} subject${count === 1 ? "" : "s"}…`,
+    });
+    try {
+      const { data } = await api.post("/telegram/update-batch", {
+        programmeId: selectedProgrammeId,
+      });
+      setUpdateProgress({
+        active: true,
+        phase: "done",
+        percent: 100,
+        message: data.message || "Batch updated",
+      });
+      toast.success(data.message || "Batch updated");
+      await Promise.all([
+        fetchCourseContents(),
+        fetchSubjects(),
+        fetchChapterStats(),
+        fetchSubjectUpdates({ silent: true }),
+      ]);
+      setTimeout(() => setUpdateProgress(null), 1200);
+    } catch (error) {
+      setUpdateProgress({
+        active: true,
+        phase: "error",
+        percent: 0,
+        message: error.response?.data?.message || "Batch update failed",
+      });
+      toast.error(error.response?.data?.message || "Batch update failed");
+    } finally {
+      setBatchUpdating(false);
+    }
+  };
 
   useEffect(() => {
     fetchContents();
@@ -309,6 +449,7 @@ const DashboardPage = () => {
       fetchProgress(),
       fetchChapterStats(),
       fetchContents(),
+      fetchSubjectUpdates({ silent: true }),
     ]).finally(() => {
       navigate(".", { replace: true, state: {} });
     });
@@ -936,6 +1077,13 @@ const DashboardPage = () => {
             onDeleteContent={handleDeleteContentItem}
             onRenameContent={handleRenameContentItem}
             onClearCourse={handleClearCourse}
+            subjectUpdates={subjectUpdates}
+            updatesLoading={updatesLoading}
+            updatesAvailable={updatesAvailable}
+            onUpdateBatch={handleUpdateBatch}
+            onUpdateSubject={handleUpdateSubject}
+            updatingSubjectId={updatingSubjectId}
+            batchUpdating={batchUpdating}
           />
         )}
 
@@ -1163,6 +1311,10 @@ const DashboardPage = () => {
           onClose={() => setCloudMappingModalOpen(false)}
         />
       )}
+      <OperationProgressOverlay
+        progress={updateProgress}
+        onDismiss={() => setUpdateProgress(null)}
+      />
     </Layout>
   );
 };

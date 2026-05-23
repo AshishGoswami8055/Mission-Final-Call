@@ -4,7 +4,14 @@ import Subject from "../models/Subject.js";
 import TelegramChannelMapping from "../models/TelegramChannelMapping.js";
 import { getOrCreateChapterForSubject } from "../utils/chapterHelpers.js";
 import { parseChapterAndTitleFromFilename } from "../utils/contentHelpers.js";
-import { resolveTelegramMediaTitle, getTelegramMessageMedia, fetchForumTopicsForChannel, fetchForumTopicsByIds, fetchMediaInTopic } from "./telegramService.js";
+import {
+  resolveTelegramMediaTitle,
+  getTelegramMessageMedia,
+  fetchForumTopicsForChannel,
+  fetchForumTopicsByIds,
+  fetchMediaInTopic,
+  getActiveSession,
+} from "./telegramService.js";
 import { deleteSubjectTree } from "./subjectCleanupService.js";
 import { buildTelegramPdfContentFields } from "./telegramPdfImportService.js";
 import { completeProgress, initProgress, setProgress } from "./uploadProgressBus.js";
@@ -774,5 +781,148 @@ export const importSelectedForumMessages = async ({
     maxMessageId,
     topicsProcessed: new Set(metas.map((m) => m.topicId)).size,
     mapping,
+  };
+};
+
+/** Check which programme subjects have new Telegram media not yet imported. */
+export const getProgrammeSubjectUpdates = async ({ programmeId }) => {
+  const mapping = await TelegramChannelMapping.findOne({ programmeId }).sort({ updatedAt: -1 });
+  if (!mapping) {
+    return {
+      available: false,
+      reason: "Import this batch from Telegram first.",
+      channelId: null,
+      subjects: [],
+      totalNew: 0,
+      subjectsWithUpdates: 0,
+    };
+  }
+
+  const session = await getActiveSession();
+  if (!session?.isActive) {
+    return {
+      available: false,
+      reason: "Connect Telegram to check for updates.",
+      channelId: mapping.channelId,
+      subjects: [],
+      totalNew: 0,
+      subjectsWithUpdates: 0,
+    };
+  }
+
+  const batchSubjects = await Subject.find({
+    programmeId,
+    telegramTopicId: { $ne: null },
+  }).select("_id name telegramTopicId telegramChannelId");
+
+  if (!batchSubjects.length) {
+    return {
+      available: false,
+      reason: "No Telegram-linked subjects in this batch.",
+      channelId: mapping.channelId,
+      subjects: [],
+      totalNew: 0,
+      subjectsWithUpdates: 0,
+    };
+  }
+
+  const preview = await fetchForumTopicsPreview({ channelId: mapping.channelId });
+  const topicById = new Map(preview.topics.map((t) => [Number(t.id), t]));
+
+  const subjects = batchSubjects.map((sub) => {
+    const topic = topicById.get(Number(sub.telegramTopicId));
+    const newMedia = (topic?.media || []).filter((m) => !m.imported);
+    const newCount = topic?.newCount ?? newMedia.length;
+    return {
+      subjectId: String(sub._id),
+      subjectName: sub.name,
+      topicId: Number(sub.telegramTopicId),
+      newCount,
+      hasUpdate: newCount > 0,
+      newVideos: newMedia.filter((m) => m.mediaType === "video").length,
+      newPdfs: newMedia.filter((m) => m.mediaType === "pdf").length,
+      topicTitle: topic?.title || sub.name,
+    };
+  });
+
+  const totalNew = subjects.reduce((sum, s) => sum + s.newCount, 0);
+  const subjectsWithUpdates = subjects.filter((s) => s.hasUpdate).length;
+
+  return {
+    available: true,
+    channelId: mapping.channelId,
+    channelTitle: mapping.channelTitle,
+    totalNew,
+    subjectsWithUpdates,
+    subjects,
+  };
+};
+
+/** Import new Telegram media for one or more subjects (by subjectId or all with updates). */
+export const updateProgrammeSubjects = async ({
+  programmeId,
+  subjectId = null,
+  subjectIds = null,
+  allWithUpdates = false,
+}) => {
+  const mapping = await TelegramChannelMapping.findOne({ programmeId }).sort({ updatedAt: -1 });
+  if (!mapping) {
+    throw new Error("No Telegram import found for this batch. Import batch first.");
+  }
+
+  const session = await getActiveSession();
+  if (!session?.isActive) {
+    throw new Error("Telegram is not connected. Connect in Import batch.");
+  }
+
+  let topicIds = [];
+
+  if (allWithUpdates) {
+    const status = await getProgrammeSubjectUpdates({ programmeId });
+    topicIds = status.subjects.filter((s) => s.hasUpdate).map((s) => s.topicId);
+    if (!topicIds.length) {
+      return { created: [], skipped: [], imported: 0, message: "All subjects are up to date." };
+    }
+  } else {
+    const ids = subjectIds?.length
+      ? subjectIds
+      : subjectId
+        ? [subjectId]
+        : [];
+    if (!ids.length) {
+      throw new Error("subjectId or subjectIds is required.");
+    }
+
+    const subjects = await Subject.find({
+      _id: { $in: ids },
+      programmeId,
+      telegramTopicId: { $ne: null },
+    }).select("telegramTopicId");
+
+    topicIds = subjects.map((s) => Number(s.telegramTopicId)).filter(Boolean);
+    if (!topicIds.length) {
+      throw new Error("Subject is not linked to a Telegram topic.");
+    }
+  }
+
+  const result = await importBatchByForumTopics({
+    channelId: mapping.channelId,
+    channelTitle: mapping.channelTitle,
+    programmeId,
+    autoSync: mapping.autoSync,
+    cleanSync: false,
+    topicIds,
+  });
+
+  return {
+    imported: result.created.length,
+    skipped: result.skipped.length,
+    created: result.created,
+    skippedItems: result.skipped,
+    topicsProcessed: result.topicsProcessed,
+    message:
+      result.created.length > 0
+        ? `Imported ${result.created.length} new file(s).`
+        : "No new files to import.",
   };
 };
