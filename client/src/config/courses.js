@@ -23,15 +23,10 @@ export const COURSES = [batch(2, 2026, "09-13", "CDS 2 · 2026")].map((c) => ({
   accent: "indigo",
 }));
 
-/** Prep season window for the visual tracker. */
-export const SEASON_START = new Date("2026-03-01T00:00:00");
-export const SEASON_END = new Date("2026-09-13T23:59:59");
-
-export const EXAM_MILESTONES = [
-  { id: "cds-2-2026", label: "CDS (II) 26", date: new Date("2026-09-13T00:00:00") },
-];
-
 const DEFAULT_COURSE_ID = "cds-2-2026";
+
+/** Prep season window — study starts 24 May 2026 through exam day. */
+export const SEASON_START = new Date("2026-05-24T00:00:00");
 
 export function getCourseById(id) {
   return (
@@ -45,6 +40,19 @@ export function courseExamDate(courseId) {
   const c = getCourseById(courseId);
   return new Date(`${c.examDate}T00:00:00`);
 }
+
+export function getSeasonEnd(courseId = DEFAULT_COURSE_ID) {
+  const exam = courseExamDate(courseId);
+  exam.setHours(23, 59, 59, 999);
+  return exam;
+}
+
+/** @deprecated use getSeasonEnd(courseId) — kept for imports */
+export const SEASON_END = getSeasonEnd(DEFAULT_COURSE_ID);
+
+export const EXAM_MILESTONES = [
+  { id: "cds-2-2026", label: "CDS (II) 26", date: new Date("2026-09-13T00:00:00") },
+];
 
 export function getNextMilestoneAfter(now = new Date()) {
   const n = new Date(now);

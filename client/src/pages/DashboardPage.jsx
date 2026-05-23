@@ -1051,7 +1051,7 @@ const DashboardPage = () => {
         {/* Charts row — Study tracker + Exam countdown */}
         <section className="grid gap-3 lg:grid-cols-2">
           <StudyTracker subjects={subjects} />
-          <ExamCountdown appMadeAt={appMadeAt} activeCourseId={selectedCdsCycleId} />
+          <ExamCountdown activeCourseId={selectedCdsCycleId} />
         </section>
 
         {/* Coaching batch picker — slim row */}
