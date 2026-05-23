@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import api from "../api/client";
 import { useAuth } from "../context/AuthContext";
@@ -9,6 +9,7 @@ import {
   FiChevronRight,
   FiFileText,
   FiLayers,
+  FiMoreVertical,
   FiPlay,
   FiPlus,
   FiUploadCloud,
@@ -131,6 +132,19 @@ const DashboardPage = () => {
   const [updatingSubjectId, setUpdatingSubjectId] = useState("");
   const [batchUpdating, setBatchUpdating] = useState(false);
   const [updateProgress, setUpdateProgress] = useState(null);
+  const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
+  const mobileActionsRef = useRef(null);
+
+  useEffect(() => {
+    if (!mobileActionsOpen) return undefined;
+    const onPointerDown = (event) => {
+      if (mobileActionsRef.current && !mobileActionsRef.current.contains(event.target)) {
+        setMobileActionsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [mobileActionsOpen]);
 
   const fetchSubjects = async () => {
     if (!selectedProgrammeId) {
@@ -1000,6 +1014,51 @@ const DashboardPage = () => {
       >
         {showLibraryView ? "Course view" : "Library view"}
       </button>
+      <div className="relative sm:hidden" ref={mobileActionsRef}>
+        <button
+          type="button"
+          className="btn-ghost p-2.5!"
+          aria-label="More actions"
+          aria-expanded={mobileActionsOpen}
+          onClick={() => setMobileActionsOpen((open) => !open)}
+        >
+          <FiMoreVertical size={18} />
+        </button>
+        {mobileActionsOpen && (
+          <div className="absolute right-0 top-full z-20 mt-1 min-w-[11rem] overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-[#1a1a1a]">
+            <button
+              type="button"
+              className="flex w-full items-center px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-white/5"
+              onClick={() => {
+                setSubjectModal({});
+                setMobileActionsOpen(false);
+              }}
+            >
+              Add subject
+            </button>
+            <button
+              type="button"
+              className="flex w-full items-center px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-white/5"
+              onClick={() => {
+                setChapterModal({});
+                setMobileActionsOpen(false);
+              }}
+            >
+              Add chapter
+            </button>
+            <button
+              type="button"
+              className="flex w-full items-center px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-white/5"
+              onClick={() => {
+                setShowLibraryView((v) => !v);
+                setMobileActionsOpen(false);
+              }}
+            >
+              {showLibraryView ? "Course view" : "Library view"}
+            </button>
+          </div>
+        )}
+      </div>
       <button
         type="button"
         className="btn-secondary text-sm"

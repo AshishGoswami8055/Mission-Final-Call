@@ -50,9 +50,17 @@
  * Typography
  * ------------------------------------------------------------------------- */
 
+html {
+  overflow-x: clip;
+}
+
 body {
   margin: 0;
   min-width: 320px;
+  overflow-x: clip;
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   color: #0f172a;
   font-family: "Inter", "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-feature-settings: "cv11", "ss01", "ss03", "ss04";
@@ -136,10 +144,31 @@ body {
 }
 
 .modal-card {
-  @apply w-full max-w-lg rounded-t-3xl border border-slate-200/80 bg-white p-6 text-slate-900 shadow-2xl sm:rounded-2xl dark:border-white/[0.08] dark:bg-[#1a1a1a] dark:text-slate-50;
+  @apply w-full max-w-lg rounded-t-3xl border border-slate-200/80 bg-white p-4 text-slate-900 shadow-2xl sm:rounded-2xl sm:p-6 dark:border-white/[0.08] dark:bg-[#1a1a1a] dark:text-slate-50;
   animation: modal-in 280ms var(--ease-spring) both;
-  max-height: calc(100dvh - 1rem);
+  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 0.5rem);
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.modal-card-lg {
+  @apply max-w-lg sm:max-w-xl md:max-w-2xl;
+}
+
+.page-viewer {
+  @apply min-h-dvh px-3 py-3 sm:px-4 sm:py-4 md:px-6;
+}
+
+.viewer-frame {
+  height: calc(100dvh - 11rem);
+  min-height: 240px;
+}
+
+@media (min-width: 640px) {
+  .viewer-frame {
+    height: 75vh;
+    min-height: 420px;
+  }
 }
 
 /* Status pills — base shape shared by all variants */
@@ -634,3 +663,23 @@ body {
 .yt-volume-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; height: 8px; width: 8px; border-radius: 999px; background: #fff; margin-top: -3px; }
 .yt-volume-range::-moz-range-track { height: 2px; border: 0; border-radius: 999px; background: rgba(255,255,255,0.35); }
 .yt-volume-range::-moz-range-thumb { height: 8px; width: 8px; border: 0; border-radius: 999px; background: #fff; }
+
+@media (max-width: 639px) {
+  .video-volume-slider {
+    display: none;
+  }
+
+  .video-timeline {
+    min-height: 28px;
+  }
+
+  .video-timeline .yt-range::-webkit-slider-thumb {
+    height: 16px;
+    width: 16px;
+  }
+
+  .video-timeline .yt-range::-moz-range-thumb {
+    height: 16px;
+    width: 16px;
+  }
+}

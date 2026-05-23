@@ -34,9 +34,9 @@ const ScreenshotViewerPage = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-100 p-6 dark:bg-slate-950">
-        <div className="mx-auto max-w-4xl rounded-2xl border border-slate-200 bg-white p-6 text-center dark:border-slate-700 dark:bg-slate-900">
-          <p className="text-lg font-semibold text-slate-800 dark:text-slate-100">Loading screenshot...</p>
+      <div className="page-viewer bg-slate-100 dark:bg-slate-950">
+        <div className="mx-auto max-w-4xl rounded-2xl border border-slate-200 bg-white p-4 text-center sm:p-6 dark:border-slate-700 dark:bg-slate-900">
+          <p className="text-base font-semibold text-slate-800 sm:text-lg dark:text-slate-100">Loading screenshot...</p>
         </div>
       </div>
     );
@@ -44,9 +44,9 @@ const ScreenshotViewerPage = () => {
 
   if (!note) {
     return (
-      <div className="min-h-screen bg-slate-100 p-6 dark:bg-slate-950">
-        <div className="mx-auto max-w-4xl rounded-2xl border border-slate-200 bg-white p-6 text-center dark:border-slate-700 dark:bg-slate-900">
-          <p className="text-lg font-semibold text-slate-800 dark:text-slate-100">Screenshot not found</p>
+      <div className="page-viewer bg-slate-100 dark:bg-slate-950">
+        <div className="mx-auto max-w-4xl rounded-2xl border border-slate-200 bg-white p-4 text-center sm:p-6 dark:border-slate-700 dark:bg-slate-900">
+          <p className="text-base font-semibold text-slate-800 sm:text-lg dark:text-slate-100">Screenshot not found</p>
           <Link to={`/video/${id}`} className="btn-primary mt-4 inline-flex">
             <FiArrowLeft /> Back to Video
           </Link>
@@ -56,15 +56,15 @@ const ScreenshotViewerPage = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 p-6 dark:bg-slate-950">
-      <div className="mx-auto max-w-6xl space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <Link to={`/video/${id}`} className="btn-secondary inline-flex">
+    <div className="page-viewer bg-slate-100 dark:bg-slate-950">
+      <div className="mx-auto max-w-6xl space-y-3 sm:space-y-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <Link to={`/video/${id}`} className="btn-secondary inline-flex w-fit text-sm">
             <FiArrowLeft /> Back to Video
           </Link>
           <button
             type="button"
-            className="btn-primary"
+            className="btn-primary w-full sm:w-auto"
             onClick={() =>
               downloadDataUrl(
                 note.imageData,
@@ -77,11 +77,11 @@ const ScreenshotViewerPage = () => {
           </button>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-          <p className="mb-2 text-base font-semibold text-slate-800 dark:text-slate-100">
+        <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4 dark:border-slate-700 dark:bg-slate-900">
+          <p className="mb-2 text-base font-semibold text-slate-800 sm:text-lg dark:text-slate-100">
             {note.title || `Note ${formatTime(note.time)}`}
           </p>
-          <p className="mb-3 text-sm text-slate-500">
+          <p className="mb-3 text-xs text-slate-500 sm:text-sm">
             Captured at <span className="font-semibold text-blue-600 dark:text-blue-400">{formatTime(note.time)}</span>
           </p>
           <img

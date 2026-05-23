@@ -214,6 +214,7 @@ const BatchCourseView = ({
                   className={batchUpdating || updatesLoading ? "animate-spin" : ""}
                 />
                 Update all subjects
+                <span className="hidden sm:inline"> from Telegram</span>
                 {(updatesAvailable?.subjectsWithUpdates || batchSummary.subjectsWithUpdates) > 0 && (
                   <span className="ml-1 rounded-full bg-white/25 px-1.5 py-0.5 text-[10px] font-bold">
                     {updatesAvailable?.subjectsWithUpdates || batchSummary.subjectsWithUpdates}

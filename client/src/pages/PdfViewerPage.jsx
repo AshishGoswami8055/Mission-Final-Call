@@ -51,16 +51,16 @@ const PdfViewerPage = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 p-4 dark:bg-slate-950">
-      <div className="mx-auto max-w-5xl space-y-4">
-        <Link to="/" className="btn-secondary inline-flex">
+    <div className="page-viewer bg-slate-100 dark:bg-slate-950">
+      <div className="mx-auto max-w-5xl space-y-3 sm:space-y-4">
+        <Link to="/" className="btn-secondary inline-flex text-sm">
           <FiArrowLeft /> Back
         </Link>
-        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        <div className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 dark:border-slate-800 dark:bg-slate-900">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h1 className="text-2xl font-semibold">{item.title}</h1>
-              <p className="text-sm text-slate-500">
+            <div className="min-w-0 flex-1">
+              <h1 className="text-lg font-semibold sm:text-2xl">{item.title}</h1>
+              <p className="text-xs text-slate-500 sm:text-sm">
                 {item.subjectId?.name} / {item.chapterId?.chapterName}
               </p>
             </div>
@@ -97,11 +97,11 @@ const PdfViewerPage = () => {
           ) : null}
 
           {src ? (
-            <>
+            <div className="relative mt-3 sm:mt-4">
               <iframe
                 title={item.title}
                 src={src}
-                className={`mt-4 h-[75vh] w-full rounded-lg border border-slate-300 transition-opacity duration-300 ${
+                className={`viewer-frame w-full rounded-lg border border-slate-300 transition-opacity duration-300 ${
                   docReady ? "opacity-100" : "opacity-0"
                 }`}
                 onLoad={() => {
@@ -117,11 +117,11 @@ const PdfViewerPage = () => {
                 }
               />
               {!docReady && !loadError && (
-                <div className="mt-[-75vh] flex h-[75vh] items-center justify-center rounded-lg border border-dashed border-slate-300 bg-white/80 dark:border-slate-700 dark:bg-slate-900/80">
+                <div className="absolute inset-0 flex items-center justify-center rounded-lg border border-dashed border-slate-300 bg-white/80 dark:border-slate-700 dark:bg-slate-900/80">
                   <Loader label={isCloudPdf ? "Preparing document…" : "Connecting to PDF source…"} percent={loadPercent} />
                 </div>
               )}
-            </>
+            </div>
           ) : (
             <p className="mt-4 text-sm text-slate-500">No document source available.</p>
           )}

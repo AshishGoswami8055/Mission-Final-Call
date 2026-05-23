@@ -56,6 +56,7 @@ const TelegramImportPage = () => {
   const [previewFile, setPreviewFile] = useState(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(null);
+  const [mobilePanel, setMobilePanel] = useState("topics");
 
   const loadSession = useCallback(async () => {
     const { data } = await api.get("/telegram/session");
@@ -515,42 +516,45 @@ const TelegramImportPage = () => {
             )}
 
             {selectedChannel && (
-              <div className="flex min-h-[70vh] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-[#1a1a1a]">
-                <div className="border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <button
-                      type="button"
-                      className="btn-ghost text-sm"
-                      disabled={busy}
-                      onClick={() => {
-                        setSelectedChannel(null);
-                        setPreview(null);
-                      }}
-                    >
-                      <FiArrowLeft size={14} /> Channels
-                    </button>
-                    <span className="font-semibold">{selectedChannel.title}</span>
-                    {preview && !previewLoading && (
-                      <span className="text-xs text-slate-500">
-                        {stats.inCourse} in course · {stats.totalNew} new lesson{stats.totalNew === 1 ? "" : "s"}
-                      </span>
-                    )}
-                    <div className="ml-auto flex flex-wrap gap-2">
+              <div className="flex min-h-[50vh] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white sm:min-h-[70vh] dark:border-slate-800 dark:bg-[#1a1a1a]">
+                <div className="border-b border-slate-200 px-3 py-3 sm:px-4 dark:border-slate-800">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
+                      <button
+                        type="button"
+                        className="btn-ghost text-sm"
+                        disabled={busy}
+                        onClick={() => {
+                          setSelectedChannel(null);
+                          setPreview(null);
+                          setMobilePanel("topics");
+                        }}
+                      >
+                        <FiArrowLeft size={14} /> Channels
+                      </button>
+                      <span className="truncate font-semibold">{selectedChannel.title}</span>
+                      {preview && !previewLoading && (
+                        <span className="text-xs text-slate-500">
+                          {stats.inCourse} in course · {stats.totalNew} new lesson{stats.totalNew === 1 ? "" : "s"}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:flex-wrap">
                       {stats.totalNew > 0 && (
                         <button
                           type="button"
-                          className="btn-primary text-sm"
+                          className="btn-primary w-full text-sm sm:w-auto"
                           disabled={busy || !programmeId}
                           onClick={() => handleDownloadNew()}
                         >
                           <FiRefreshCw size={14} className={busy ? "animate-spin" : ""} />
-                          Download new lessons ({stats.totalNew})
+                          <span className="truncate">Download new ({stats.totalNew})</span>
                         </button>
                       )}
                       {addableSelectedCount > 0 && (
                         <button
                           type="button"
-                          className="btn-secondary text-sm"
+                          className="btn-secondary w-full text-sm sm:w-auto"
                           disabled={busy || !programmeId}
                           onClick={() => handleAddSubjects()}
                         >
@@ -593,8 +597,12 @@ const TelegramImportPage = () => {
                     <p className="text-sm">Loading subjects…</p>
                   </div>
                 ) : (
-                  <div className="grid flex-1 lg:grid-cols-[300px_1fr]">
-                    <div className="border-r border-slate-200 dark:border-slate-800">
+                  <div className="grid flex-1 lg:grid-cols-[minmax(240px,300px)_1fr]">
+                    <div
+                      className={`border-b border-slate-200 lg:border-r lg:border-b-0 dark:border-slate-800 ${
+                        mobilePanel === "detail" ? "hidden lg:block" : "block"
+                      }`}
+                    >
                       <div className="space-y-2 border-b border-slate-100 p-3 dark:border-slate-800">
                         <div className="relative">
                           <FiSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
@@ -610,7 +618,7 @@ const TelegramImportPage = () => {
                           Green = already in your batch · check others to add
                         </p>
                       </div>
-                      <div className="max-h-[60vh] overflow-y-auto">
+                      <div className="max-h-[50vh] overflow-y-auto lg:max-h-[60vh]">
                         {filteredTopics.map((topic) => {
                           const isActive = selectedTopicId === topic.id;
                           const canAdd = topic.importedCount === 0;
@@ -644,7 +652,10 @@ const TelegramImportPage = () => {
                               <button
                                 type="button"
                                 className="min-w-0 flex-1 text-left"
-                                onClick={() => setSelectedTopicId(topic.id)}
+                                onClick={() => {
+                                  setSelectedTopicId(topic.id);
+                                  setMobilePanel("detail");
+                                }}
                               >
                                 <span className="flex flex-wrap items-center gap-1.5">
                                   <span className="font-medium text-slate-800 dark:text-slate-100">{topic.title}</span>
@@ -670,12 +681,23 @@ const TelegramImportPage = () => {
                       </div>
                     </div>
 
-                    <div className="max-h-[60vh] overflow-y-auto p-4">
+                    <div
+                      className={`max-h-[60vh] overflow-y-auto p-3 sm:p-4 ${
+                        mobilePanel === "topics" ? "hidden lg:block" : "block"
+                      }`}
+                    >
                       {activeTopic ? (
                         <>
-                          <div className="flex flex-wrap items-start justify-between gap-2">
+                          <button
+                            type="button"
+                            className="btn-ghost mb-3 text-sm lg:hidden"
+                            onClick={() => setMobilePanel("topics")}
+                          >
+                            <FiArrowLeft size={14} /> All subjects
+                          </button>
+                          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
                             <div>
-                              <h3 className="text-lg font-semibold">{activeTopic.title}</h3>
+                              <h3 className="text-base font-semibold sm:text-lg">{activeTopic.title}</h3>
                               <div className="mt-1">
                                 <StatusBadge topic={activeTopic} />
                               </div>
@@ -702,7 +724,7 @@ const TelegramImportPage = () => {
                             )}
                           </div>
 
-                          <div className="mt-3 inline-flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
+                          <div className="mt-3 flex w-full flex-wrap gap-1 rounded-lg border border-slate-200 p-0.5 sm:w-auto dark:border-slate-700">
                             {[
                               { id: "all", label: "All", count: mediaCounts.all },
                               { id: "video", label: "Videos", count: mediaCounts.video },
@@ -711,7 +733,7 @@ const TelegramImportPage = () => {
                               <button
                                 key={tab.id}
                                 type="button"
-                                className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                                className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition sm:flex-none sm:px-3 ${
                                   mediaFilter === tab.id
                                     ? "bg-teal-600 text-white"
                                     : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/5"
@@ -738,13 +760,13 @@ const TelegramImportPage = () => {
                                     src={previewStreamUrl}
                                     controls
                                     playsInline
-                                    className="max-h-[320px] w-full rounded-lg bg-black"
+                                    className="max-h-[40vh] w-full rounded-lg bg-black sm:max-h-[320px]"
                                   />
                                 ) : (
                                   <iframe
                                     title={mediaDisplayName(previewFile)}
                                     src={previewStreamUrl}
-                                    className="h-[420px] w-full rounded-lg bg-white"
+                                    className="viewer-frame w-full rounded-lg bg-white"
                                   />
                                 )}
                               </div>
@@ -755,31 +777,33 @@ const TelegramImportPage = () => {
                             {filteredMedia.map((item) => (
                               <div
                                 key={item.messageId}
-                                className={`flex items-start gap-3 rounded-xl border p-3 ${
+                                className={`flex flex-col gap-2 rounded-xl border p-3 sm:flex-row sm:items-start sm:gap-3 ${
                                   item.imported
                                     ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/40 dark:bg-emerald-950/20"
                                     : "border-slate-200 dark:border-slate-700"
                                 }`}
                               >
-                                <button
-                                  type="button"
-                                  className="mt-0.5 shrink-0 text-teal-600"
-                                  disabled={busy}
-                                  onClick={() => openPreview(item, activeTopic)}
-                                  title="Preview"
-                                >
-                                  {item.mediaType === "video" ? <FiPlay size={16} /> : <FiFileText size={16} />}
-                                </button>
-                                <div className="min-w-0 flex-1">
-                                  <p className="truncate font-medium">{mediaDisplayName(item)}</p>
-                                  <p className="text-xs text-slate-500">{formatTelegramMediaMeta(item)}</p>
+                                <div className="flex min-w-0 flex-1 items-start gap-3">
+                                  <button
+                                    type="button"
+                                    className="mt-0.5 shrink-0 text-teal-600"
+                                    disabled={busy}
+                                    onClick={() => openPreview(item, activeTopic)}
+                                    title="Preview"
+                                  >
+                                    {item.mediaType === "video" ? <FiPlay size={16} /> : <FiFileText size={16} />}
+                                  </button>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="truncate font-medium">{mediaDisplayName(item)}</p>
+                                    <p className="text-xs text-slate-500">{formatTelegramMediaMeta(item)}</p>
+                                  </div>
                                 </div>
                                 {item.imported ? (
-                                  <span className="flex items-center gap-1 text-xs font-semibold text-emerald-600">
+                                  <span className="flex shrink-0 items-center gap-1 self-start text-xs font-semibold text-emerald-600 sm:self-center">
                                     <FiCheck size={12} /> In course
                                   </span>
                                 ) : (
-                                  <span className="text-xs font-medium text-amber-600">New</span>
+                                  <span className="shrink-0 self-start text-xs font-medium text-amber-600 sm:self-center">New</span>
                                 )}
                               </div>
                             ))}

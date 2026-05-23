@@ -81,7 +81,7 @@ const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent, onRena
           >
             <button
               type="button"
-              className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition hover:bg-slate-50 dark:hover:bg-white/[0.03]"
+              className="flex w-full items-center gap-2.5 px-3 py-3 text-left transition hover:bg-slate-50 sm:gap-3 sm:px-4 sm:py-3.5 dark:hover:bg-white/[0.03]"
               onClick={() => onToggle(isOpen ? null : item._id)}
             >
               <span
@@ -243,7 +243,7 @@ const SubjectLessonAccordion = ({ contents = [], chapters = [], onDeleteContent,
               type="button"
               disabled={disabled}
               onClick={() => setActiveTab(tab.id)}
-              className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition sm:gap-2 sm:px-4 sm:py-2 sm:text-sm ${
                 currentTab === tab.id
                   ? tab.id === "videos"
                     ? "bg-sky-700 text-white shadow"

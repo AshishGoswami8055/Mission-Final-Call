@@ -878,11 +878,11 @@ const VideoPlayerPage = () => {
   }, []);
 
   return (
-    <div className={`min-h-screen p-4 ${isDark ? "bg-black text-slate-100" : "bg-slate-100 text-slate-800"}`}>
-      <div className="mx-auto max-w-[1400px] space-y-4">
+    <div className={`page-viewer ${isDark ? "bg-black text-slate-100" : "bg-slate-100 text-slate-800"}`}>
+      <div className="mx-auto max-w-[1400px] space-y-3 sm:space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Link to="/" className="btn-secondary inline-flex">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <Link to="/" className="btn-secondary inline-flex text-sm">
               <FiArrowLeft /> Back
             </Link>
             <StudyTracker compact />
@@ -898,18 +898,18 @@ const VideoPlayerPage = () => {
           </button>
         </div>
         <div
-          className={`rounded-2xl border p-5 ${
+          className={`rounded-2xl border p-3 sm:p-5 ${
             isDark
               ? "border-neutral-800 bg-black"
               : "border-slate-200 bg-white"
           }`}
         >
           {!item ? (
-            <div className="py-20 text-center text-sm text-slate-400">Loading video...</div>
+            <div className="py-16 text-center text-sm text-slate-400 sm:py-20">Loading video...</div>
           ) : (
             <>
-              <h1 className="text-2xl font-semibold">{item.title}</h1>
-              <p className={`text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+              <h1 className="text-lg font-semibold sm:text-2xl">{item.title}</h1>
+              <p className={`text-xs sm:text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
                 {item.subjectId?.name} / {item.chapterId?.chapterName}
               </p>
               <div className="mt-4">
@@ -1160,19 +1160,19 @@ const VideoPlayerPage = () => {
                           </div>
                         )}
                       </div>
-                      <div className="mt-2 flex items-center justify-between text-xs text-slate-200">
-                        <div className="flex items-center gap-2">
-                          <button type="button" className="rounded p-1 hover:bg-white/20" onClick={togglePlay}>
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-y-2 text-xs text-slate-200">
+                        <div className="flex items-center gap-1.5 sm:gap-2">
+                          <button type="button" className="rounded p-1.5 hover:bg-white/20 sm:p-1" onClick={togglePlay}>
                             {isPlaying ? <FiPause /> : <FiPlay />}
                           </button>
-                          <span className="tabular-nums">
+                          <span className="tabular-nums text-[11px] sm:text-xs">
                             {formatTime(currentTime)} / {formatTime(duration)}
                           </span>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1 sm:gap-2">
                           <button
                             type="button"
-                            className="rounded p-1 hover:bg-white/20"
+                            className="rounded p-1.5 hover:bg-white/20 sm:p-1"
                             onClick={handleCaptureScreenshot}
                             disabled={capturePending}
                             title="Save screenshot note"
@@ -1181,7 +1181,7 @@ const VideoPlayerPage = () => {
                           </button>
                           <button
                             type="button"
-                            className="rounded p-1 hover:bg-white/20"
+                            className="rounded p-1.5 hover:bg-white/20 sm:p-1"
                             onClick={() => {
                               if (!videoRef.current) return;
                               const nextMuted = !isMuted;
@@ -1201,7 +1201,7 @@ const VideoPlayerPage = () => {
                               setVolumeLevel(Number(e.target.value));
                               resetControlsTimer();
                             }}
-                            className="yt-volume-range w-24"
+                            className="video-volume-slider yt-volume-range w-16 sm:w-24"
                           />
                           <div className="relative" ref={settingsRef}>
                             <button
@@ -1444,19 +1444,24 @@ const VideoPlayerPage = () => {
                 : "border-slate-200 bg-slate-50"
             }`}
           >
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="text-sm font-semibold">Screenshot Notes</h2>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  className="btn-secondary text-xs"
+                  className="btn-secondary flex-1 text-xs sm:flex-none"
                   onClick={handleDownloadAllScreenshotsPdf}
                   disabled={exportingPdf || !screenshotNotes.length}
                 >
                   <FiDownload size={13} />
                   {exportingPdf ? "Generating PDF..." : "Download PDF"}
                 </button>
-                <button type="button" className="btn-secondary text-xs" onClick={handleCaptureScreenshot} disabled={capturePending}>
+                <button
+                  type="button"
+                  className="btn-secondary flex-1 text-xs sm:flex-none"
+                  onClick={handleCaptureScreenshot}
+                  disabled={capturePending}
+                >
                   <FiCamera size={13} />
                   {capturePending ? "Saving..." : "Capture note"}
                 </button>

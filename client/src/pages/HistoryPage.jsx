@@ -31,22 +31,29 @@ const HistoryPage = () => {
               <li key={`${entry.contentId}-${entry.watchedAt}`}>
                 <Link
                   to={`/video/${entry.contentId}`}
-                  className="flex items-center gap-4 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-md shadow-slate-200/30 transition-all hover:border-blue-200 hover:shadow-lg dark:border-slate-700/80 dark:bg-slate-800/50 dark:shadow-slate-950/20 dark:hover:border-blue-800/60 dark:hover:bg-blue-950/20"
+                  className="flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-white p-3 shadow-md shadow-slate-200/30 transition-all hover:border-blue-200 hover:shadow-lg sm:flex-row sm:items-center sm:gap-4 sm:p-4 dark:border-slate-700/80 dark:bg-slate-800/50 dark:shadow-slate-950/20 dark:hover:border-blue-800/60 dark:hover:bg-blue-950/20"
                 >
-                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-blue-500 to-indigo-500 text-white shadow-md">
-                    <FiPlayCircle size={20} />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-slate-800 dark:text-slate-100">{entry.title}</p>
-                    <p className="text-xs text-slate-500">
-                      {[entry.subjectName, entry.chapterName].filter(Boolean).join(" / ")}
-                    </p>
+                  <div className="flex min-w-0 items-start gap-3 sm:flex-1 sm:items-center">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-blue-500 to-indigo-500 text-white shadow-md sm:h-11 sm:w-11">
+                      <FiPlayCircle size={20} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="line-clamp-2 font-semibold text-slate-800 sm:truncate sm:line-clamp-none dark:text-slate-100">
+                        {entry.title}
+                      </p>
+                      <p className="mt-0.5 truncate text-xs text-slate-500">
+                        {[entry.subjectName, entry.chapterName].filter(Boolean).join(" / ")}
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-3 text-xs text-slate-500">
+                  <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-slate-100 pt-2 text-xs text-slate-500 sm:border-0 sm:pt-0 dark:border-slate-700/80">
                     {entry.durationMinutes > 0 && (
-                      <span>Watched {entry.durationMinutes} min</span>
+                      <span className="whitespace-nowrap">Watched {entry.durationMinutes} min</span>
                     )}
-                    <span title={entry.watchedAt ? format(new Date(entry.watchedAt), "PPp") : ""}>
+                    <span
+                      className="whitespace-nowrap"
+                      title={entry.watchedAt ? format(new Date(entry.watchedAt), "PPp") : ""}
+                    >
                       {entry.watchedAt ? formatDistanceToNow(new Date(entry.watchedAt), { addSuffix: true }) : ""}
                     </span>
                   </div>
