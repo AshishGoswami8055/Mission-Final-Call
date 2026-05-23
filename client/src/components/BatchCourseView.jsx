@@ -42,10 +42,11 @@ const BatchCourseView = ({
   const subjectStats = useMemo(() => {
     const map = {};
     for (const subject of subjects) {
-      map[subject._id] = { videos: 0, pdfs: 0, completed: 0 };
+      map[String(subject._id)] = { videos: 0, pdfs: 0, completed: 0 };
     }
     for (const item of contents) {
-      const sid = item.subjectId?._id || item.subjectId;
+      const sid = String(item.subjectId?._id || item.subjectId || "");
+      if (!sid) continue;
       if (!map[sid]) map[sid] = { videos: 0, pdfs: 0, completed: 0 };
       if (item.type === "video") map[sid].videos += 1;
       if (item.type === "pdf") map[sid].pdfs += 1;
@@ -54,10 +55,12 @@ const BatchCourseView = ({
     return map;
   }, [subjects, contents]);
 
-  const activeSubject = displaySubjects.find((s) => s._id === activeSubjectId);
-  const subjectChapters = chapters.filter((c) => c.subjectId === activeSubjectId);
+  const activeSubject = displaySubjects.find((s) => String(s._id) === String(activeSubjectId));
+  const subjectChapters = chapters.filter(
+    (c) => String(c.subjectId) === String(activeSubjectId)
+  );
   const subjectContents = contents.filter(
-    (c) => (c.subjectId?._id || c.subjectId) === activeSubjectId
+    (c) => String(c.subjectId?._id || c.subjectId) === String(activeSubjectId)
   );
 
   if (activeSubjectId && activeSubject) {
@@ -181,7 +184,7 @@ const BatchCourseView = ({
             key={subject._id}
             subject={subject}
             index={index}
-            stats={subjectStats[subject._id]}
+            stats={subjectStats[String(subject._id)]}
             updateInfo={subjectUpdates[String(subject._id)]}
             onClick={onSelectSubject}
             onDelete={onDeleteSubject}

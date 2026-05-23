@@ -45,5 +45,8 @@ export const deleteSubject = async (req, res) => {
   const { id } = req.params;
   const result = await deleteSubjectTree(id);
   if (!result.deleted) return res.status(404).json({ message: "Subject not found" });
-  res.json({ message: "Subject and related data deleted" });
+  res.json({
+    message: "Subject and all lessons removed (including Cloudinary PDFs/videos)",
+    ...result,
+  });
 };

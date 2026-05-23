@@ -16,9 +16,8 @@ import {
 } from "../utils/contentHelpers.js";
 import { getUploadFolderForCourseId } from "../config/cdsCourses.js";
 import { downloadYouTubeVideo } from "../services/youtubeDownloadService.js";
+import { destroyContentAssets } from "../services/contentCleanupService.js";
 import {
-  destroyCloudinaryRaw,
-  destroyCloudinaryVideo,
   safeUnlink,
   uploadVideoToCloudinary,
 } from "../services/cloudinaryUploadService.js";
@@ -116,7 +115,10 @@ export const getContents = async (req, res) => {
   if (search) filter.title = { $regex: search, $options: "i" };
 
   const pageNumber = Math.max(Number(page) || 1, 1);
-  const limitNumber = Math.min(Math.max(Number(limit) || 20, 1), 100);
+  const hasProgrammeScope =
+    programmeId && mongoose.Types.ObjectId.isValid(String(programmeId));
+  const maxLimit = hasProgrammeScope ? 5000 : 100;
+  const limitNumber = Math.min(Math.max(Number(limit) || 20, 1), maxLimit);
   const skip = (pageNumber - 1) * limitNumber;
 
   let allowedSubjectIds = null;
@@ -175,8 +177,8 @@ export const getContents = async (req, res) => {
               as: "chapterId",
             },
           },
-          { $unwind: "$subjectId" },
-          { $unwind: "$chapterId" },
+          { $unwind: { path: "$subjectId", preserveNullAndEmptyArrays: true } },
+          { $unwind: { path: "$chapterId", preserveNullAndEmptyArrays: true } },
           { $sort: { "chapterId.chapterName": 1, title: 1, createdAt: 1 } },
           { $skip: skip },
           { $limit: limitNumber },
@@ -728,21 +730,7 @@ export const deleteContent = async (req, res) => {
   const content = await Content.findById(req.params.id);
   if (!content) return res.status(404).json({ message: "Content not found" });
 
-  if (content.sourceType === "cloudinary" && content.publicId) {
-    if (content.type === "pdf") {
-      await destroyCloudinaryRaw({
-        cloudType: content.cloudType,
-        publicId: content.publicId,
-      });
-    } else {
-      await destroyCloudinaryVideo({
-        cloudType: content.cloudType,
-        publicId: content.publicId,
-      });
-    }
-  } else if (content.sourceType === "upload") {
-    removeLocalFile(content.filePath);
-  }
+  await destroyContentAssets(content);
 
   await Progress.deleteMany({ contentId: content._id });
   await content.deleteOne();

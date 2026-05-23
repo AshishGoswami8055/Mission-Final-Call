@@ -12,6 +12,7 @@ import {
   fetchMediaInTopic,
   getActiveSession,
 } from "./telegramService.js";
+import { deleteContentsWithAssets } from "./contentCleanupService.js";
 import { deleteSubjectTree } from "./subjectCleanupService.js";
 import { buildTelegramPdfContentFields } from "./telegramPdfImportService.js";
 import { completeProgress, initProgress, setProgress } from "./uploadProgressBus.js";
@@ -395,22 +396,44 @@ export const getOrCreateSubjectForTopic = async ({
 
   const byName = await Subject.findOne({ programmeId, name });
   if (byName) {
-    byName.telegramChannelId = String(channelId);
-    byName.telegramTopicId = Number(topicId);
-    await byName.save();
-    return byName;
+    const existingTopicId = byName.telegramTopicId != null ? Number(byName.telegramTopicId) : null;
+    const nextTopicId = Number(topicId);
+    if (existingTopicId == null) {
+      byName.telegramChannelId = String(channelId);
+      byName.telegramTopicId = nextTopicId;
+      await byName.save();
+      return byName;
+    }
+    if (existingTopicId === nextTopicId) {
+      if (byName.telegramChannelId !== String(channelId)) {
+        byName.telegramChannelId = String(channelId);
+        await byName.save();
+      }
+      return byName;
+    }
+  }
+
+  let createName = name;
+  const taken = await Subject.findOne({ programmeId, name: createName });
+  if (taken) {
+    createName = `${name} (Topic ${topicId})`;
   }
 
   try {
     return await Subject.create({
       programmeId,
-      name,
+      name: createName,
       telegramChannelId: String(channelId),
       telegramTopicId: Number(topicId),
     });
   } catch (err) {
     if (err?.code === 11000) {
-      return Subject.findOne({ programmeId, name });
+      const retry = await Subject.findOne({
+        programmeId,
+        telegramChannelId: String(channelId),
+        telegramTopicId: Number(topicId),
+      });
+      if (retry) return retry;
     }
     throw err;
   }
@@ -421,15 +444,15 @@ export const cleanupChannelImport = async ({ programmeId, channelId }) => {
   const programmeSubjects = await Subject.find({ programmeId }).select("_id");
   const progSubjectIds = programmeSubjects.map((s) => s._id);
 
-  const affectedSubjectIds = await Content.distinct("subjectId", {
+  const contentFilter = {
     telegramChannelId: cid,
     subjectId: { $in: progSubjectIds },
-  });
+  };
 
-  const contentResult = await Content.deleteMany({
-    telegramChannelId: cid,
-    subjectId: { $in: progSubjectIds },
-  });
+  const affectedSubjectIds = await Content.distinct("subjectId", contentFilter);
+
+  const contentCleanup = await deleteContentsWithAssets(contentFilter);
+  const contentResult = { deletedCount: contentCleanup.deletedContents };
 
   let cleanedSubjects = 0;
   for (const sid of affectedSubjectIds) {
@@ -465,20 +488,40 @@ export const fetchForumTopicsPreview = async ({ channelId }) => {
     return { ...topic, media, mediaCount: media.length };
   });
 
-  const importedMap = await getImportedContentMap(channelId, allMessageIds);
+  const importedRows = await Content.find({
+    telegramChannelId: String(channelId),
+    telegramMessageId: { $in: allMessageIds },
+  }).select("_id telegramMessageId telegramTopicId");
+
+  const isImportedInTopic = (topicId, messageId) =>
+    importedRows.some(
+      (row) =>
+        Number(row.telegramMessageId) === Number(messageId) &&
+        (row.telegramTopicId == null || Number(row.telegramTopicId) === Number(topicId))
+    );
+
+  const findImportedRow = (topicId, messageId) =>
+    importedRows.find(
+      (row) =>
+        Number(row.telegramMessageId) === Number(messageId) &&
+        (row.telegramTopicId == null || Number(row.telegramTopicId) === Number(topicId))
+    );
 
   const enriched = topicMedia.map((topic) => ({
     id: topic.id,
     title: topic.title,
     mediaCount: topic.mediaCount,
-    importedCount: topic.media.filter((m) => importedMap.has(m.messageId)).length,
-    newCount: topic.media.filter((m) => !importedMap.has(m.messageId)).length,
+    importedCount: topic.media.filter((m) => isImportedInTopic(topic.id, m.messageId)).length,
+    newCount: topic.media.filter((m) => !isImportedInTopic(topic.id, m.messageId)).length,
     media: topic.media
-      .map((item) => ({
-        ...item,
-        imported: importedMap.has(item.messageId),
-        contentId: importedMap.get(item.messageId)?.contentId || null,
-      }))
+      .map((item) => {
+        const row = findImportedRow(topic.id, item.messageId);
+        return {
+          ...item,
+          imported: Boolean(row),
+          contentId: row?._id || null,
+        };
+      })
       .sort((a, b) => a.messageId - b.messageId),
   }));
 
@@ -566,6 +609,7 @@ export const importBatchByForumTopics = async ({
       const existing = await Content.findOne({
         telegramChannelId: String(channelId),
         telegramMessageId: messageId,
+        telegramTopicId: Number(topic.id),
       });
       if (existing) {
         skipped.push({ messageId, fileName: meta.fileName, reason: "Already imported" });
@@ -613,6 +657,7 @@ export const importBatchByForumTopics = async ({
     });
   }
 
+  const isPartialTopicImport = Array.isArray(topicIds) && topicIds.length > 0;
   const mapping = await upsertChannelMapping({
     channelId,
     channelTitle,
@@ -621,7 +666,7 @@ export const importBatchByForumTopics = async ({
     lastSyncedMessageId: maxMessageId,
     importedCount: created.length,
     syncTopicIds: topics.map((topic) => topic.id),
-    replaceSyncTopicIds: true,
+    replaceSyncTopicIds: !isPartialTopicImport,
   });
 
   if (uploadId) {
@@ -701,6 +746,7 @@ export const importSelectedForumMessages = async ({
     const existing = await Content.findOne({
       telegramChannelId: String(channelId),
       telegramMessageId: messageId,
+      telegramTopicId: Number(topicId),
     });
     if (existing) {
       skipped.push({ messageId, fileName: meta.fileName, reason: "Already imported" });
@@ -813,7 +859,7 @@ export const getProgrammeSubjectUpdates = async ({ programmeId }) => {
   const batchSubjects = await Subject.find({
     programmeId,
     telegramTopicId: { $ne: null },
-  }).select("_id name telegramTopicId telegramChannelId");
+  }).select("_id name telegramTopicId telegramChannelId programmeId");
 
   if (!batchSubjects.length) {
     return {
@@ -830,7 +876,13 @@ export const getProgrammeSubjectUpdates = async ({ programmeId }) => {
   const topicById = new Map(preview.topics.map((t) => [Number(t.id), t]));
 
   const subjects = batchSubjects.map((sub) => {
-    const topic = topicById.get(Number(sub.telegramTopicId));
+    const topicId = Number(sub.telegramTopicId);
+    let topic = topicById.get(topicId);
+    if (!topic) {
+      topic = preview.topics.find(
+        (t) => t.title.trim().toLowerCase() === sub.name.trim().toLowerCase()
+      );
+    }
     const newMedia = (topic?.media || []).filter((m) => !m.imported);
     const newCount = topic?.newCount ?? newMedia.length;
     return {
@@ -865,21 +917,24 @@ export const updateProgrammeSubjects = async ({
   subjectIds = null,
   allWithUpdates = false,
 }) => {
-  const mapping = await TelegramChannelMapping.findOne({ programmeId }).sort({ updatedAt: -1 });
-  if (!mapping) {
-    throw new Error("No Telegram import found for this batch. Import batch first.");
-  }
+  let mapping = await TelegramChannelMapping.findOne({ programmeId }).sort({ updatedAt: -1 });
 
   const session = await getActiveSession();
   if (!session?.isActive) {
-    throw new Error("Telegram is not connected. Connect in Import batch.");
+    throw new Error("Telegram is not connected. Connect in Add from Telegram.");
   }
 
   let topicIds = [];
+  let channelId = mapping?.channelId || null;
+  let channelTitle = mapping?.channelTitle || "";
 
   if (allWithUpdates) {
     const status = await getProgrammeSubjectUpdates({ programmeId });
+    if (!status.available) {
+      throw new Error(status.reason || "Cannot check for updates.");
+    }
     topicIds = status.subjects.filter((s) => s.hasUpdate).map((s) => s.topicId);
+    channelId = channelId || status.channelId;
     if (!topicIds.length) {
       return { created: [], skipped: [], imported: 0, message: "All subjects are up to date." };
     }
@@ -897,19 +952,24 @@ export const updateProgrammeSubjects = async ({
       _id: { $in: ids },
       programmeId,
       telegramTopicId: { $ne: null },
-    }).select("telegramTopicId");
+    }).select("telegramTopicId telegramChannelId name");
 
     topicIds = subjects.map((s) => Number(s.telegramTopicId)).filter(Boolean);
     if (!topicIds.length) {
-      throw new Error("Subject is not linked to a Telegram topic.");
+      throw new Error("Subject is not linked to a Telegram topic. Re-add it from Telegram.");
     }
+    channelId = channelId || subjects.find((s) => s.telegramChannelId)?.telegramChannelId;
+  }
+
+  if (!channelId) {
+    throw new Error("No Telegram channel linked to this batch. Import from Telegram first.");
   }
 
   const result = await importBatchByForumTopics({
-    channelId: mapping.channelId,
-    channelTitle: mapping.channelTitle,
+    channelId,
+    channelTitle,
     programmeId,
-    autoSync: mapping.autoSync,
+    autoSync: mapping?.autoSync ?? true,
     cleanSync: false,
     topicIds,
   });

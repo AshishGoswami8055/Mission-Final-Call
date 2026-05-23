@@ -2,7 +2,7 @@ import Chapter from "../models/Chapter.js";
 import Content from "../models/Content.js";
 import Progress from "../models/Progress.js";
 import Subject from "../models/Subject.js";
-import { destroyCloudinaryRaw, destroyCloudinaryVideo } from "../services/cloudinaryUploadService.js";
+import { deleteContentsWithAssets } from "../services/contentCleanupService.js";
 
 export const getChapters = async (req, res) => {
   const { subjectId } = req.query;
@@ -84,23 +84,8 @@ export const deleteChapter = async (req, res) => {
   const chapter = await Chapter.findById(req.params.id);
   if (!chapter) return res.status(404).json({ message: "Chapter not found" });
 
-  const contents = await Content.find({ chapterId: chapter._id })
-    .select("_id sourceType cloudType publicId");
-  const contentIds = contents.map((content) => content._id);
-
-  const cloudAssets = contents.filter((c) => c.sourceType === "cloudinary" && c.publicId);
-  await Promise.allSettled(
-    cloudAssets.map((c) =>
-      c.type === "pdf"
-        ? destroyCloudinaryRaw({ cloudType: c.cloudType, publicId: c.publicId })
-        : destroyCloudinaryVideo({ cloudType: c.cloudType, publicId: c.publicId })
-    )
-  );
-
-  await Progress.deleteMany({
-    $or: [{ chapterId: chapter._id }, { contentId: { $in: contentIds } }],
-  });
-  await Content.deleteMany({ chapterId: chapter._id });
+  await deleteContentsWithAssets({ chapterId: chapter._id });
+  await Progress.deleteMany({ chapterId: chapter._id });
   await chapter.deleteOne();
 
   res.json({ message: "Chapter and related content deleted" });

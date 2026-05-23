@@ -12,12 +12,16 @@ export const clearProgrammeCourse = async (programmeId) => {
   const subjects = await Subject.find({ programmeId }).select("_id name");
   let deletedContents = 0;
   let deletedChapters = 0;
+  let destroyedCloudinary = 0;
+  let removedLocalFiles = 0;
 
   for (const subject of subjects) {
     const result = await deleteSubjectTree(subject._id);
     if (result.deleted) {
       deletedContents += result.deletedContents || 0;
       deletedChapters += result.deletedChapters || 0;
+      destroyedCloudinary += result.destroyedCloudinary || 0;
+      removedLocalFiles += result.removedLocalFiles || 0;
     }
   }
 
@@ -28,6 +32,10 @@ export const clearProgrammeCourse = async (programmeId) => {
     deletedContents,
     deletedChapters,
     deletedMappings: mappingResult.deletedCount,
+    destroyedCloudinary,
+    removedLocalFiles,
+    message:
+      "All subjects, lessons, progress, Cloudinary files, and Telegram mappings for this batch were removed.",
   };
 };
 

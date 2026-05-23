@@ -3,7 +3,10 @@ import Content from "../models/Content.js";
 import Progress from "../models/Progress.js";
 import Subject from "../models/Subject.js";
 import SubjectCloudMapping from "../models/SubjectCloudMapping.js";
-import { destroyCloudinaryRaw, destroyCloudinaryVideo } from "../services/cloudinaryUploadService.js";
+import {
+  deleteContentsWithAssets,
+  destroyContentsAssets,
+} from "./contentCleanupService.js";
 
 export const deleteSubjectTree = async (subjectId) => {
   const subject = await Subject.findById(subjectId);
@@ -12,18 +15,13 @@ export const deleteSubjectTree = async (subjectId) => {
   const chapters = await Chapter.find({ subjectId }).select("_id");
   const chapterIds = chapters.map((chapter) => chapter._id);
 
-  const contents = await Content.find({ subjectId }).select("_id sourceType cloudType publicId");
-  const contentIds = contents.map((content) => content._id);
-
-  const cloudAssets = contents.filter((c) => c.sourceType === "cloudinary" && c.publicId);
-  await Promise.allSettled(
-    cloudAssets.map((c) =>
-      c.type === "pdf"
-        ? destroyCloudinaryRaw({ cloudType: c.cloudType, publicId: c.publicId })
-        : destroyCloudinaryVideo({ cloudType: c.cloudType, publicId: c.publicId })
-    )
+  const contents = await Content.find({ subjectId }).select(
+    "_id type sourceType filePath publicId cloudType chapterId"
   );
 
+  const assets = await destroyContentsAssets(contents);
+
+  const contentIds = contents.map((content) => content._id);
   await Progress.deleteMany({
     $or: [{ chapterId: { $in: chapterIds } }, { contentId: { $in: contentIds } }],
   });
@@ -36,5 +34,7 @@ export const deleteSubjectTree = async (subjectId) => {
     deleted: true,
     deletedContents: contentResult.deletedCount,
     deletedChapters: chapters.length,
+    destroyedCloudinary: assets.cloudinary,
+    removedLocalFiles: assets.local,
   };
 };

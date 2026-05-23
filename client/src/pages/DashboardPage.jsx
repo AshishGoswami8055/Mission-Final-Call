@@ -160,10 +160,24 @@ const DashboardPage = () => {
       setCourseContents([]);
       return;
     }
-    const { data } = await api.get("/contents", {
-      params: { programmeId: selectedProgrammeId, sort: "chapter", page: 1, limit: 500 },
-    });
-    setCourseContents(data.items || []);
+    const allItems = [];
+    let page = 1;
+    let totalPages = 1;
+    const pageSize = 500;
+    do {
+      const { data } = await api.get("/contents", {
+        params: {
+          programmeId: selectedProgrammeId,
+          sort: "chapter",
+          page,
+          limit: pageSize,
+        },
+      });
+      allItems.push(...(data.items || []));
+      totalPages = data.pagination?.totalPages || 1;
+      page += 1;
+    } while (page <= totalPages);
+    setCourseContents(allItems);
   };
 
   const fetchSubjectUpdates = async ({ silent = false } = {}) => {
@@ -288,6 +302,10 @@ const DashboardPage = () => {
 
   const handleUpdateSubject = async (subject) => {
     if (!selectedProgrammeId || !subject?._id) return;
+    if (subject.telegramTopicId == null) {
+      toast.error("This subject is not linked to Telegram. Re-add it from Add from Telegram.");
+      return;
+    }
     setUpdatingSubjectId(subject._id);
     setUpdateProgress({
       active: true,
@@ -306,11 +324,11 @@ const DashboardPage = () => {
         percent: 100,
         message: data.message || "Subject updated",
       });
-      toast.success(
-        data.imported > 0
-          ? data.message || `Updated — ${data.imported} new lesson(s)`
-          : data.message || "Subject is up to date"
-      );
+      if (data.imported > 0) {
+        toast.success(data.message || `Updated — ${data.imported} new lesson(s)`);
+      } else {
+        toast(data.message || "No new lessons found for this subject", { icon: "ℹ️" });
+      }
       await Promise.all([fetchCourseContents(), fetchSubjects(), fetchSubjectUpdates({ silent: true })]);
       setTimeout(() => setUpdateProgress(null), 900);
     } catch (error) {
@@ -1087,7 +1105,7 @@ const DashboardPage = () => {
             chapters={visibleChapters}
             contents={courseContents}
             activeSubjectId={activeCourseSubjectId}
-            onSelectSubject={(subject) => setActiveCourseSubjectId(subject._id)}
+            onSelectSubject={(subject) => setActiveCourseSubjectId(String(subject._id))}
             onBackToSubjects={() => setActiveCourseSubjectId("")}
             onImportTelegram={openTelegramImport}
             onDeleteSubject={handleDeleteSubjectById}
