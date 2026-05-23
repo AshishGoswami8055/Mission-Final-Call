@@ -179,7 +179,7 @@ const DashboardPage = () => {
       });
       const map = {};
       for (const item of data.subjects || []) {
-        map[item.subjectId] = item;
+        map[String(item.subjectId)] = item;
       }
       setSubjectUpdates(map);
       setUpdatesAvailable(data);
@@ -228,6 +228,7 @@ const DashboardPage = () => {
         fetchContents(),
         fetchCourseContents(),
         fetchProgress(),
+        fetchSubjectUpdates({ silent: true }),
       ]);
     } catch (error) {
       toast.error(error.response?.data?.message || "Failed to load dashboard");
@@ -305,7 +306,11 @@ const DashboardPage = () => {
         percent: 100,
         message: data.message || "Subject updated",
       });
-      toast.success(data.message || "Subject updated");
+      toast.success(
+        data.imported > 0
+          ? data.message || `Updated — ${data.imported} new lesson(s)`
+          : data.message || "Subject is up to date"
+      );
       await Promise.all([fetchCourseContents(), fetchSubjects(), fetchSubjectUpdates({ silent: true })]);
       setTimeout(() => setUpdateProgress(null), 900);
     } catch (error) {
@@ -343,7 +348,7 @@ const DashboardPage = () => {
     }
     if (
       !window.confirm(
-        `Download new lessons for ${count} subject${count === 1 ? "" : "s"}? This may take a few minutes.`
+        `Update ${count} subject${count === 1 ? "" : "s"} with new lessons from Telegram? This may take a few minutes.`
       )
     ) {
       return;
@@ -353,7 +358,7 @@ const DashboardPage = () => {
       active: true,
       phase: "syncing",
       percent: 10,
-      message: `Downloading new lessons for ${count} subject${count === 1 ? "" : "s"}…`,
+      message: `Updating ${count} subject${count === 1 ? "" : "s"}…`,
     });
     try {
       const { data } = await api.post("/telegram/update-batch", {
@@ -363,9 +368,9 @@ const DashboardPage = () => {
         active: true,
         phase: "done",
         percent: 100,
-        message: data.message || "Downloaded new lessons",
+        message: data.message || "Batch updated",
       });
-      toast.success(data.message || "Downloaded new lessons");
+      toast.success(data.message || "Batch updated");
       await Promise.all([
         fetchCourseContents(),
         fetchSubjects(),
@@ -378,9 +383,9 @@ const DashboardPage = () => {
         active: true,
         phase: "error",
         percent: 0,
-        message: error.response?.data?.message || "Download failed",
+        message: error.response?.data?.message || "Batch update failed",
       });
-      toast.error(error.response?.data?.message || "Download failed");
+      toast.error(error.response?.data?.message || "Batch update failed");
     } finally {
       setBatchUpdating(false);
     }
@@ -464,6 +469,18 @@ const DashboardPage = () => {
     () => chapters.find((item) => item._id === selectedChapterId),
     [chapters, selectedChapterId]
   );
+
+  const enrichedSubjectUpdates = useMemo(() => {
+    const map = { ...subjectUpdates };
+    for (const subject of subjects) {
+      if (subject.telegramTopicId == null) continue;
+      const key = String(subject._id);
+      if (!map[key]) {
+        map[key] = { subjectId: key, hasUpdate: false, newCount: 0 };
+      }
+    }
+    return map;
+  }, [subjectUpdates, subjects]);
 
   const selectedProgramme = useMemo(
     () => programmes.find((p) => String(p._id) === String(selectedProgrammeId)),
@@ -1077,7 +1094,7 @@ const DashboardPage = () => {
             onDeleteContent={handleDeleteContentItem}
             onRenameContent={handleRenameContentItem}
             onClearCourse={handleClearCourse}
-            subjectUpdates={subjectUpdates}
+            subjectUpdates={enrichedSubjectUpdates}
             updatesLoading={updatesLoading}
             updatesAvailable={updatesAvailable}
             onUpdateBatch={handleUpdateBatch}

@@ -81,10 +81,14 @@ const BatchCourseView = ({
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              {subjectUpdates[activeSubjectId]?.hasUpdate && onUpdateSubject && (
+              {activeSubject.telegramTopicId != null && onUpdateSubject && (
                 <button
                   type="button"
-                  className="btn-primary text-sm"
+                  className={
+                    subjectUpdates[String(activeSubjectId)]?.hasUpdate
+                      ? "btn-primary text-sm"
+                      : "btn-secondary text-sm"
+                  }
                   disabled={updatingSubjectId === activeSubjectId}
                   onClick={() => onUpdateSubject(activeSubject)}
                 >
@@ -92,9 +96,9 @@ const BatchCourseView = ({
                     size={14}
                     className={updatingSubjectId === activeSubjectId ? "animate-spin" : ""}
                   />
-                  Download new
-                  {subjectUpdates[activeSubjectId]?.newCount
-                    ? ` (${subjectUpdates[activeSubjectId].newCount} new)`
+                  Update subject
+                  {subjectUpdates[String(activeSubjectId)]?.newCount
+                    ? ` (${subjectUpdates[String(activeSubjectId)].newCount} new)`
                     : ""}
                 </button>
               )}
@@ -156,7 +160,7 @@ const BatchCourseView = ({
                   size={14}
                   className={batchUpdating || updatesLoading ? "animate-spin" : ""}
                 />
-                Download new lessons
+                Update batch
                 {updatesAvailable?.subjectsWithUpdates > 0 && (
                   <span className="ml-1 rounded-full bg-white/25 px-1.5 py-0.5 text-[10px] font-bold">
                     {updatesAvailable.subjectsWithUpdates}
@@ -178,7 +182,7 @@ const BatchCourseView = ({
             subject={subject}
             index={index}
             stats={subjectStats[subject._id]}
-            updateInfo={subjectUpdates[subject._id]}
+            updateInfo={subjectUpdates[String(subject._id)]}
             onClick={onSelectSubject}
             onDelete={onDeleteSubject}
             onUpdateSubject={onUpdateSubject}
