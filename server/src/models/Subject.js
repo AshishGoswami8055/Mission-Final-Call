@@ -23,6 +23,12 @@ const subjectSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    /** Flat-channel subject key from caption metadata (Topic/Batch) */
+    telegramSubjectKey: {
+      type: String,
+      default: null,
+      index: true,
+    },
     telegramChannelId: {
       type: String,
       default: null,
@@ -34,6 +40,7 @@ const subjectSchema = new mongoose.Schema(
 
 subjectSchema.index({ name: 1, programmeId: 1 }, { unique: true });
 subjectSchema.index({ programmeId: 1, telegramChannelId: 1, telegramTopicId: 1 });
+subjectSchema.index({ programmeId: 1, telegramChannelId: 1, telegramSubjectKey: 1 });
 
 const Subject = mongoose.model("Subject", subjectSchema);
 

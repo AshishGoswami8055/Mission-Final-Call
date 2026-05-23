@@ -250,7 +250,12 @@ export const telegramImportBatch = async (req, res) => {
     }
 
     if (useForumTopics && (importAll || hasTopicFilter)) {
-      const topics = await fetchForumTopicsForChannel(channelId);
+      let topics = [];
+      try {
+        topics = await fetchForumTopicsForChannel(channelId);
+      } catch {
+        topics = [];
+      }
       if (topics.length > 0 || hasTopicFilter) {
         const result = await importBatchByForumTopics({
           channelId,
@@ -273,9 +278,26 @@ export const telegramImportBatch = async (req, res) => {
           pruned: result.pruned,
         });
       }
-      return res.status(400).json({
-        message:
-          "No Telegram forum topics found. Enable Topics in the group, or turn off forum-topic import.",
+
+      const { importBatchByFlatSubjects } = await import(
+        "../services/telegramFlatChannelService.js"
+      );
+      const result = await importBatchByFlatSubjects({
+        channelId,
+        channelTitle,
+        programmeId,
+        autoSync,
+        topicIds: hasTopicFilter ? topicIds : null,
+        uploadId,
+      });
+      return res.status(201).json({
+        imported: result.created.length,
+        skipped: result.skipped.length,
+        topicsProcessed: result.topicsProcessed,
+        mode: "flat_subjects",
+        items: result.created,
+        skippedItems: result.skipped,
+        mapping: result.mapping,
       });
     }
 
@@ -444,6 +466,8 @@ export const telegramForumPreview = async (req, res) => {
     res.json({
       ...preview,
       syncTopicIds: mapping?.syncTopicIds || [],
+      syncSubjectKeys: mapping?.syncSubjectKeys || [],
+      channelMode: preview.channelMode || mapping?.channelMode || (preview.isForum ? "forum" : "flat"),
       autoSyncEnabled: mapping?.autoSync ?? false,
     });
   } catch (error) {

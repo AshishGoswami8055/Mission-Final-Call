@@ -606,6 +606,26 @@ export const fetchAllChannelMedia = async ({ channelId, maxMessages = 2000 }) =>
   return items;
 };
 
+/** Flat channels: fetch all media and attach captions from nearby bot text messages. */
+export const fetchAllChannelMediaEnriched = async ({ channelId, maxMessages = 3000 }) => {
+  const client = await getTelegramClient();
+  const entity = await client.getEntity(channelId);
+  const rawMessages = await client.getMessages(entity, { limit: Math.min(maxMessages, 3000) });
+
+  const captionByMediaId = enrichCaptionsFromTopicContext(rawMessages);
+
+  const items = [];
+  for (const message of rawMessages) {
+    const meta = getDocumentMeta(message);
+    if (!meta) continue;
+    const extraCaption = captionByMediaId.get(Number(meta.messageId));
+    if (extraCaption) applyCaptionToMeta(meta, extraCaption);
+    items.push(meta);
+  }
+  items.sort((a, b) => a.messageId - b.messageId);
+  return items;
+};
+
 export const getTelegramMessageMedia = async ({ channelId, messageId, topicId = null }) => {
   const client = await getTelegramClient();
   const entity = await client.getEntity(channelId);

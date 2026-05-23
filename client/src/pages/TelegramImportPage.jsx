@@ -567,6 +567,11 @@ const TelegramImportPage = () => {
                     uploads are picked up automatically — use <em>Download new lessons</em> anytime, or update from
                     the dashboard.
                   </p>
+                  {preview?.channelMode === "flat" && (
+                    <p className="mt-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800 dark:border-sky-900/40 dark:bg-sky-950/30 dark:text-sky-200">
+                      This channel has no forum topics — subjects are grouped from PDF captions (Topic / Batch fields).
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex justify-end border-b border-slate-100 px-4 py-2 dark:border-slate-800">

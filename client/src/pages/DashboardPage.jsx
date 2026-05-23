@@ -505,7 +505,22 @@ const DashboardPage = () => {
     [programmes, selectedProgrammeId]
   );
 
-  const scopedStats = useMemo(() => {
+  /** Stats scope follows course-view selection, not stale library filters. */
+  const dashboardStats = useMemo(() => {
+    if (!showLibraryView) {
+      let items = courseContents;
+      if (activeCourseSubjectId) {
+        items = items.filter(
+          (c) => String(c.subjectId?._id || c.subjectId) === String(activeCourseSubjectId)
+        );
+      }
+      return {
+        totalVideos: items.filter((c) => c.type === "video").length,
+        totalPdfs: items.filter((c) => c.type === "pdf").length,
+        completedCount: items.filter((c) => c.completed).length,
+      };
+    }
+
     if (selectedChapterId) {
       const chapter =
         chapterStats[selectedChapterId] || { totalVideos: 0, totalPdfs: 0, completedCount: 0 };
@@ -517,7 +532,8 @@ const DashboardPage = () => {
     }
 
     const relevantChapters = visibleChapters.filter(
-      (chapter) => !selectedSubjectId || chapter.subjectId === selectedSubjectId
+      (chapter) =>
+        !selectedSubjectId || String(chapter.subjectId) === String(selectedSubjectId)
     );
     return relevantChapters.reduce(
       (acc, chapter) => {
@@ -529,12 +545,36 @@ const DashboardPage = () => {
       },
       { totalVideos: 0, totalPdfs: 0, completedCount: 0 }
     );
-  }, [selectedChapterId, selectedSubjectId, visibleChapters, chapterStats]);
+  }, [
+    showLibraryView,
+    courseContents,
+    activeCourseSubjectId,
+    selectedChapterId,
+    selectedSubjectId,
+    visibleChapters,
+    chapterStats,
+  ]);
 
-  const currentScopeLabel = selectedChapter
-    ? selectedChapter.chapterName
-    : selectedSubject?.name || "All Subjects";
-  const scopedTotal = scopedStats.totalVideos + scopedStats.totalPdfs;
+  const dashboardScopeLabel = useMemo(() => {
+    if (!showLibraryView) {
+      if (activeCourseSubjectId) {
+        const sub = subjects.find((s) => String(s._id) === String(activeCourseSubjectId));
+        return sub?.name || "Subject";
+      }
+      return selectedProgramme?.name ? `${selectedProgramme.name} · all subjects` : "All subjects";
+    }
+    if (selectedChapter) return selectedChapter.chapterName;
+    return selectedSubject?.name || "All subjects";
+  }, [
+    showLibraryView,
+    activeCourseSubjectId,
+    subjects,
+    selectedProgramme?.name,
+    selectedChapter,
+    selectedSubject,
+  ]);
+
+  const scopedTotal = dashboardStats.totalVideos + dashboardStats.totalPdfs;
   const appMadeAt = useMemo(() => {
     const allCreatedAt = [...subjects, ...chapters, ...contents]
       .map((item) => item?.createdAt)
@@ -919,12 +959,8 @@ const DashboardPage = () => {
   };
 
   const cycleTitle = getCourseById(selectedCdsCycleId).title;
-  const completionPercent = scopedStats.totalVideos + scopedStats.totalPdfs
-    ? Math.round(
-        (scopedStats.completedCount /
-          (scopedStats.totalVideos + scopedStats.totalPdfs)) *
-          100
-      )
+  const completionPercent = scopedTotal
+    ? Math.round((dashboardStats.completedCount / scopedTotal) * 100)
     : 0;
 
   const openTelegramImport = () => {
@@ -1003,27 +1039,25 @@ const DashboardPage = () => {
               label: "Total content",
               value: scopedTotal,
               icon: FiLayers,
-              hint: currentScopeLabel,
+              hint: dashboardScopeLabel,
             },
             {
               label: "Videos",
-              value: scopedStats.totalVideos,
+              value: dashboardStats.totalVideos,
               icon: FiPlay,
-              hint: scopedStats.totalVideos === 1 ? "video lesson" : "video lessons",
+              hint: dashboardStats.totalVideos === 1 ? "video lesson" : "video lessons",
             },
             {
               label: "PDFs",
-              value: scopedStats.totalPdfs,
+              value: dashboardStats.totalPdfs,
               icon: FiFileText,
-              hint: scopedStats.totalPdfs === 1 ? "document" : "documents",
+              hint: dashboardStats.totalPdfs === 1 ? "document" : "documents",
             },
             {
               label: "Completed",
               value: `${completionPercent}%`,
               icon: FiCheckCircle,
-              hint: `${scopedStats.completedCount}/${
-                scopedStats.totalVideos + scopedStats.totalPdfs
-              } items done`,
+              hint: `${dashboardStats.completedCount}/${scopedTotal} items done`,
             },
           ].map(({ label, value, icon: Icon, hint }) => (
             <div

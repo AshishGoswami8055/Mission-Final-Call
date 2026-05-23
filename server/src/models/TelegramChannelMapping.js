@@ -40,6 +40,17 @@ const telegramChannelMappingSchema = new mongoose.Schema(
       type: [Number],
       default: [],
     },
+    /** forum = Telegram topics; flat = single chat grouped by caption metadata */
+    channelMode: {
+      type: String,
+      enum: ["forum", "flat"],
+      default: "forum",
+    },
+    /** Subject keys for flat-channel auto-sync */
+    syncSubjectKeys: {
+      type: [String],
+      default: [],
+    },
   },
   { timestamps: true }
 );

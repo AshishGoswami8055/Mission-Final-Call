@@ -1,5 +1,6 @@
 import TelegramChannelMapping from "../models/TelegramChannelMapping.js";
 import { importBatchByForumTopics } from "./telegramMappingService.js";
+import { importBatchByFlatSubjects } from "./telegramFlatChannelService.js";
 import { getActiveSession } from "./telegramService.js";
 
 let syncInterval = null;
@@ -22,7 +23,10 @@ export const syncChannelMapping = async (mapping) => {
     return { imported: 0, skipped: 0, error: "No Telegram session" };
   }
 
-  const result = await importBatchByForumTopics({
+  const importFn =
+    mapping.channelMode === "flat" ? importBatchByFlatSubjects : importBatchByForumTopics;
+
+  const result = await importFn({
     channelId: mapping.channelId,
     channelTitle: mapping.channelTitle,
     programmeId: mapping.programmeId,
@@ -44,7 +48,7 @@ export const syncAllAutoChannels = async () => {
   syncRunning = true;
   try {
     const mappings = await TelegramChannelMapping.find({
-      "syncTopicIds.0": { $exists: true },
+      $or: [{ "syncTopicIds.0": { $exists: true } }, { "syncSubjectKeys.0": { $exists: true } }],
     });
     const results = [];
     for (const mapping of mappings) {
