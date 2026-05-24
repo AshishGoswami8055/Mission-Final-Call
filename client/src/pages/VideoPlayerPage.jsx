@@ -188,6 +188,7 @@ const VideoPlayerPage = () => {
   const [exportingPdf, setExportingPdf] = useState(false);
   const [screenshotNotes, setScreenshotNotes] = useState([]);
   const [cachedPlayUrl, setCachedPlayUrl] = useState(null);
+  const [playbackSourceReady, setPlaybackSourceReady] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const usingCacheRef = useRef(false);
   const usingLocalLibraryRef = useRef(false);
@@ -278,10 +279,33 @@ const VideoPlayerPage = () => {
   }, [playbackSrc, id, isTelegramStream, hintedDuration, cachedPlayUrl]);
 
   useEffect(() => {
+    let cancelled = false;
+    setPlaybackSourceReady(false);
     setCachedPlayUrl(null);
     usingCacheRef.current = false;
     usingLocalLibraryRef.current = false;
-  }, [id]);
+
+    const resolvePlaybackSource = async () => {
+      if (isLocalFrontend() && id && canCachePlayback) {
+        try {
+          const { data } = await api.get(`/contents/${id}/local-library`);
+          if (!cancelled && data.cached && data.ready && data.playUrl) {
+            setCachedPlayUrl(data.playUrl);
+            usingLocalLibraryRef.current = true;
+            usingCacheRef.current = true;
+          }
+        } catch {
+          /* fall back to stream */
+        }
+      }
+      if (!cancelled) setPlaybackSourceReady(true);
+    };
+
+    void resolvePlaybackSource();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, canCachePlayback]);
 
   const handlePlaybackEnded = useCallback(async () => {
     setIsPlaying(false);
@@ -1042,6 +1066,13 @@ const VideoPlayerPage = () => {
                       ) : null}
                     </div>
                   </div>
+                ) : !playbackSourceReady && isLocalFrontend() && isTelegramStream && canCachePlayback ? (
+                  <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black">
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center">
+                      <FiLoader className="animate-spin text-white" size={28} />
+                      <p className="text-sm text-slate-300">Checking PC library…</p>
+                    </div>
+                  </div>
                 ) : (
                   <div
                     ref={playerRef}
@@ -1098,7 +1129,39 @@ const VideoPlayerPage = () => {
                       }}
                       onProgress={(e) => updateBufferProgress(e.currentTarget)}
                       onError={() => {
-                        toast.error("Video failed to load. Check Telegram connection and refresh.");
+                        const tryLocalFallback = async () => {
+                          if (usingLocalLibraryRef.current || cachedPlayUrl) {
+                            toast.error("Local video file failed to load.");
+                            return;
+                          }
+                          if (!isLocalFrontend() || !canCachePlayback || !id) {
+                            toast.error("Video failed to load. Check Telegram connection and refresh.");
+                            return;
+                          }
+                          try {
+                            const { data } = await api.get(`/contents/${id}/local-library`);
+                            if (data.cached && data.ready && data.playUrl) {
+                              setCachedPlayUrl(data.playUrl);
+                              usingLocalLibraryRef.current = true;
+                              usingCacheRef.current = true;
+                              toast.success("Playing from your PC library.");
+                              return;
+                            }
+                            if (data.job?.status === "downloading") {
+                              toast.error(
+                                "This video is still downloading to your PC library. Wait for it to finish, then refresh."
+                              );
+                              return;
+                            }
+                          } catch {
+                            /* ignore */
+                          }
+                          toast.error(
+                            "Telegram stream failed. Re-login to Telegram in Settings, restart the server, wait 30 seconds, then refresh. Or click Smooth playback to save this video to your PC first.",
+                            { duration: 10000 }
+                          );
+                        };
+                        void tryLocalFallback();
                       }}
                       onTimeUpdate={(e) => {
                         const t = e.currentTarget.currentTime;

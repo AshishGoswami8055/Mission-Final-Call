@@ -29,7 +29,7 @@ const SmoothPlaybackPanel = ({
       if (data.cached && data.ready && data.playUrl) {
         onPlayUrlChange?.(data.playUrl);
         onUsingLocalLibraryChange?.(true);
-      } else if (!data.job || data.job.status !== "downloading") {
+      } else if (data.job?.status !== "downloading") {
         onPlayUrlChange?.(null);
         onUsingLocalLibraryChange?.(false);
       }
@@ -46,7 +46,7 @@ const SmoothPlaybackPanel = ({
     if (!eligible || !contentId) return undefined;
     const downloading = status?.job?.status === "downloading";
     if (!downloading && status?.cached) return undefined;
-    const interval = setInterval(loadStatus, downloading ? 1500 : 8000);
+    const interval = setInterval(loadStatus, downloading ? 4000 : 12000);
     return () => clearInterval(interval);
   }, [contentId, eligible, status?.job?.status, status?.cached, loadStatus]);
 

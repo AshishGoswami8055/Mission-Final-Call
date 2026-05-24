@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { applyCorsHeaders } from "../config/cors.js";
+import { streamTelegramMediaWithCache } from "./telegramStreamCacheService.js";
 import TelegramSession from "../models/TelegramSession.js";
 
 const require = createRequire(import.meta.url);
@@ -13,6 +14,18 @@ const pendingLogins = new Map();
 
 let activeClient = null;
 let telegramOpChain = Promise.resolve();
+let activeStreamCount = 0;
+let clientConnectPromise = null;
+
+export const getActiveStreamCount = () => activeStreamCount;
+
+export const waitForPlaybackIdle = async (maxWaitMs = 30 * 60 * 1000) => {
+  const started = Date.now();
+  while (activeStreamCount > 0) {
+    if (Date.now() - started > maxWaitMs) break;
+    await sleep(1500);
+  }
+};
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -21,6 +34,8 @@ const telegramErrorText = (error) =>
 
 const isAuthKeyDuplicated = (error) =>
   telegramErrorText(error).includes("AUTH_KEY_DUPLICATED");
+
+export { isAuthKeyDuplicated, telegramErrorText };
 
 const isRetryableTelegramError = (error) => {
   const message = telegramErrorText(error).toLowerCase();
@@ -60,7 +75,6 @@ const createClient = (stringSession = "") => {
   const { apiId, apiHash } = getApiCredentials();
   return new TelegramClient(new StringSession(stringSession), apiId, apiHash, {
     connectionRetries: 5,
-    autoReconnect: false,
   });
 };
 
@@ -76,49 +90,71 @@ const disconnectClient = async (client) => {
 export const getActiveSession = async () =>
   TelegramSession.findOne({ isActive: true }).sort({ updatedAt: -1 });
 
-export const disconnectActiveClient = async () =>
-  withTelegramLock(async () => {
-    if (activeClient) {
-      await disconnectClient(activeClient);
-      activeClient = null;
-      await sleep(3000);
-    }
+export const resetTelegramSessionClient = async (waitMs = 15000) => {
+  if (activeClient) {
+    await disconnectClient(activeClient);
+    activeClient = null;
+  }
+  clientConnectPromise = null;
+  if (waitMs > 0) await sleep(waitMs);
+};
+
+export const disconnectActiveClient = async () => {
+  await withTelegramLock(async () => {
+    await resetTelegramSessionClient(3000);
   });
+};
 
 /** Internal: returns the single shared client (must run inside withTelegramLock). */
 const ensureTelegramClient = async () => {
   if (activeClient?.connected) return activeClient;
+  if (clientConnectPromise) return clientConnectPromise;
 
-  if (activeClient) {
+  clientConnectPromise = (async () => {
     try {
-      if (!activeClient.connected) {
-        await activeClient.connect();
+      if (activeClient) {
+        try {
+          if (!activeClient.connected) {
+            await activeClient.connect();
+          }
+          if (await activeClient.isUserAuthorized()) {
+            return activeClient;
+          }
+        } catch (error) {
+          console.warn("[telegram] reconnect failed:", telegramErrorText(error));
+          await disconnectClient(activeClient);
+          activeClient = null;
+          await sleep(isAuthKeyDuplicated(error) ? 15000 : 3000);
+        }
       }
-      if (await activeClient.isUserAuthorized()) {
+
+      const session = await getActiveSession();
+      if (!session?.stringSession) {
+        throw new Error("No active Telegram session. Log in first.");
+      }
+
+      const client = createClient(session.stringSession);
+      try {
+        await client.connect();
+        if (!(await client.isUserAuthorized())) {
+          await disconnectClient(client);
+          throw new Error("Telegram session expired. Log in again.");
+        }
+        activeClient = client;
         return activeClient;
+      } catch (error) {
+        await disconnectClient(client);
+        if (isAuthKeyDuplicated(error)) {
+          await sleep(15000);
+        }
+        throw error;
       }
-    } catch (error) {
-      console.warn("[telegram] reconnect failed:", telegramErrorText(error));
-      await disconnectClient(activeClient);
-      activeClient = null;
-      await sleep(5000);
+    } finally {
+      clientConnectPromise = null;
     }
-  }
+  })();
 
-  const session = await getActiveSession();
-  if (!session?.stringSession) {
-    throw new Error("No active Telegram session. Log in first.");
-  }
-
-  const client = createClient(session.stringSession);
-  await client.connect();
-  if (!(await client.isUserAuthorized())) {
-    await disconnectClient(client);
-    throw new Error("Telegram session expired. Log in again.");
-  }
-
-  activeClient = client;
-  return client;
+  return clientConnectPromise;
 };
 
 export const getTelegramClient = async () => withTelegramLock(() => ensureTelegramClient());
@@ -818,8 +854,13 @@ const parseRangeHeader = (rangeHeader, totalSize) => {
   return { start, end, partial: true };
 };
 
-export const streamTelegramMedia = async ({ channelId, messageId, req, res, asAttachment = false }) =>
-  withTelegramLock(async () => {
+const streamTelegramMediaDirect = async ({
+  channelId,
+  messageId,
+  req,
+  res,
+  asAttachment = false,
+}) => {
   const { client, message, meta } = await getTelegramMessageMedia({ channelId, messageId });
   const totalSize = meta.size || 0;
 
@@ -882,7 +923,7 @@ export const streamTelegramMedia = async ({ channelId, messageId, req, res, asAt
     }
   } catch (error) {
     if (!res.headersSent) {
-      return res.status(500).json({ message: "Telegram stream failed." });
+      throw error;
     }
     console.warn("[telegram-stream]", error.message);
   } finally {
@@ -891,4 +932,24 @@ export const streamTelegramMedia = async ({ channelId, messageId, req, res, asAt
   }
 
   if (!res.writableEnded) res.end();
+};
+
+export const streamTelegramMedia = async ({ channelId, messageId, req, res, asAttachment = false }) =>
+  withTelegramLock(async () => {
+    activeStreamCount += 1;
+    try {
+      if (asAttachment) {
+        await streamTelegramMediaDirect({ channelId, messageId, req, res, asAttachment: true });
+        return;
+      }
+      await streamTelegramMediaWithCache({
+        channelId,
+        messageId,
+        req,
+        res,
+        getMedia: getTelegramMessageMedia,
+      });
+    } finally {
+      activeStreamCount = Math.max(0, activeStreamCount - 1);
+    }
   });

@@ -12,6 +12,7 @@ import {
   telegramLogout,
   telegramMessages,
   telegramPreviewBatch,
+  telegramResetSession,
   telegramSessionStatus,
   telegramStream,
   telegramSyncAll,
@@ -30,6 +31,7 @@ router.post("/verify-otp", protect, telegramVerifyOtp);
 router.post("/verify-password", protect, telegramVerifyPassword);
 router.get("/session", protect, telegramSessionStatus);
 router.post("/logout", protect, telegramLogout);
+router.post("/reset-session", protect, telegramResetSession);
 router.get("/channels", protect, telegramChannels);
 router.get("/messages/:channelId", protect, telegramMessages);
 router.get("/forum-preview", protect, telegramForumPreview);

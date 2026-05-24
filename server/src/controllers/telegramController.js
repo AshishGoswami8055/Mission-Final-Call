@@ -22,9 +22,12 @@ import {
   fetchTelegramMessages,
   getActiveSession,
   getTelegramMessageMedia,
+  isAuthKeyDuplicated,
   logoutTelegram,
+  resetTelegramSessionClient,
   startTelegramLogin,
   streamTelegramMedia,
+  telegramErrorText,
   verifyTelegramOtp,
   verifyTelegramPassword,
 } from "../services/telegramService.js";
@@ -81,6 +84,18 @@ export const telegramLogout = async (req, res) => {
   }
 };
 
+export const telegramResetSession = async (_req, res) => {
+  try {
+    await resetTelegramSessionClient(5000);
+    res.json({
+      reset: true,
+      message: "Telegram connection reset. Wait 15–30 seconds before playing videos.",
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Could not reset Telegram session" });
+  }
+};
+
 export const telegramChannels = async (req, res) => {
   try {
     const { programmeId } = req.query;
@@ -133,19 +148,32 @@ export const telegramMessages = async (req, res) => {
 };
 
 export const telegramStream = async (req, res) => {
-  try {
-    const { messageId } = req.params;
-    const { channelId } = req.query;
+  const { messageId } = req.params;
+  const { channelId } = req.query;
 
-    if (!channelId) {
-      return res.status(400).json({ message: "channelId query parameter is required." });
-    }
+  if (!channelId) {
+    return res.status(400).json({ message: "channelId query parameter is required." });
+  }
 
-    await streamTelegramMedia({ channelId, messageId, req, res });
-  } catch (error) {
-    if (!res.headersSent) {
-      res.status(400).json({ message: error.message || "Stream failed" });
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await streamTelegramMedia({ channelId, messageId, req, res });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isAuthKeyDuplicated(error) || attempt === 3) break;
+      console.warn(`[telegram-stream] AUTH_KEY_DUPLICATED — reset attempt ${attempt}/3`);
+      await resetTelegramSessionClient(12000 * attempt);
     }
+  }
+
+  if (!res.headersSent) {
+    const base = telegramErrorText(lastError) || "Stream failed";
+    const message = isAuthKeyDuplicated(lastError)
+      ? "Telegram session conflict. Re-login to Telegram in app settings, restart the server, wait 30 seconds, then try again."
+      : base;
+    res.status(400).json({ message });
   }
 };
 

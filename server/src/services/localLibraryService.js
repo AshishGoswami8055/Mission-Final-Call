@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Content from "../models/Content.js";
-import { downloadTelegramMediaToFile } from "./telegramService.js";
+import { downloadTelegramMediaToFile, waitForPlaybackIdle } from "./telegramService.js";
 import { isTelegramStreamContent } from "../utils/contentPlayback.js";
 import { isCacheEligibleContent } from "./videoPlaybackCacheService.js";
 
@@ -227,6 +227,7 @@ const runDownloadJob = async (content) => {
     if (content.sourceType === "cloudinary" && content.videoUrl) {
       await downloadRemoteUrlToFile(content.videoUrl, destPath, onProgress);
     } else if (isTelegramStreamContent(content)) {
+      await waitForPlaybackIdle();
       await downloadTelegramMediaToFile({
         channelId: content.telegramChannelId,
         messageId: content.telegramMessageId,
@@ -371,6 +372,7 @@ const runSubjectBulkJob = async (subjectId, videos) => {
     }, 1000);
 
     try {
+      await waitForPlaybackIdle();
       await downloadContentToLibrary(content);
       item.status = "ready";
       item.percent = 100;
