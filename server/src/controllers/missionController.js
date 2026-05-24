@@ -20,6 +20,36 @@ import {
   syncMissionProgressFromSummary,
 } from "../services/missionSummaryService.js";
 import { getOrCreateAiBriefing } from "../services/aiBriefingService.js";
+import {
+  addManualMissionItem,
+  buildMissionPlanResponse,
+  getVideosForMissionPicker,
+  removeMissionItem,
+  replaceMissionSlotVideo,
+  updateManualMissionItem,
+  updateMissionReadingTarget,
+} from "../services/missionPlanService.js";
+
+const respondWithUpdatedPlan = async (req, res, mission) => {
+  const userId = req.user._id;
+  const { reading, dailyTarget } = await buildMissionPlanResponse(userId);
+  await populateMissionDiscipline(userId, mission, reading);
+  const overview = await buildAnalyticsOverview(userId);
+  const aiBriefing = await getOrCreateAiBriefing({
+    userId,
+    userName: req.user?.name || "Cadet",
+    dailyTarget,
+    overview,
+    mission,
+    force: true,
+  });
+  res.json({
+    mission: mission.toObject(),
+    reading: reading.toObject(),
+    dailyTarget,
+    aiBriefing,
+  });
+};
 
 const loadTodayContext = async (userId) => {
   const mission = await getOrCreateTodayMission(userId);
@@ -181,8 +211,8 @@ export const regenerateTodayMission = async (req, res) => {
 
 export const completeMissionItemHandler = async (req, res) => {
   try {
-    const { slot, contentId, paperId, durationMinutes } = req.body;
-    const mission = await completeMissionItem(req.user._id, { slot, contentId, paperId });
+    const { slot, contentId, paperId, durationMinutes, itemId } = req.body;
+    const mission = await completeMissionItem(req.user._id, { slot, contentId, paperId, itemId });
     if (!mission) return res.status(404).json({ message: "No mission found for today" });
 
     if (slot && slot !== "reading" && (contentId || paperId)) {
@@ -455,15 +485,70 @@ export const logSession = async (req, res) => {
 export const updateReadingTarget = async (req, res) => {
   try {
     const userId = req.user._id;
-    const dateKey = todayDateKey();
     const targetMinutes = Math.max(15, Math.min(240, Number(req.body.targetMinutes) || 60));
-    const reading = await ReadingSession.findOneAndUpdate(
-      { userId, date: dateKey },
-      { targetMinutes },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
-    res.json({ reading });
+    const mission = await updateMissionReadingTarget(userId, targetMinutes);
+    const dateKey = todayDateKey();
+    const reading = await ReadingSession.findOne({ userId, date: dateKey });
+    res.json({ reading, mission });
   } catch (error) {
     res.status(500).json({ message: error.message || "Could not update reading target" });
+  }
+};
+
+export const getMissionVideoPicker = async (req, res) => {
+  try {
+    const { slot, search, limit } = req.query;
+    const items = await getVideosForMissionPicker({ slot, search, limit });
+    res.json({ items });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Could not load videos" });
+  }
+};
+
+export const updateMissionPlanItemHandler = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { slot, itemId, contentId, title, durationMinutes, targetMinutes, subjectName, chapterName } =
+      req.body;
+
+    let mission;
+    if (slot === "reading") {
+      mission = await updateMissionReadingTarget(userId, targetMinutes ?? durationMinutes);
+    } else if (slot && contentId && ["english", "maths", "gs"].includes(slot)) {
+      mission = await replaceMissionSlotVideo(userId, slot, contentId);
+    } else if (itemId) {
+      mission = await updateManualMissionItem(userId, itemId, {
+        title,
+        contentId,
+        durationMinutes,
+        targetMinutes,
+        subjectName,
+        chapterName,
+      });
+    } else {
+      return res.status(400).json({ message: "Provide slot + contentId, reading target, or itemId to update" });
+    }
+
+    await respondWithUpdatedPlan(req, res, mission);
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Could not update plan item" });
+  }
+};
+
+export const addMissionManualItemHandler = async (req, res) => {
+  try {
+    const mission = await addManualMissionItem(req.user._id, req.body);
+    await respondWithUpdatedPlan(req, res, mission);
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Could not add task" });
+  }
+};
+
+export const removeMissionPlanItemHandler = async (req, res) => {
+  try {
+    const mission = await removeMissionItem(req.user._id, req.params.itemId);
+    await respondWithUpdatedPlan(req, res, mission);
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Could not remove task" });
   }
 };

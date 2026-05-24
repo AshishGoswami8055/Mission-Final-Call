@@ -17,6 +17,10 @@ import {
   submitMockTest,
   startTodayStudy,
   updateReadingTarget,
+  getMissionVideoPicker,
+  updateMissionPlanItemHandler,
+  addMissionManualItemHandler,
+  removeMissionPlanItemHandler,
 } from "../controllers/missionController.js";
 
 const router = express.Router();
@@ -28,6 +32,10 @@ router.post("/today/regenerate", regenerateTodayMission);
 router.post("/study/start", startTodayStudy);
 router.post("/ai-briefing/refresh", refreshAiBriefing);
 router.post("/items/complete", completeMissionItemHandler);
+router.get("/videos/picker", getMissionVideoPicker);
+router.put("/items/update", updateMissionPlanItemHandler);
+router.post("/items/manual", addMissionManualItemHandler);
+router.delete("/items/:itemId", removeMissionPlanItemHandler);
 
 router.get("/reading/today", getReadingToday);
 router.post("/reading/start", startReading);

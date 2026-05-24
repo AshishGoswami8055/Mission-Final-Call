@@ -288,17 +288,19 @@ export const getOrCreateTodayMission = async (userId) => {
   return mission;
 };
 
-export const completeMissionItem = async (userId, { slot, contentId, paperId }) => {
+export const completeMissionItem = async (userId, { slot, contentId, paperId, itemId }) => {
   const dateKey = todayDateKey();
   const mission = await DailyMission.findOne({ userId, date: dateKey });
   if (!mission) return null;
 
-  const item = mission.items.find((i) => {
-    if (slot && i.slot !== slot) return false;
-    if (contentId && String(i.contentId) !== String(contentId)) return false;
-    if (paperId && String(i.paperId) !== String(paperId)) return false;
-    return true;
-  });
+  const item = itemId
+    ? mission.items.id(itemId)
+    : mission.items.find((i) => {
+        if (slot && i.slot !== slot) return false;
+        if (contentId && String(i.contentId) !== String(contentId)) return false;
+        if (paperId && String(i.paperId) !== String(paperId)) return false;
+        return true;
+      });
 
   if (item) {
     item.completed = true;

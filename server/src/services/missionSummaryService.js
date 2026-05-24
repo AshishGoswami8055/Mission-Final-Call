@@ -1,4 +1,5 @@
 import Content from "../models/Content.js";
+import mongoose from "mongoose";
 import {
   CORE_DAILY_SLOTS,
   DEFAULT_READING_TARGET_MINUTES,
@@ -48,6 +49,10 @@ export const enrichMissionItems = async (mission) => {
 
   let changed = false;
   for (const item of mission.items) {
+    if (!item._id) {
+      item._id = new mongoose.Types.ObjectId();
+      changed = true;
+    }
     if (item.slot === "reading") {
       const target = item.targetMinutes || DEFAULT_READING_TARGET_MINUTES;
       if (item.targetMinutes !== target || item.durationMinutes !== target) {
@@ -77,14 +82,12 @@ export const enrichMissionItems = async (mission) => {
   return mission;
 };
 
-/** Time-weighted progress for the core daily target (3 videos + reading). */
+/** Time-weighted progress for the core daily target (3 videos + reading + extras). */
 export const buildDailyTargetSummary = (mission, reading) => {
-  const items = (mission?.items || []).filter((i) => CORE_DAILY_SLOTS.includes(i.slot));
-  const ordered = CORE_DAILY_SLOTS.map((slot) => items.find((i) => i.slot === slot)).filter(Boolean);
-
-  const targets = ordered.map((item) => {
+  const mapTargetItem = (item) => {
     const minutes = resolveItemMinutes(item);
     return {
+      itemId: item._id ? String(item._id) : null,
       slot: item.slot,
       label:
         item.slot === "english"
@@ -93,7 +96,9 @@ export const buildDailyTargetSummary = (mission, reading) => {
             ? "Maths Video"
             : item.slot === "gs"
               ? "GS Video"
-              : "Reading Session",
+              : item.slot === "reading"
+                ? "Reading Session"
+                : item.title || "Extra task",
       title: item.title,
       contentId: item.contentId,
       minutes,
@@ -102,13 +107,26 @@ export const buildDailyTargetSummary = (mission, reading) => {
       subjectName: item.subjectName,
       chapterName: item.chapterName,
       reason: item.reason,
+      isManual: item.reason === "manual",
+      isCustom: item.slot === "custom",
+      editable: true,
     };
-  });
+  };
+
+  const items = (mission?.items || []).filter((i) => CORE_DAILY_SLOTS.includes(i.slot));
+  const ordered = CORE_DAILY_SLOTS.map((slot) => items.find((i) => i.slot === slot)).filter(Boolean);
+  const customItems = (mission?.items || []).filter((i) => i.slot === "custom");
+  const allProgressItems = [...ordered, ...customItems];
+
+  const targets = [
+    ...ordered.map((item) => mapTargetItem(item)),
+    ...customItems.map((item) => mapTargetItem(item)),
+  ];
 
   const totalGoalMinutes = targets.reduce((sum, t) => sum + t.minutes, 0);
 
   let completedMinutes = 0;
-  for (const item of ordered) {
+  for (const item of allProgressItems) {
     const goal = resolveItemMinutes(item);
     if (item.slot === "reading") {
       const actual = Math.min(reading?.actualMinutes || 0, reading?.targetMinutes || goal);

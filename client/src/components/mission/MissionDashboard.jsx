@@ -8,6 +8,7 @@ import { courseExamDate, getDefaultCourseId } from "../../config/courses";
 import AiDailyBriefing from "./AiDailyBriefing";
 import MissionStartPrompt from "./MissionStartPrompt";
 import MissionStatsRow from "./MissionStatsRow";
+import MissionTaskEditorModal from "./MissionTaskEditorModal";
 import TodaysTargetBoard from "./TodaysTargetBoard";
 import ReadingTimer from "./ReadingTimer";
 import SundayMockDashboard from "./SundayMockDashboard";
@@ -30,6 +31,7 @@ const MissionDashboard = () => {
   const [completingSlot, setCompletingSlot] = useState(null);
   const [startingStudy, setStartingStudy] = useState(false);
   const [payload, setPayload] = useState(null);
+  const [editor, setEditor] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -46,6 +48,17 @@ const MissionDashboard = () => {
   useEffect(() => {
     load();
   }, [load]);
+
+  const applyPlanUpdate = (data) => {
+    if (!data) return;
+    setPayload((prev) => ({
+      ...prev,
+      mission: data.mission ?? prev?.mission,
+      reading: data.reading ?? prev?.reading,
+      dailyTarget: data.dailyTarget ?? prev?.dailyTarget,
+      aiBriefing: data.aiBriefing ?? prev?.aiBriefing,
+    }));
+  };
 
   const mission = payload?.mission;
   const reading = payload?.reading;
@@ -78,11 +91,12 @@ const MissionDashboard = () => {
   );
 
   const handleComplete = async (target) => {
-    setCompletingSlot(target.slot);
+    setCompletingSlot(target.itemId || target.slot);
     try {
       await api.post("/mission/items/complete", {
         slot: target.slot,
         contentId: target.contentId,
+        itemId: target.itemId,
       });
       toast.success("Marked complete.");
       await load();
@@ -90,6 +104,17 @@ const MissionDashboard = () => {
       toast.error(error.response?.data?.message || "Could not update");
     } finally {
       setCompletingSlot(null);
+    }
+  };
+
+  const handleRemoveTask = async (target) => {
+    if (!target.itemId) return;
+    try {
+      const { data } = await api.delete(`/mission/items/${target.itemId}`);
+      applyPlanUpdate(data);
+      toast.success("Task removed.");
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Could not remove task");
     }
   };
 
@@ -161,15 +186,32 @@ const MissionDashboard = () => {
   const displayName = payload?.userName || user?.name || "Cadet";
   const progress = dailyTarget?.progressPercent ?? 0;
 
+  const planEditor = editor && (
+    <MissionTaskEditorModal
+      target={editor.target}
+      mode={editor.mode}
+      onClose={() => setEditor(null)}
+      onSaved={(data) => {
+        applyPlanUpdate(data);
+        setEditor(null);
+      }}
+    />
+  );
+
   if (!studyStarted) {
     return (
-      <MissionStartPrompt
-        userName={displayName}
-        dailyTarget={dailyTarget}
-        daysLeft={daysLeft}
-        starting={startingStudy}
-        onStartStudy={handleStartStudy}
-      />
+      <>
+        <MissionStartPrompt
+          userName={displayName}
+          dailyTarget={dailyTarget}
+          daysLeft={daysLeft}
+          starting={startingStudy}
+          onStartStudy={handleStartStudy}
+          onEditTask={(target) => setEditor({ mode: "edit", target })}
+          onAddTask={() => setEditor({ mode: "add", target: { slot: "custom" } })}
+        />
+        {planEditor}
+      </>
     );
   }
 
@@ -185,56 +227,59 @@ const MissionDashboard = () => {
           try {
             await api.post("/mission/today/regenerate");
             await refreshAi();
+            await load();
             toast.success("Today's videos refreshed.");
           } catch {
             toast.error("Could not refresh plan");
           }
         }}
       >
-        <FiRefreshCw size={14} /> Refresh
+        <FiRefreshCw size={14} /> Refresh AI
       </button>
     </div>
   );
 
   return (
-    <div className="space-y-5">
-      <MissionStatsRow
-        daysLeft={daysLeft}
-        progress={progress}
-        streak={payload?.streak || 0}
-        totalGoalLabel={dailyTarget?.totalGoalLabel || "—"}
-      />
+    <>
+      <div className="space-y-5">
+        <MissionStatsRow
+          daysLeft={daysLeft}
+          progress={progress}
+          streak={payload?.streak || 0}
+          totalGoalLabel={dailyTarget?.totalGoalLabel || "—"}
+        />
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="space-y-5">
-          <TodaysTargetBoard
-            userName={displayName}
-            dailyTarget={dailyTarget}
-            headerActions={headerActions}
-            onLaunch={(href) => navigate(href)}
-            onComplete={handleComplete}
-            onReadingFocus={() => {
-              document.getElementById("reading-timer-section")?.scrollIntoView({ behavior: "smooth" });
-            }}
-            completingSlot={completingSlot}
-          />
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="space-y-5">
+            <TodaysTargetBoard
+              userName={displayName}
+              dailyTarget={dailyTarget}
+              headerActions={headerActions}
+              editable
+              onEdit={(target) => setEditor({ mode: "edit", target })}
+              onAdd={() => setEditor({ mode: "add", target: { slot: "custom" } })}
+              onRemove={handleRemoveTask}
+              onLaunch={(href) => navigate(href)}
+              onComplete={handleComplete}
+              onReadingFocus={() => {
+                document.getElementById("reading-timer-section")?.scrollIntoView({ behavior: "smooth" });
+              }}
+              completingSlot={completingSlot}
+            />
 
-          {mockItem && !mockItem.completed && <SundayMockDashboard mockItem={mockItem} onSubmitted={load} />}
-        </div>
-
-        <aside className="space-y-5">
-          <AiDailyBriefing
-            briefing={aiBriefing}
-            onRefresh={refreshAi}
-            refreshing={refreshingAi}
-            compact
-          />
-          <div id="reading-timer-section">
-            <ReadingTimer reading={reading} busy={busy} compact {...readingActions} />
+            {mockItem && !mockItem.completed && <SundayMockDashboard mockItem={mockItem} onSubmitted={load} />}
           </div>
-        </aside>
+
+          <aside className="space-y-5">
+            <AiDailyBriefing briefing={aiBriefing} onRefresh={refreshAi} refreshing={refreshingAi} compact />
+            <div id="reading-timer-section">
+              <ReadingTimer reading={reading} busy={busy} compact {...readingActions} />
+            </div>
+          </aside>
+        </div>
       </div>
-    </div>
+      {planEditor}
+    </>
   );
 };
 

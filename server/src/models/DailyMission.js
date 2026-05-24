@@ -4,7 +4,7 @@ const missionItemSchema = new mongoose.Schema(
   {
     slot: {
       type: String,
-      enum: ["english", "maths", "gs", "reading", "mock_test"],
+      enum: ["english", "maths", "gs", "reading", "mock_test", "custom"],
       required: true,
     },
     contentId: { type: mongoose.Schema.Types.ObjectId, ref: "Content", default: null },
@@ -19,11 +19,11 @@ const missionItemSchema = new mongoose.Schema(
     completedAt: { type: Date, default: null },
     reason: {
       type: String,
-      enum: ["unwatched", "weak_subject", "backlog", "revision", "default", "sunday_mock"],
+      enum: ["unwatched", "weak_subject", "backlog", "revision", "default", "sunday_mock", "manual"],
       default: "default",
     },
-  },
-  { _id: false }
+  }
+  // Subdocument ids let users edit/remove individual manual tasks.
 );
 
 const dailyMissionSchema = new mongoose.Schema(

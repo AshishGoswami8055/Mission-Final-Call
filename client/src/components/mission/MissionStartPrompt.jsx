@@ -1,4 +1,4 @@
-import { FiBarChart2, FiClock, FiPlay, FiTarget } from "react-icons/fi";
+import { FiBarChart2, FiClock, FiEdit2, FiPlay, FiPlus, FiTarget } from "react-icons/fi";
 import { Link } from "react-router-dom";
 import { firstName, getGreeting } from "./TodaysTargetBoard";
 
@@ -11,6 +11,8 @@ const MissionStartPrompt = ({
   daysLeft,
   starting = false,
   onStartStudy,
+  onEditTask,
+  onAddTask,
   showMissionLink = false,
   intelligenceMode = false,
 }) => {
@@ -30,7 +32,7 @@ const MissionStartPrompt = ({
           <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-400">
             {intelligenceMode
               ? "Your daily plan is prepared. Begin your session to track progress and view full analytics."
-              : "Your AI study plan is ready. Start when you're focused — tasks and coaching unlock after you begin."}
+              : "Review or adjust the AI plan below, then start when you're ready."}
           </p>
 
           <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
@@ -81,17 +83,37 @@ const MissionStartPrompt = ({
 
       {!intelligenceMode && dailyTarget?.targets?.length > 0 && (
         <div className="border-t border-slate-100 px-5 py-4 sm:px-6 dark:border-white/10">
-          <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">Plan preview</p>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Plan preview</p>
+            {onAddTask && (
+              <button type="button" className="btn-ghost text-xs!" onClick={onAddTask}>
+                <FiPlus size={14} /> Add task
+              </button>
+            )}
+          </div>
           <ul className="divide-y divide-slate-100 dark:divide-white/10">
             {dailyTarget.targets.map((target, index) => (
-              <li key={target.slot} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+              <li key={target.itemId || target.slot} className="flex items-center justify-between gap-3 py-2.5 text-sm">
                 <span className="min-w-0 truncate text-slate-700 dark:text-slate-300">
                   <span className="mr-2 tabular-nums text-slate-400">{index + 1}.</span>
                   {target.slot === "reading" ? "Reading session" : target.title || target.slot}
+                  {target.isManual && <span className="ml-2 text-[10px] uppercase text-slate-400">Manual</span>}
                 </span>
-                <span className="inline-flex shrink-0 items-center gap-1 tabular-nums text-slate-500">
-                  <FiClock size={12} />
-                  {target.minutesLabel}
+                <span className="inline-flex shrink-0 items-center gap-2">
+                  <span className="inline-flex items-center gap-1 tabular-nums text-slate-500">
+                    <FiClock size={12} />
+                    {target.minutesLabel}
+                  </span>
+                  {onEditTask && (
+                    <button
+                      type="button"
+                      className="btn-ghost p-1.5!"
+                      title="Edit task"
+                      onClick={() => onEditTask(target)}
+                    >
+                      <FiEdit2 size={14} />
+                    </button>
+                  )}
                 </span>
               </li>
             ))}

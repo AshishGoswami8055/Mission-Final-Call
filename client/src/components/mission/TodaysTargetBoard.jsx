@@ -1,10 +1,11 @@
-import { FiBookOpen, FiCheck, FiClock, FiPlay } from "react-icons/fi";
+import { FiBookOpen, FiCheck, FiClock, FiEdit2, FiPlay, FiPlus, FiTrash2 } from "react-icons/fi";
 
 const SLOT_STYLE = {
   english: { label: "English", dot: "bg-sky-500", badge: "bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-200" },
   maths: { label: "Maths", dot: "bg-indigo-500", badge: "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-200" },
   gs: { label: "GS", dot: "bg-amber-500", badge: "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200" },
   reading: { label: "Reading", dot: "bg-emerald-500", badge: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200" },
+  custom: { label: "Extra", dot: "bg-slate-400", badge: "bg-slate-100 text-slate-700 dark:bg-white/10 dark:text-slate-300" },
 };
 
 const getGreeting = () => {
@@ -19,8 +20,19 @@ const firstName = (name = "") => {
   return part || "Cadet";
 };
 
-const MissionTargetRow = ({ target, index, onLaunch, onComplete, onReadingFocus, completing }) => {
-  const style = SLOT_STYLE[target.slot] || SLOT_STYLE.reading;
+const MissionTargetRow = ({
+  target,
+  index,
+  onLaunch,
+  onComplete,
+  onReadingFocus,
+  onEdit,
+  onRemove,
+  completing,
+  editable = false,
+  compact = false,
+}) => {
+  const style = SLOT_STYLE[target.slot] || SLOT_STYLE.custom;
   const href =
     target.slot === "reading" ? null : target.contentId ? `/video/${target.contentId}` : null;
 
@@ -38,6 +50,9 @@ const MissionTargetRow = ({ target, index, onLaunch, onComplete, onReadingFocus,
             <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${style.badge}`}>
               {style.label}
             </span>
+            {target.isManual && (
+              <span className="text-[10px] font-semibold uppercase text-slate-400">Manual</span>
+            )}
             {target.completed && (
               <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase text-emerald-600 dark:text-emerald-400">
                 <FiCheck size={10} /> Done
@@ -60,17 +75,30 @@ const MissionTargetRow = ({ target, index, onLaunch, onComplete, onReadingFocus,
           <FiClock size={12} />
           {target.minutesLabel}
         </span>
-        {href && (
+
+        {editable && onEdit && (
+          <button type="button" className="btn-ghost p-2!" title="Edit task" onClick={() => onEdit(target)}>
+            <FiEdit2 size={14} />
+          </button>
+        )}
+
+        {editable && target.isCustom && onRemove && (
+          <button type="button" className="btn-ghost p-2! text-rose-600" title="Remove task" onClick={() => onRemove(target)}>
+            <FiTrash2 size={14} />
+          </button>
+        )}
+
+        {!compact && href && (
           <button type="button" className="btn-primary text-xs!" onClick={() => onLaunch?.(href, target)}>
             <FiPlay size={13} /> Watch
           </button>
         )}
-        {target.slot === "reading" && !target.completed && (
+        {!compact && target.slot === "reading" && !target.completed && (
           <button type="button" className="btn-primary text-xs!" onClick={() => onReadingFocus?.()}>
             <FiBookOpen size={13} /> Timer
           </button>
         )}
-        {!target.completed && target.slot !== "reading" && (
+        {!compact && !target.completed && target.slot !== "reading" && (
           <button type="button" className="btn-secondary text-xs!" disabled={completing} onClick={() => onComplete?.(target)}>
             {completing ? "Saving…" : "Done"}
           </button>
@@ -86,8 +114,14 @@ const TodaysTargetBoard = ({
   onLaunch,
   onComplete,
   onReadingFocus,
+  onEdit,
+  onRemove,
+  onAdd,
   completingSlot,
   headerActions,
+  editable = false,
+  compact = false,
+  showHeader = true,
 }) => {
   const targets = dailyTarget?.targets || [];
   const progress = dailyTarget?.progressPercent ?? 0;
@@ -97,44 +131,50 @@ const TodaysTargetBoard = ({
 
   return (
     <section className="card overflow-hidden">
-      <div className="border-b border-slate-100 px-5 py-4 dark:border-white/10 sm:px-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              {getGreeting()}, <span className="font-medium text-slate-700 dark:text-slate-300">{firstName(userName)}</span>
-            </p>
-            <h2 className="font-display mt-0.5 text-lg font-semibold text-slate-900 dark:text-slate-50">Today&apos;s target</h2>
+      {showHeader && (
+        <div className="border-b border-slate-100 px-5 py-4 dark:border-white/10 sm:px-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {getGreeting()}, <span className="font-medium text-slate-700 dark:text-slate-300">{firstName(userName)}</span>
+              </p>
+              <h2 className="font-display mt-0.5 text-lg font-semibold text-slate-900 dark:text-slate-50">Today&apos;s target</h2>
+            </div>
+            {headerActions}
           </div>
-          {headerActions}
-        </div>
 
-        <div className="mt-4">
-          <div className="mb-1.5 flex items-center justify-between text-xs">
-            <span className="text-slate-500">
-              {completedMin} / {totalMin} min · {totalLabel}
-            </span>
-            <span className="font-semibold tabular-nums text-slate-900 dark:text-white">{progress}%</span>
-          </div>
-          <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-white/10">
-            <div
-              className="h-full rounded-full bg-slate-900 transition-all duration-700 dark:bg-slate-100"
-              style={{ width: `${Math.min(100, progress)}%` }}
-            />
+          <div className="mt-4">
+            <div className="mb-1.5 flex items-center justify-between text-xs">
+              <span className="text-slate-500">
+                {completedMin} / {totalMin} min · {totalLabel}
+              </span>
+              <span className="font-semibold tabular-nums text-slate-900 dark:text-white">{progress}%</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-white/10">
+              <div
+                className="h-full rounded-full bg-slate-900 transition-all duration-700 dark:bg-slate-100"
+                style={{ width: `${Math.min(100, progress)}%` }}
+              />
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {targets.length ? (
         <ul>
           {targets.map((target, index) => (
             <MissionTargetRow
-              key={target.slot}
+              key={target.itemId || target.slot}
               target={target}
               index={index}
               onLaunch={onLaunch}
               onComplete={onComplete}
               onReadingFocus={onReadingFocus}
-              completing={completingSlot === target.slot}
+              onEdit={onEdit}
+              onRemove={onRemove}
+              completing={completingSlot === target.slot || completingSlot === target.itemId}
+              editable={editable}
+              compact={compact}
             />
           ))}
         </ul>
@@ -143,9 +183,17 @@ const TodaysTargetBoard = ({
           Add English, Maths, and GS subjects with videos, then refresh the plan.
         </div>
       )}
+
+      {editable && onAdd && (
+        <div className="border-t border-slate-100 px-4 py-3 dark:border-white/10 sm:px-5">
+          <button type="button" className="btn-secondary w-full text-xs! sm:w-auto" onClick={onAdd}>
+            <FiPlus size={14} /> Add manual task
+          </button>
+        </div>
+      )}
     </section>
   );
 };
 
 export default TodaysTargetBoard;
-export { getGreeting, firstName };
+export { getGreeting, firstName, MissionTargetRow };
