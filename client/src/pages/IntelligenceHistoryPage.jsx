@@ -98,6 +98,7 @@ const IntelligenceHistoryPage = () => {
           daysLeft={overview.examCountdownDays ?? "—"}
           progress={missionProgress}
           streak={overview.streak || 0}
+          videoStreak={overview.videoStreak ?? overview.videoStreakStatus?.streak ?? 0}
           totalGoalLabel={report?.dailyTarget?.totalGoalLabel || "—"}
         />
 
@@ -171,6 +172,7 @@ const IntelligenceHistoryPage = () => {
             {report?.aiBriefing && <AiDailyBriefing briefing={report.aiBriefing} compact />}
             <StreakCard
               streak={overview.streak || 0}
+              videoStreak={overview.videoStreak ?? overview.videoStreakStatus?.streak ?? 0}
               readingStreak={overview.readingStreak || 0}
               disciplineScore={overview.disciplineScore || 0}
             />

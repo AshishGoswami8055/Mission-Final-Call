@@ -9,6 +9,7 @@ import {
 import { buildAnalyticsOverview, buildIntelligenceReport } from "../services/analyticsService.js";
 import { logStudySession } from "../services/studyHistoryService.js";
 import {
+  buildVideoStreakStatus,
   calculateDisciplineStreak,
   calculateReadingStreak,
   computeDisciplineScore,
@@ -89,9 +90,12 @@ export const getTodayMission = async (req, res) => {
     await populateMissionDiscipline(userId, mission, reading);
     const streak = await calculateDisciplineStreak(userId);
     const readingStreak = await calculateReadingStreak(userId);
+    const videoStreakStatus = await buildVideoStreakStatus(userId);
     const overview = await buildAnalyticsOverview(userId);
     overview.streak = streak;
     overview.readingStreak = readingStreak;
+    overview.videoStreak = videoStreakStatus.streak;
+    overview.videoStreakStatus = videoStreakStatus;
 
     const aiBriefing = await getOrCreateAiBriefing({
       userId,
@@ -112,6 +116,8 @@ export const getTodayMission = async (req, res) => {
       userName: req.user?.name || "Cadet",
       streak,
       readingStreak,
+      videoStreak: videoStreakStatus.streak,
+      videoStreakStatus,
       examCountdownDays: overview.examCountdownDays,
       totalStudyHours: overview.totalStudyHours,
       analytics: {
@@ -474,11 +480,51 @@ export const logSession = async (req, res) => {
   try {
     const session = await logStudySession({
       userId: req.user._id,
+      increment: req.body.increment === true,
       ...req.body,
     });
-    res.status(201).json({ session });
+    const streak = await buildVideoStreakStatus(req.user._id);
+    res.status(201).json({ session, streak });
   } catch (error) {
     res.status(500).json({ message: error.message || "Could not log session" });
+  }
+};
+
+export const heartbeatVideoSession = async (req, res) => {
+  try {
+    const { contentId, durationMinutes, subjectId, subjectName, meta } = req.body;
+    if (!contentId) {
+      return res.status(400).json({ message: "contentId is required" });
+    }
+    const mins = Math.max(0, Math.round(Number(durationMinutes) || 0));
+    if (mins <= 0) {
+      const streak = await buildVideoStreakStatus(req.user._id);
+      return res.json({ streak });
+    }
+
+    const session = await logStudySession({
+      userId: req.user._id,
+      type: "video",
+      durationMinutes: mins,
+      contentId,
+      subjectId: subjectId || null,
+      subjectName: subjectName || "",
+      meta: meta || {},
+      increment: true,
+    });
+    const streak = await buildVideoStreakStatus(req.user._id);
+    res.json({ session, streak });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Could not sync watch time" });
+  }
+};
+
+export const getVideoStreak = async (req, res) => {
+  try {
+    const streak = await buildVideoStreakStatus(req.user._id);
+    res.json(streak);
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Could not load video streak" });
   }
 };
 

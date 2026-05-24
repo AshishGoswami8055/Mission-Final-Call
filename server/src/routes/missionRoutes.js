@@ -8,6 +8,8 @@ import {
   getMockHistory,
   getReadingToday,
   getTodayMission,
+  getVideoStreak,
+  heartbeatVideoSession,
   logSession,
   pauseReading,
   regenerateTodayMission,
@@ -49,6 +51,8 @@ router.get("/mock/history", getMockHistory);
 
 router.get("/analytics/overview", getAnalyticsOverview);
 router.get("/analytics/intelligence", getIntelligenceReport);
+router.get("/streak/video", getVideoStreak);
+router.post("/session/heartbeat", heartbeatVideoSession);
 router.post("/session/log", logSession);
 
 export default router;

@@ -2,6 +2,7 @@ import { FiBell, FiMenu, FiMoon, FiSearch, FiSun } from "react-icons/fi";
 import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
+import VideoStreakBadge from "./streak/VideoStreakBadge";
 
 const initialsFor = (name = "Admin") => {
   const parts = String(name).trim().split(/\s+/).filter(Boolean);
@@ -26,7 +27,7 @@ const Topbar = ({
   notificationsHref = "/history",
 }) => {
   const { theme, toggleTheme } = useTheme();
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
 
   return (
     <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-slate-200/80 bg-white px-3 py-2.5 sm:gap-3 sm:px-6 sm:py-3 dark:border-white/[0.08] dark:bg-[#0a0a0a]/90">
@@ -58,6 +59,8 @@ const Topbar = ({
       )}
 
       <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
+        {isAuthenticated && <VideoStreakBadge compact />}
+
         <button
           type="button"
           className="btn-ghost p-2.5!"

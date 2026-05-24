@@ -12,6 +12,7 @@ import MissionTaskEditorModal from "./MissionTaskEditorModal";
 import TodaysTargetBoard from "./TodaysTargetBoard";
 import ReadingTimer from "./ReadingTimer";
 import SundayMockDashboard from "./SundayMockDashboard";
+import VideoStreakBadge from "../streak/VideoStreakBadge";
 import Loader from "../Loader";
 
 const getCountdown = () => {
@@ -246,6 +247,7 @@ const MissionDashboard = () => {
           daysLeft={daysLeft}
           progress={progress}
           streak={payload?.streak || 0}
+          videoStreak={payload?.videoStreak ?? payload?.videoStreakStatus?.streak ?? 0}
           totalGoalLabel={dailyTarget?.totalGoalLabel || "—"}
         />
 
@@ -271,6 +273,7 @@ const MissionDashboard = () => {
           </div>
 
           <aside className="space-y-5">
+            <VideoStreakBadge />
             <AiDailyBriefing briefing={aiBriefing} onRefresh={refreshAi} refreshing={refreshingAi} compact />
             <div id="reading-timer-section">
               <ReadingTimer reading={reading} busy={busy} compact {...readingActions} />

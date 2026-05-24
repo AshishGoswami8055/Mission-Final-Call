@@ -17,6 +17,7 @@ import { useAuth } from "./context/AuthContext";
 import DocumentTitle from "./components/DocumentTitle";
 import Loader from "./components/Loader";
 import StudyCompleteCelebration from "./components/StudyCompleteCelebration";
+import StreakFireCelebration from "./components/streak/StreakFireCelebration";
 
 const PrivateRoute = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
@@ -147,6 +148,7 @@ function App() {
       />
     </Routes>
     <StudyCompleteCelebration />
+    <StreakFireCelebration />
     </>
   );
 }

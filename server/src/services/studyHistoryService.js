@@ -15,11 +15,45 @@ export const logStudySession = async ({
   subjectName = "",
   slot = null,
   meta = {},
+  increment = false,
 }) => {
   const mins = Math.max(0, Math.round(Number(durationMinutes) || 0));
+  if (mins <= 0) return null;
+
+  const date = todayDateKey();
+  const now = new Date();
+
+  if (increment && type === "video" && contentId) {
+    const existing = await StudySession.findOne({ userId, date, contentId, type: "video" });
+    if (existing) {
+      existing.durationMinutes = (existing.durationMinutes || 0) + mins;
+      existing.endedAt = now;
+      if (subjectId) existing.subjectId = subjectId;
+      if (subjectName) existing.subjectName = subjectName;
+      if (meta && Object.keys(meta).length) {
+        existing.meta = { ...(existing.meta || {}), ...meta };
+      }
+      await existing.save();
+      return existing;
+    }
+
+    return StudySession.create({
+      userId,
+      date,
+      type: "video",
+      contentId,
+      durationMinutes: mins,
+      subjectId: subjectId || null,
+      subjectName: subjectName || "",
+      startedAt: now,
+      endedAt: now,
+      meta,
+    });
+  }
+
   return StudySession.create({
     userId,
-    date: todayDateKey(),
+    date,
     type,
     durationMinutes: mins,
     contentId,
@@ -28,8 +62,8 @@ export const logStudySession = async ({
     subjectId,
     subjectName,
     slot,
-    startedAt: new Date(),
-    endedAt: new Date(),
+    startedAt: now,
+    endedAt: now,
     meta,
   });
 };

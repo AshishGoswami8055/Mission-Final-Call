@@ -6,7 +6,7 @@ import StudyAnalytics from "../models/StudyAnalytics.js";
 import Subject from "../models/Subject.js";
 import Content from "../models/Content.js";
 import Progress from "../models/Progress.js";
-import { calculateDisciplineStreak, calculateReadingStreak, computeDisciplineScore } from "./streakService.js";
+import { calculateDisciplineStreak, calculateReadingStreak, computeDisciplineScore, buildVideoStreakStatus } from "./streakService.js";
 import { getDailyStudyLogs, getTotalStudyMinutes } from "./studyHistoryService.js";
 import { todayDateKey } from "../utils/subjectBuckets.js";
 
@@ -63,6 +63,7 @@ export const buildAnalyticsOverview = async (userId) => {
   const today = todayDateKey();
   const streak = await calculateDisciplineStreak(userId);
   const readingStreak = await calculateReadingStreak(userId);
+  const videoStreakStatus = await buildVideoStreakStatus(userId);
   const totals = await getTotalStudyMinutes(userId);
 
   const todayMission = await DailyMission.findOne({ userId, date: today }).lean();
@@ -136,7 +137,8 @@ export const buildAnalyticsOverview = async (userId) => {
     examCountdownDays: getExamCountdownDays(),
     streak,
     readingStreak,
-    readingStreak,
+    videoStreak: videoStreakStatus.streak,
+    videoStreakStatus,
     disciplineScore,
     totalStudyHours: Math.round((totals.totalMinutes / 60) * 10) / 10,
     totalStudyMinutes: totals.totalMinutes,

@@ -28,6 +28,7 @@ import {
 import { Link, useParams } from "react-router-dom";
 import api from "../api/client";
 import StudyTracker from "../components/StudyTracker";
+import VideoStreakBadge from "../components/streak/VideoStreakBadge";
 import SmoothPlaybackPanel from "../components/SmoothPlaybackPanel";
 import VideoPlaybackCachePanel from "../components/VideoPlaybackCachePanel";
 import { useStudy } from "../context/StudyContext";
@@ -202,11 +203,13 @@ const VideoPlayerPage = () => {
   const hoverTimeRef = useRef(0);
   const lastSavedPositionRef = useRef(0);
   const studyAccumSecondsRef = useRef(0);
+  const heartbeatPendingSecondsRef = useRef(0);
   const sessionStartRef = useRef(Date.now());
   const itemRef = useRef(null);
   const prevVideoTimeRef = useRef(0);
+  const syncWatchToServerRef = useRef(async () => {});
   const [timelineHover, setTimelineHover] = useState(null);
-  const { addStudyMinutes, addToWatchHistory } = useStudy();
+  const { addStudyMinutes, addToWatchHistory, applyVideoStreakStatus } = useStudy();
 
   const isTelegramStream = item ? isTelegramStreamContent(item) : false;
   const isTelegramLink = item ? isTelegramLinkVideo(item) : false;
@@ -418,28 +421,44 @@ const VideoPlayerPage = () => {
 
   itemRef.current = item;
 
+  const syncWatchToServer = useCallback(
+    async (minSeconds = 30) => {
+      const currentItem = itemRef.current;
+      const seconds = heartbeatPendingSecondsRef.current;
+      if (!currentItem?._id || seconds < minSeconds) return;
+
+      const mins = Math.max(1, Math.round(seconds / 60));
+      heartbeatPendingSecondsRef.current = 0;
+
+      try {
+        const subjectId = currentItem.subjectId?._id ?? currentItem.subjectId;
+        const { data } = await api.post("/mission/session/heartbeat", {
+          contentId: currentItem._id,
+          durationMinutes: mins,
+          subjectId,
+          subjectName: currentItem.subjectId?.name || "",
+          meta: { title: currentItem.title },
+        });
+        if (data?.streak) applyVideoStreakStatus(data.streak);
+      } catch {
+        heartbeatPendingSecondsRef.current += seconds;
+      }
+    },
+    [applyVideoStreakStatus]
+  );
+
+  syncWatchToServerRef.current = syncWatchToServer;
+
   useEffect(() => {
+    heartbeatPendingSecondsRef.current = 0;
+    studyAccumSecondsRef.current = 0;
     sessionStartRef.current = Date.now();
     return () => {
       const currentItem = itemRef.current;
       const mins = studyAccumSecondsRef.current / 60;
       const subjectId = currentItem?.subjectId?._id ?? currentItem?.subjectId;
       if (mins > 0) addStudyMinutes(mins, subjectId);
-      if (currentItem && mins >= 1) {
-        api
-          .post("/mission/session/log", {
-            type: "video",
-            durationMinutes: Math.round(mins),
-            contentId: currentItem._id,
-            subjectId,
-            subjectName: currentItem.subjectId?.name || "",
-            meta: {
-              title: currentItem.title,
-              smoothPlayback: usingLocalLibraryRef.current,
-            },
-          })
-          .catch(() => {});
-      }
+      void syncWatchToServerRef.current(30);
       if (currentItem) {
         addToWatchHistory({
           contentId: currentItem._id,
@@ -961,6 +980,7 @@ const VideoPlayerPage = () => {
               <FiArrowLeft /> Back
             </Link>
             <StudyTracker compact />
+            <VideoStreakBadge compact />
           </div>
           <button
             type="button"
@@ -1171,10 +1191,14 @@ const VideoPlayerPage = () => {
                         const delta = Math.max(0, Math.min(2, t - prev));
                         prevVideoTimeRef.current = t;
                         studyAccumSecondsRef.current += delta;
+                        heartbeatPendingSecondsRef.current += delta;
                         if (studyAccumSecondsRef.current >= 60) {
                           const sid = itemRef.current?.subjectId?._id ?? itemRef.current?.subjectId;
                           addStudyMinutes(studyAccumSecondsRef.current / 60, sid);
                           studyAccumSecondsRef.current = 0;
+                        }
+                        if (heartbeatPendingSecondsRef.current >= 300) {
+                          void syncWatchToServer(300);
                         }
                         if (id && t - lastSavedPositionRef.current >= SAVE_INTERVAL_SECONDS) {
                           lastSavedPositionRef.current = t;

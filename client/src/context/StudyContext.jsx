@@ -1,4 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import api from "../api/client";
+import { VIDEO_STREAK_GOAL_MINUTES } from "../constants/streak";
+import { useAuth } from "./AuthContext";
 
 const STORAGE_KEYS = {
   TODAY_DATE: "cds_study_today_date",
@@ -8,6 +11,7 @@ const STORAGE_KEYS = {
   TARGET_BY_SUBJECT: "cds_study_target_by_subject",
   WATCH_HISTORY: "cds_watch_history",
   CELEBRATION_SHOWN_DATE: "cds_celebration_shown_date",
+  STREAK_CELEBRATION_SHOWN_DATE: "cds_streak_celebration_shown_date",
 };
 
 const HISTORY_MAX = 50;
@@ -59,6 +63,7 @@ const saveObject = (key, obj) => {
 const StudyContext = createContext(null);
 
 export function StudyProvider({ children }) {
+  const { isAuthenticated } = useAuth();
   const [todayDate, setTodayDate] = useState(() => localStorage.getItem(STORAGE_KEYS.TODAY_DATE) || getTodayKey());
   const [todayMinutes, setTodayMinutesState] = useState(() =>
     loadNumber(STORAGE_KEYS.TODAY_MINUTES, 0)
@@ -76,6 +81,11 @@ export function StudyProvider({ children }) {
   const [celebrationShownDate, setCelebrationShownDate] = useState(() =>
     localStorage.getItem(STORAGE_KEYS.CELEBRATION_SHOWN_DATE) || ""
   );
+  const [streakCelebrationShownDate, setStreakCelebrationShownDate] = useState(() =>
+    localStorage.getItem(STORAGE_KEYS.STREAK_CELEBRATION_SHOWN_DATE) || ""
+  );
+  const [videoStreakStatus, setVideoStreakStatus] = useState(null);
+  const streakCompleteRef = useRef(false);
 
   const ensureToday = useCallback(() => {
     const key = getTodayKey();
@@ -88,6 +98,22 @@ export function StudyProvider({ children }) {
       saveObject(STORAGE_KEYS.TODAY_BY_SUBJECT, {});
     }
   }, [todayDate]);
+
+  const applyVideoStreakStatus = useCallback((status) => {
+    if (!status) return;
+    setVideoStreakStatus(status);
+  }, []);
+
+  const refreshVideoStreak = useCallback(async () => {
+    if (!isAuthenticated) return null;
+    try {
+      const { data } = await api.get("/mission/streak/video");
+      setVideoStreakStatus(data);
+      return data;
+    } catch {
+      return null;
+    }
+  }, [isAuthenticated]);
 
   const addStudyMinutes = useCallback(
     (minutes, subjectId) => {
@@ -146,6 +172,17 @@ export function StudyProvider({ children }) {
     });
   }, []);
 
+  const serverTodayVideoMinutes = videoStreakStatus?.todayVideoMinutes ?? 0;
+  const effectiveTodayVideoMinutes = Math.max(todayMinutes, serverTodayVideoMinutes);
+  const videoStreak = videoStreakStatus?.streak ?? 0;
+  const videoStreakTodayComplete =
+    videoStreakStatus?.todayComplete || effectiveTodayVideoMinutes >= VIDEO_STREAK_GOAL_MINUTES;
+  const videoStreakProgressPercent = Math.min(
+    100,
+    Math.round((effectiveTodayVideoMinutes / VIDEO_STREAK_GOAL_MINUTES) * 100)
+  );
+  const videoStreakRecentDays = videoStreakStatus?.recentDays ?? [];
+
   const shouldShowCelebration = useMemo(() => {
     const key = getTodayKey();
     if (celebrationShownDate === key) return false;
@@ -153,10 +190,22 @@ export function StudyProvider({ children }) {
     return targetMinutes > 0 && current >= targetMinutes;
   }, [celebrationShownDate, todayDate, todayMinutes, targetMinutes]);
 
+  const shouldShowStreakCelebration = useMemo(() => {
+    const key = getTodayKey();
+    if (streakCelebrationShownDate === key) return false;
+    return effectiveTodayVideoMinutes >= VIDEO_STREAK_GOAL_MINUTES;
+  }, [streakCelebrationShownDate, effectiveTodayVideoMinutes]);
+
   const markCelebrationShown = useCallback(() => {
     const key = getTodayKey();
     setCelebrationShownDate(key);
     localStorage.setItem(STORAGE_KEYS.CELEBRATION_SHOWN_DATE, key);
+  }, []);
+
+  const markStreakCelebrationShown = useCallback(() => {
+    const key = getTodayKey();
+    setStreakCelebrationShownDate(key);
+    localStorage.setItem(STORAGE_KEYS.STREAK_CELEBRATION_SHOWN_DATE, key);
   }, []);
 
   useEffect(() => {
@@ -165,11 +214,28 @@ export function StudyProvider({ children }) {
       setTodayDate(key);
       setTodayMinutesState(0);
       setTodayMinutesBySubject({});
+      streakCompleteRef.current = false;
       localStorage.setItem(STORAGE_KEYS.TODAY_DATE, key);
       localStorage.setItem(STORAGE_KEYS.TODAY_MINUTES, "0");
       saveObject(STORAGE_KEYS.TODAY_BY_SUBJECT, {});
     }
-  }, []);
+  }, [todayDate]);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      refreshVideoStreak();
+    } else {
+      setVideoStreakStatus(null);
+    }
+  }, [isAuthenticated, refreshVideoStreak]);
+
+  useEffect(() => {
+    const complete = effectiveTodayVideoMinutes >= VIDEO_STREAK_GOAL_MINUTES;
+    if (isAuthenticated && complete && !streakCompleteRef.current) {
+      refreshVideoStreak();
+    }
+    streakCompleteRef.current = complete;
+  }, [effectiveTodayVideoMinutes, isAuthenticated, refreshVideoStreak]);
 
   const value = useMemo(
     () => ({
@@ -186,6 +252,16 @@ export function StudyProvider({ children }) {
       shouldShowCelebration,
       markCelebrationShown,
       ensureToday,
+      videoStreak,
+      effectiveTodayVideoMinutes,
+      videoStreakTodayComplete,
+      videoStreakProgressPercent,
+      videoStreakRecentDays,
+      videoStreakGoalMinutes: VIDEO_STREAK_GOAL_MINUTES,
+      applyVideoStreakStatus,
+      refreshVideoStreak,
+      shouldShowStreakCelebration,
+      markStreakCelebrationShown,
     }),
     [
       todayMinutes,
@@ -201,6 +277,15 @@ export function StudyProvider({ children }) {
       shouldShowCelebration,
       markCelebrationShown,
       ensureToday,
+      videoStreak,
+      effectiveTodayVideoMinutes,
+      videoStreakTodayComplete,
+      videoStreakProgressPercent,
+      videoStreakRecentDays,
+      applyVideoStreakStatus,
+      refreshVideoStreak,
+      shouldShowStreakCelebration,
+      markStreakCelebrationShown,
     ]
   );
 
