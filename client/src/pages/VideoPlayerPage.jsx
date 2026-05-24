@@ -28,10 +28,11 @@ import {
 import { Link, useParams } from "react-router-dom";
 import api from "../api/client";
 import StudyTracker from "../components/StudyTracker";
+import SmoothPlaybackPanel from "../components/SmoothPlaybackPanel";
 import VideoPlaybackCachePanel from "../components/VideoPlaybackCachePanel";
 import { useStudy } from "../context/StudyContext";
 import { useTheme } from "../context/ThemeContext";
-import { getTelegramVideoUrl, isTelegramLinkVideo, isTelegramStreamContent, isYouTubeUrl, resolveContentSrc, toAbsoluteMediaUrl } from "../utils/media";
+import { getTelegramVideoUrl, isLocalFrontend, isTelegramLinkVideo, isTelegramStreamContent, isYouTubeUrl, resolveContentSrc, toAbsoluteMediaUrl } from "../utils/media";
 import { downloadDataUrl, loadScreenshotNotes, saveScreenshotNotes } from "../utils/screenshotNotes";
 import { getYouTubeThumbnailDataUrl } from "../utils/youtubeThumbnail";
 
@@ -189,6 +190,7 @@ const VideoPlayerPage = () => {
   const [cachedPlayUrl, setCachedPlayUrl] = useState(null);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const usingCacheRef = useRef(false);
+  const usingLocalLibraryRef = useRef(false);
   const videoRef = useRef(null);
   const playerRef = useRef(null);
   const hideTimerRef = useRef(null);
@@ -210,7 +212,12 @@ const VideoPlayerPage = () => {
   const telegramLink = item ? getTelegramVideoUrl(item) : "";
   const rawSrc = item ? resolveContentSrc(item) : "";
   const isYoutube = !isTelegramLink && !isTelegramStream && isYouTubeUrl(rawSrc);
-  const canCachePlayback = Boolean(item && (isTelegramStream || item.sourceType === "cloudinary"));
+  const canCachePlayback = Boolean(
+    item &&
+      (isTelegramStream ||
+        item.sourceType === "cloudinary" ||
+        (item.sourceType === "upload" && item.filePath))
+  );
   const src = isTelegramLink || isYoutube ? "" : rawSrc;
   const playbackSrc = cachedPlayUrl ? toAbsoluteMediaUrl(cachedPlayUrl) : src;
   const canUseAiAsk = false;
@@ -273,6 +280,7 @@ const VideoPlayerPage = () => {
   useEffect(() => {
     setCachedPlayUrl(null);
     usingCacheRef.current = false;
+    usingLocalLibraryRef.current = false;
   }, [id]);
 
   const handlePlaybackEnded = useCallback(async () => {
@@ -281,7 +289,7 @@ const VideoPlayerPage = () => {
     if (id && videoRef.current) {
       saveVideoPosition(id, videoRef.current.currentTime);
     }
-    if (usingCacheRef.current && id) {
+    if (usingCacheRef.current && !usingLocalLibraryRef.current && id) {
       try {
         await api.delete(`/contents/${id}/playback-cache`);
         setCachedPlayUrl(null);
@@ -401,7 +409,10 @@ const VideoPlayerPage = () => {
             contentId: currentItem._id,
             subjectId,
             subjectName: currentItem.subjectId?.name || "",
-            meta: { title: currentItem.title },
+            meta: {
+              title: currentItem.title,
+              smoothPlayback: usingLocalLibraryRef.current,
+            },
           })
           .catch(() => {});
       }
@@ -952,15 +963,28 @@ const VideoPlayerPage = () => {
               <p className={`text-xs sm:text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
                 {item.subjectId?.name} / {item.chapterId?.chapterName}
               </p>
-              <VideoPlaybackCachePanel
-                contentId={id}
-                eligible={canCachePlayback}
-                isDark={isDark}
-                onPlayUrlChange={setCachedPlayUrl}
-                onUsingCacheChange={(value) => {
-                  usingCacheRef.current = value;
-                }}
-              />
+              {isLocalFrontend() ? (
+                <SmoothPlaybackPanel
+                  contentId={id}
+                  eligible={canCachePlayback}
+                  isDark={isDark}
+                  onPlayUrlChange={setCachedPlayUrl}
+                  onUsingLocalLibraryChange={(value) => {
+                    usingLocalLibraryRef.current = value;
+                    usingCacheRef.current = value;
+                  }}
+                />
+              ) : (
+                <VideoPlaybackCachePanel
+                  contentId={id}
+                  eligible={canCachePlayback}
+                  isDark={isDark}
+                  onPlayUrlChange={setCachedPlayUrl}
+                  onUsingCacheChange={(value) => {
+                    usingCacheRef.current = value;
+                  }}
+                />
+              )}
               <div className="mt-4">
                 <div className="rounded-xl bg-black overflow-visible">
                 {isTelegramLink ? (

@@ -41,7 +41,24 @@ import {
   startPlaybackCacheDownload,
   touchPlaybackCache,
 } from "../services/videoPlaybackCacheService.js";
+import {
+  getLocalLibraryStatus,
+  getLocalLibraryStorageStats,
+  isLocalLibraryEnabled,
+  isLocalLibraryEligibleContent,
+  removeLocalLibraryFile,
+  startLocalLibraryDownload,
+} from "../services/localLibraryService.js";
 import { formatBytesLabel } from "../utils/contentPlayback.js";
+
+const assertLocalLibrary = (_req, res, next) => {
+  if (!isLocalLibraryEnabled()) {
+    return res.status(403).json({
+      message: "Smooth playback (PC library) is only available on the local study server.",
+    });
+  }
+  next();
+};
 
 const isProductionMediaMode = () => process.env.NODE_ENV === "production";
 
@@ -815,6 +832,91 @@ export const deleteContentPlaybackCache = async (req, res) => {
     res.status(500).json({ message: error.message || "Could not remove cache" });
   }
 };
+
+export const getLocalLibraryStorage = async (_req, res) => {
+  try {
+    const storage = getLocalLibraryStorageStats();
+    res.json({
+      ...storage,
+      usedLabel: formatBytesLabel(storage.usedBytes),
+      maxLabel: storage.maxBytes > 0 ? formatBytesLabel(storage.maxBytes) : null,
+      freeLabel: storage.freeBytes != null ? formatBytesLabel(storage.freeBytes) : null,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Could not read PC library storage" });
+  }
+};
+
+export const getContentLocalLibrary = async (req, res) => {
+  try {
+    const content = await Content.findById(req.params.id);
+    if (!content) return res.status(404).json({ message: "Content not found" });
+
+    const status = getLocalLibraryStatus(content._id);
+    res.json({
+      ...status,
+      eligible: isLocalLibraryEligibleContent(content),
+      sizeLabel: status.sizeBytes ? formatBytesLabel(status.sizeBytes) : null,
+      storage: {
+        ...status.storage,
+        usedLabel: formatBytesLabel(status.storage.usedBytes),
+        maxLabel: status.storage.maxBytes > 0 ? formatBytesLabel(status.storage.maxBytes) : null,
+        freeLabel:
+          status.storage.freeBytes != null ? formatBytesLabel(status.storage.freeBytes) : null,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Could not read PC library status" });
+  }
+};
+
+export const startContentLocalLibrary = async (req, res) => {
+  try {
+    const content = await Content.findById(req.params.id);
+    if (!content) return res.status(404).json({ message: "Content not found" });
+    if (!isLocalLibraryEligibleContent(content)) {
+      return res.status(400).json({
+        message: "This video type cannot be saved to the PC library.",
+      });
+    }
+
+    const status = await startLocalLibraryDownload(content._id);
+    res.json({
+      ...status,
+      eligible: true,
+      sizeLabel: status.sizeBytes ? formatBytesLabel(status.sizeBytes) : null,
+      storage: {
+        ...status.storage,
+        usedLabel: formatBytesLabel(status.storage.usedBytes),
+        maxLabel: status.storage.maxBytes > 0 ? formatBytesLabel(status.storage.maxBytes) : null,
+        freeLabel:
+          status.storage.freeBytes != null ? formatBytesLabel(status.storage.freeBytes) : null,
+      },
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Could not start download" });
+  }
+};
+
+export const deleteContentLocalLibrary = async (req, res) => {
+  try {
+    removeLocalLibraryFile(req.params.id);
+    const storage = getLocalLibraryStorageStats();
+    res.json({
+      message: "Removed from PC library.",
+      storage: {
+        ...storage,
+        usedLabel: formatBytesLabel(storage.usedBytes),
+        maxLabel: storage.maxBytes > 0 ? formatBytesLabel(storage.maxBytes) : null,
+        freeLabel: storage.freeBytes != null ? formatBytesLabel(storage.freeBytes) : null,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Could not remove from PC library" });
+  }
+};
+
+export { assertLocalLibrary };
 
 export const deleteContent = async (req, res) => {
   const content = await Content.findById(req.params.id);
