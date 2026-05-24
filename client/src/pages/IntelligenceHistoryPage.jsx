@@ -6,12 +6,15 @@ import toast from "react-hot-toast";
 import api from "../api/client";
 import Layout from "../components/Layout";
 import Loader from "../components/Loader";
+import AiDailyBriefing from "../components/mission/AiDailyBriefing";
+import DailyTargetProgress from "../components/mission/DailyTargetProgress";
+import StartStudyGate from "../components/mission/StartStudyGate";
 import StreakCard from "../components/mission/StreakCard";
 import WeeklyPerformanceChart from "../components/mission/WeeklyPerformanceChart";
-import DailyTargetProgress from "../components/mission/DailyTargetProgress";
 
 const IntelligenceHistoryPage = () => {
   const [loading, setLoading] = useState(true);
+  const [starting, setStarting] = useState(false);
   const [report, setReport] = useState(null);
 
   const load = useCallback(async () => {
@@ -30,6 +33,19 @@ const IntelligenceHistoryPage = () => {
     load();
   }, [load]);
 
+  const handleStartStudy = async () => {
+    setStarting(true);
+    try {
+      await api.post("/mission/study/start");
+      toast.success("Study session started. Intelligence unlocked.");
+      await load();
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Could not start study");
+    } finally {
+      setStarting(false);
+    }
+  };
+
   if (loading && !report) {
     return (
       <Layout title="Study intelligence" subtitle="Loading analytics…" showSearch={false}>
@@ -38,14 +54,38 @@ const IntelligenceHistoryPage = () => {
     );
   }
 
+  if (report?.gate && !report?.studyStarted) {
+    return (
+      <Layout
+        title="Study intelligence"
+        subtitle="Unlock analytics by starting today's study plan"
+        showSearch={false}
+        actions={
+          <Link to="/mission" className="btn-secondary text-sm!">
+            Today&apos;s target
+          </Link>
+        }
+      >
+        <StartStudyGate
+          userName={report.userName}
+          dailyTarget={report.dailyTarget}
+          aiBriefing={report.aiBriefing}
+          message={report.message}
+          starting={starting}
+          onStartStudy={handleStartStudy}
+        />
+      </Layout>
+    );
+  }
+
   const overview = report?.overview || {};
-  const missionProgress = overview.missionProgress || 0;
+  const missionProgress = overview.missionProgress ?? report?.dailyTarget?.progressPercent ?? 0;
   const readingProgress = overview.readingProgress || 0;
 
   return (
     <Layout
       title="Study intelligence"
-      subtitle="Daily logs, trends, consistency, and performance insights"
+      subtitle="Connected to today's study plan — logs, trends, and performance"
       showSearch={false}
       actions={
         <Link to="/mission" className="btn-primary text-sm!">
@@ -54,16 +94,19 @@ const IntelligenceHistoryPage = () => {
       }
     >
       <div className="space-y-6">
-        <StreakCard
-          streak={overview.streak || 0}
-          readingStreak={overview.readingStreak || 0}
-          disciplineScore={overview.disciplineScore || 0}
-        />
+        {report?.aiBriefing && <AiDailyBriefing briefing={report.aiBriefing} />}
 
         <DailyTargetProgress
           missionProgress={missionProgress}
           readingProgress={readingProgress}
           label="Today's combined progress"
+          totalGoalLabel={report?.dailyTarget?.totalGoalLabel}
+        />
+
+        <StreakCard
+          streak={overview.streak || 0}
+          readingStreak={overview.readingStreak || 0}
+          disciplineScore={overview.disciplineScore || 0}
         />
 
         <WeeklyPerformanceChart data={overview.weeklyChart || []} />
@@ -176,8 +219,8 @@ const IntelligenceHistoryPage = () => {
           </div>
           <p className="mt-4 flex items-center gap-2 text-xs text-slate-500">
             <FiActivity size={14} />
-            Period {report?.monthlyInsights?.periodKey || format(new Date(), "yyyy-MM")} — AI adaptive planning ready
-            for future releases.
+            Period {report?.monthlyInsights?.periodKey || format(new Date(), "yyyy-MM")} — synced with today&apos;s
+            target ({report?.dailyTarget?.totalGoalLabel || "—"})
           </p>
         </section>
       </div>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
-import { FiBarChart2, FiRefreshCw } from "react-icons/fi";
+import { FiBarChart2, FiPlay, FiRefreshCw } from "react-icons/fi";
 import { Link, useNavigate } from "react-router-dom";
 import api from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
@@ -29,6 +29,7 @@ const MissionDashboard = () => {
   const [busy, setBusy] = useState(false);
   const [refreshingAi, setRefreshingAi] = useState(false);
   const [completingSlot, setCompletingSlot] = useState(null);
+  const [startingStudy, setStartingStudy] = useState(false);
   const [payload, setPayload] = useState(null);
 
   const load = useCallback(async () => {
@@ -51,6 +52,27 @@ const MissionDashboard = () => {
   const reading = payload?.reading;
   const dailyTarget = payload?.dailyTarget;
   const aiBriefing = payload?.aiBriefing;
+
+  const studyStarted = payload?.studyStarted ?? false;
+
+  const handleStartStudy = async () => {
+    setStartingStudy(true);
+    try {
+      const { data } = await api.post("/mission/study/start");
+      setPayload((prev) => ({
+        ...prev,
+        studyStarted: true,
+        studyStartedAt: data.studyStartedAt,
+        aiBriefing: data.aiBriefing || prev?.aiBriefing,
+        dailyTarget: data.dailyTarget || prev?.dailyTarget,
+      }));
+      toast.success("Study session started.");
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Could not start study");
+    } finally {
+      setStartingStudy(false);
+    }
+  };
 
   const mockItem = useMemo(
     () => (mission?.items || []).find((i) => i.slot === "mock_test"),
@@ -143,6 +165,33 @@ const MissionDashboard = () => {
 
   return (
     <div className="space-y-5 sm:space-y-6">
+      {!studyStarted && (
+        <section className="rounded-2xl border border-indigo-200/80 bg-linear-to-br from-indigo-500/5 via-white to-sky-500/5 p-5 dark:border-indigo-900/40 dark:from-indigo-950/30 dark:via-[#1a1a1a] dark:to-sky-950/20 sm:p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 dark:text-indigo-400">
+                Ready to begin?
+              </p>
+              <h2 className="font-display mt-1 text-xl font-semibold text-slate-900 dark:text-white">
+                Start today&apos;s study to unlock intelligence
+              </h2>
+              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+                Your plan is ready — {dailyTarget?.totalGoalLabel || "today's goal"} across videos and reading.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn-primary inline-flex shrink-0 items-center gap-2 self-start"
+              disabled={startingStudy}
+              onClick={handleStartStudy}
+            >
+              <FiPlay size={16} />
+              {startingStudy ? "Starting…" : "Start study"}
+            </button>
+          </div>
+        </section>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className={statBox}>
           <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Exam countdown</p>
@@ -175,7 +224,8 @@ const MissionDashboard = () => {
       <div className="flex flex-wrap items-center justify-end gap-2">
         <Link
           to="/history/intelligence"
-          className="btn-secondary inline-flex items-center gap-2 text-xs!"
+          className={`btn-secondary inline-flex items-center gap-2 text-xs! ${!studyStarted ? "opacity-60" : ""}`}
+          title={!studyStarted ? "Start study first to unlock full analytics" : undefined}
         >
           <FiBarChart2 size={14} /> Full analytics
         </Link>

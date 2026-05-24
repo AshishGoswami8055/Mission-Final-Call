@@ -55,6 +55,8 @@ const dailyMissionSchema = new mongoose.Schema(
     disciplineScore: { type: Number, default: 0 },
     completedAt: { type: Date, default: null },
     generationMeta: { type: mongoose.Schema.Types.Mixed, default: {} },
+    /** When the cadet explicitly started today's study session. */
+    studyStartedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

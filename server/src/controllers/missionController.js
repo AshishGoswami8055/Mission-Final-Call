@@ -21,6 +21,23 @@ import {
 } from "../services/missionSummaryService.js";
 import { getOrCreateAiBriefing } from "../services/aiBriefingService.js";
 
+const loadTodayContext = async (userId) => {
+  const mission = await getOrCreateTodayMission(userId);
+  const dateKey = todayDateKey();
+  let reading = await ReadingSession.findOne({ userId, date: dateKey });
+  if (!reading) {
+    reading = await ReadingSession.create({
+      userId,
+      date: dateKey,
+      targetMinutes: DEFAULT_READING_TARGET_MINUTES,
+    });
+  }
+  await enrichMissionItems(mission);
+  const dailyTarget = buildDailyTargetSummary(mission, reading);
+  syncMissionProgressFromSummary(mission, dailyTarget);
+  return { mission, reading, dailyTarget, studyStarted: Boolean(mission.studyStartedAt) };
+};
+
 const populateMissionDiscipline = async (userId, mission, reading) => {
   const streak = await calculateDisciplineStreak(userId);
   const readingProgress = reading?.targetMinutes
@@ -38,20 +55,7 @@ const populateMissionDiscipline = async (userId, mission, reading) => {
 export const getTodayMission = async (req, res) => {
   try {
     const userId = req.user._id;
-    const mission = await getOrCreateTodayMission(userId);
-    const dateKey = todayDateKey();
-    let reading = await ReadingSession.findOne({ userId, date: dateKey });
-    if (!reading) {
-      reading = await ReadingSession.create({
-        userId,
-        date: dateKey,
-        targetMinutes: DEFAULT_READING_TARGET_MINUTES,
-      });
-    }
-
-    await enrichMissionItems(mission);
-    const dailyTarget = buildDailyTargetSummary(mission, reading);
-    syncMissionProgressFromSummary(mission, dailyTarget);
+    const { mission, reading, dailyTarget, studyStarted } = await loadTodayContext(userId);
     await populateMissionDiscipline(userId, mission, reading);
     const streak = await calculateDisciplineStreak(userId);
     const readingStreak = await calculateReadingStreak(userId);
@@ -73,6 +77,8 @@ export const getTodayMission = async (req, res) => {
       reading: reading.toObject(),
       dailyTarget,
       aiBriefing,
+      studyStarted,
+      studyStartedAt: mission.studyStartedAt || null,
       userName: req.user?.name || "Cadet",
       streak,
       readingStreak,
@@ -92,6 +98,47 @@ export const getTodayMission = async (req, res) => {
   } catch (error) {
     console.error("[mission.getToday]", error);
     res.status(500).json({ message: error.message || "Could not load today's mission" });
+  }
+};
+
+export const startTodayStudy = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { mission, reading, dailyTarget } = await loadTodayContext(userId);
+
+    if (!mission.studyStartedAt) {
+      mission.studyStartedAt = new Date();
+      await mission.save();
+      await logStudySession({
+        userId,
+        type: "mission",
+        durationMinutes: 0,
+        missionId: mission._id,
+        meta: { action: "study_started", totalGoalMinutes: dailyTarget.totalGoalMinutes },
+      });
+    }
+
+    await populateMissionDiscipline(userId, mission, reading);
+    const overview = await buildAnalyticsOverview(userId);
+    const aiBriefing = await getOrCreateAiBriefing({
+      userId,
+      userName: req.user?.name || "Cadet",
+      dailyTarget,
+      overview,
+      mission,
+      force: true,
+    });
+
+    res.json({
+      studyStarted: true,
+      studyStartedAt: mission.studyStartedAt,
+      mission: mission.toObject(),
+      dailyTarget,
+      aiBriefing,
+    });
+  } catch (error) {
+    console.error("[mission.startStudy]", error);
+    res.status(500).json({ message: error.message || "Could not start today's study" });
   }
 };
 
@@ -346,8 +393,48 @@ export const getAnalyticsOverview = async (req, res) => {
 
 export const getIntelligenceReport = async (req, res) => {
   try {
-    const report = await buildIntelligenceReport(req.user._id);
-    res.json(report);
+    const userId = req.user._id;
+    const { mission, reading, dailyTarget, studyStarted } = await loadTodayContext(userId);
+
+    if (!studyStarted) {
+      const overview = await buildAnalyticsOverview(userId);
+      const aiBriefing = await getOrCreateAiBriefing({
+        userId,
+        userName: req.user?.name || "Cadet",
+        dailyTarget,
+        overview,
+        mission,
+      });
+      return res.json({
+        studyStarted: false,
+        gate: true,
+        dailyTarget,
+        aiBriefing,
+        userName: req.user?.name || "Cadet",
+        message: "Start today's study plan to unlock intelligence and analytics.",
+      });
+    }
+
+    await populateMissionDiscipline(userId, mission, reading);
+    const report = await buildIntelligenceReport(userId);
+    const overview = report.overview || {};
+    const aiBriefing = await getOrCreateAiBriefing({
+      userId,
+      userName: req.user?.name || "Cadet",
+      dailyTarget,
+      overview: { ...overview, streak: overview.streak, readingStreak: overview.readingStreak },
+      mission,
+    });
+
+    res.json({
+      studyStarted: true,
+      gate: false,
+      dailyTarget,
+      aiBriefing,
+      userName: req.user?.name || "Cadet",
+      studyStartedAt: mission.studyStartedAt,
+      ...report,
+    });
   } catch (error) {
     res.status(500).json({ message: error.message || "Could not load intelligence report" });
   }

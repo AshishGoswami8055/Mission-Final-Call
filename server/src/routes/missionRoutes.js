@@ -15,6 +15,7 @@ import {
   resumeReading,
   startReading,
   submitMockTest,
+  startTodayStudy,
   updateReadingTarget,
 } from "../controllers/missionController.js";
 
@@ -24,6 +25,7 @@ router.use(protect);
 
 router.get("/today", getTodayMission);
 router.post("/today/regenerate", regenerateTodayMission);
+router.post("/study/start", startTodayStudy);
 router.post("/ai-briefing/refresh", refreshAiBriefing);
 router.post("/items/complete", completeMissionItemHandler);
 

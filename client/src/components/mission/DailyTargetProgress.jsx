@@ -1,4 +1,9 @@
-const DailyTargetProgress = ({ missionProgress = 0, readingProgress = 0, label = "Mission progress" }) => {
+const DailyTargetProgress = ({
+  missionProgress = 0,
+  readingProgress = 0,
+  label = "Mission progress",
+  totalGoalLabel,
+}) => {
   const combined = Math.round(missionProgress * 0.7 + readingProgress * 0.3);
 
   return (
@@ -11,6 +16,7 @@ const DailyTargetProgress = ({ missionProgress = 0, readingProgress = 0, label =
           </p>
         </div>
         <div className="text-right text-xs text-slate-500">
+          {totalGoalLabel && <div className="mb-1 font-medium text-slate-600 dark:text-slate-300">{totalGoalLabel}</div>}
           <div>Mission {missionProgress}%</div>
           <div>Reading {readingProgress}%</div>
         </div>
