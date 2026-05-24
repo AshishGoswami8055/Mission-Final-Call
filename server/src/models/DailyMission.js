@@ -14,6 +14,7 @@ const missionItemSchema = new mongoose.Schema(
     subjectName: { type: String, default: "" },
     chapterName: { type: String, default: "" },
     targetMinutes: { type: Number, default: null },
+    durationMinutes: { type: Number, default: null },
     completed: { type: Boolean, default: false },
     completedAt: { type: Date, default: null },
     reason: {

@@ -17,6 +17,16 @@ export const classifySubjectBucket = (name = "") => {
 export const MISSION_VIDEO_SLOTS = ["english", "maths", "gs"];
 export const DEFAULT_READING_TARGET_MINUTES = 60;
 
+/** Default study duration per slot when video metadata has no duration. */
+export const SLOT_DEFAULT_MINUTES = {
+  english: 45,
+  maths: 60,
+  gs: 50,
+  reading: 60,
+};
+
+export const CORE_DAILY_SLOTS = ["english", "maths", "gs", "reading"];
+
 export const todayDateKey = (date = new Date()) => {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);

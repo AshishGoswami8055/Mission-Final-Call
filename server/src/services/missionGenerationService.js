@@ -11,9 +11,11 @@ import {
   DEFAULT_READING_TARGET_MINUTES,
   isSunday,
   MISSION_VIDEO_SLOTS,
+  SLOT_DEFAULT_MINUTES,
   todayDateKey,
 } from "../utils/subjectBuckets.js";
 import { getRecentContentIds } from "./studyHistoryService.js";
+import { enrichMissionItems, buildDailyTargetSummary, syncMissionProgressFromSummary } from "./missionSummaryService.js";
 
 const RECENT_DAYS = 3;
 
@@ -130,6 +132,11 @@ const pickVideoForSlot = async ({ userId, slot, subjectIds, recentSet, completio
 
   if (!best) return null;
   const { video, reason } = best;
+  const durationSec = Number(video.duration) || 0;
+  const durationMinutes =
+    durationSec > 0
+      ? Math.max(1, Math.round(durationSec / 60))
+      : SLOT_DEFAULT_MINUTES[slot] || 45;
   return {
     slot,
     contentId: video._id,
@@ -137,6 +144,7 @@ const pickVideoForSlot = async ({ userId, slot, subjectIds, recentSet, completio
     subjectId: video.subjectId?._id || video.subjectId,
     subjectName: video.subjectId?.name || "",
     chapterName: video.chapterId?.chapterName || "",
+    durationMinutes,
     completed: completedSet.has(String(video._id)),
     reason,
   };
@@ -230,10 +238,11 @@ export const generateDailyMission = async (userId, { force = false, date = new D
 
   items.push({
     slot: "reading",
-    title: "Daily Reading Session",
+    title: "Reading Session",
     subjectName: "Reading",
     chapterName: "Newspaper / Notes",
     targetMinutes: DEFAULT_READING_TARGET_MINUTES,
+    durationMinutes: DEFAULT_READING_TARGET_MINUTES,
     completed: false,
     reason: "default",
   });
@@ -274,8 +283,8 @@ export const getOrCreateTodayMission = async (userId) => {
   const dateKey = todayDateKey();
   let mission = await DailyMission.findOne({ userId, date: dateKey });
   if (!mission) mission = await generateDailyMission(userId);
+  await enrichMissionItems(mission);
   recalcMissionProgress(mission);
-  await mission.save();
   return mission;
 };
 

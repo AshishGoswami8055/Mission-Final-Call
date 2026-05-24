@@ -70,10 +70,10 @@ const ReadingTimer = ({
           <p className="font-display text-4xl font-bold tabular-nums tracking-tight">
             {formatTimer(displaySeconds)}
           </p>
-          <p className="mt-1 flex items-center gap-1 text-sm text-emerald-200/70">
-            <FiClock size={14} />
-            Target {targetMinutes} min · {progress}% complete
-          </p>
+      <p className="mt-2 flex items-center gap-1 text-sm text-emerald-200/70">
+        <FiClock size={14} />
+        Fixed target: 1 hour · {progress}% complete today
+      </p>
         </div>
         <div className="flex flex-wrap gap-2">
           {status === "idle" || status === "paused" ? (
@@ -116,11 +116,11 @@ const ReadingTimer = ({
         <input
           id="reading-target"
           type="number"
-          min={15}
-          max={240}
-          className="input w-20 py-1! text-xs!"
-          defaultValue={targetMinutes}
-          onBlur={(e) => onUpdateTarget?.(Number(e.target.value))}
+          min={60}
+          max={60}
+          readOnly
+          className="input w-20 py-1! text-xs! opacity-70"
+          value={60}
         />
       </div>
     </div>

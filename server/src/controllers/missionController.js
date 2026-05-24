@@ -14,6 +14,11 @@ import {
   computeDisciplineScore,
 } from "../services/streakService.js";
 import { DEFAULT_READING_TARGET_MINUTES, todayDateKey } from "../utils/subjectBuckets.js";
+import {
+  enrichMissionItems,
+  buildDailyTargetSummary,
+  syncMissionProgressFromSummary,
+} from "../services/missionSummaryService.js";
 
 const populateMissionDiscipline = async (userId, mission, reading) => {
   const streak = await calculateDisciplineStreak(userId);
@@ -43,6 +48,9 @@ export const getTodayMission = async (req, res) => {
       });
     }
 
+    await enrichMissionItems(mission);
+    const dailyTarget = buildDailyTargetSummary(mission, reading);
+    syncMissionProgressFromSummary(mission, dailyTarget);
     await populateMissionDiscipline(userId, mission, reading);
     const streak = await calculateDisciplineStreak(userId);
     const readingStreak = await calculateReadingStreak(userId);
@@ -51,6 +59,8 @@ export const getTodayMission = async (req, res) => {
     res.json({
       mission: mission.toObject(),
       reading: reading.toObject(),
+      dailyTarget,
+      userName: req.user?.name || "Cadet",
       streak,
       readingStreak,
       examCountdownDays: overview.examCountdownDays,
