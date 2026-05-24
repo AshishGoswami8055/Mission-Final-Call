@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { FiCheck, FiChevronRight, FiEdit2, FiLoader, FiRefreshCw, FiTrash2 } from "react-icons/fi";
+import SubjectDownloadButton from "./SubjectDownloadButton";
 import { getSubjectTheme } from "../utils/subjectThemes";
 
 const SubjectListRow = ({
@@ -208,6 +209,12 @@ const SubjectListRow = ({
             <span className="hidden sm:inline">{hasUpdate ? `Update (${newCount})` : "Update"}</span>
           </button>
         )}
+        <SubjectDownloadButton
+          subject={subject}
+          videoCount={videoCount}
+          variant="list"
+          disabled={busy}
+        />
       </div>
     </div>
   );

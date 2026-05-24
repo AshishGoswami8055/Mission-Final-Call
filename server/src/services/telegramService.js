@@ -752,7 +752,7 @@ const parseRangeHeader = (rangeHeader, totalSize) => {
   return { start, end, partial: true };
 };
 
-export const streamTelegramMedia = async ({ channelId, messageId, req, res }) => {
+export const streamTelegramMedia = async ({ channelId, messageId, req, res, asAttachment = false }) => {
   const { client, message, meta } = await getTelegramMessageMedia({ channelId, messageId });
   const totalSize = meta.size || 0;
 
@@ -771,7 +771,8 @@ export const streamTelegramMedia = async ({ channelId, messageId, req, res }) =>
 
   res.setHeader("Accept-Ranges", "bytes");
   res.setHeader("Content-Type", meta.mimeType || "video/mp4");
-  res.setHeader("Content-Disposition", `inline; filename="${meta.fileName.replace(/"/g, "")}"`);
+  const disposition = asAttachment ? "attachment" : "inline";
+  res.setHeader("Content-Disposition", `${disposition}; filename="${meta.fileName.replace(/"/g, "")}"`);
   res.setHeader("Cache-Control", "private, max-age=3600");
   applyCorsHeaders(req, res);
 

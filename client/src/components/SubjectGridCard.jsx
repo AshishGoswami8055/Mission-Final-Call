@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { FiBookOpen, FiCheck, FiEdit2, FiLoader, FiTrash2 } from "react-icons/fi";
+import SubjectDownloadButton from "./SubjectDownloadButton";
 import { getSubjectTheme } from "../utils/subjectThemes";
 
 const SubjectGridCard = ({
@@ -200,6 +201,14 @@ const SubjectGridCard = ({
             </button>
           )}
         </div>
+      )}
+      {!editing && (
+        <SubjectDownloadButton
+          subject={subject}
+          videoCount={videoCount}
+          variant="grid"
+          disabled={busy}
+        />
       )}
     </div>
   );

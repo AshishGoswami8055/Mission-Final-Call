@@ -100,6 +100,9 @@ export const getLocalLibraryStorageStats = () => {
 /** @type {Map<string, object>} */
 const activeJobs = new Map();
 
+/** @type {Map<string, object>} */
+const subjectBulkJobs = new Map();
+
 const getActiveJob = (contentId) => activeJobs.get(String(contentId)) || null;
 
 export const getLocalLibraryStatus = (contentId) => {
@@ -270,6 +273,50 @@ const runDownloadJob = async (content) => {
   }
 };
 
+export const downloadContentToLibrary = async (content) => {
+  if (!isLocalLibraryEnabled()) {
+    throw new Error("PC library is only available on the local study server.");
+  }
+  if (!content || !isCacheEligibleContent(content)) {
+    throw new Error("This video type cannot be saved to the PC library.");
+  }
+
+  const contentId = String(content._id);
+  const existing = getLocalLibraryStatus(contentId);
+  if (existing.cached && existing.ready) return existing;
+
+  const running = getActiveJob(contentId);
+  if (running?.status === "downloading") {
+    await waitForContentJob(contentId);
+    return getLocalLibraryStatus(contentId);
+  }
+
+  await runDownloadJob(content);
+  return getLocalLibraryStatus(contentId);
+};
+
+const waitForContentJob = (contentId, timeoutMs = 6 * 60 * 60 * 1000) =>
+  new Promise((resolve, reject) => {
+    const started = Date.now();
+    const tick = () => {
+      const job = getActiveJob(contentId);
+      if (!job || job.status === "ready") {
+        resolve(getLocalLibraryStatus(contentId));
+        return;
+      }
+      if (job.status === "error") {
+        reject(new Error(job.error || "Download failed"));
+        return;
+      }
+      if (Date.now() - started > timeoutMs) {
+        reject(new Error("Download timed out"));
+        return;
+      }
+      setTimeout(tick, 1500);
+    };
+    tick();
+  });
+
 export const startLocalLibraryDownload = async (contentId) => {
   if (!isLocalLibraryEnabled()) {
     throw new Error("PC library is only available on the local study server.");
@@ -289,6 +336,120 @@ export const startLocalLibraryDownload = async (contentId) => {
 
   runDownloadJob(content).catch(() => {});
   return getLocalLibraryStatus(contentId);
+};
+
+const runSubjectBulkJob = async (subjectId, videos) => {
+  const key = String(subjectId);
+  const job = subjectBulkJobs.get(key);
+  if (!job) return;
+
+  job.status = "downloading";
+  for (const content of videos) {
+    const item = job.items.find((row) => row.contentId === String(content._id));
+    if (!item) continue;
+
+    const existing = getLocalLibraryStatus(content._id);
+    if (existing.cached && existing.ready) {
+      item.status = "ready";
+      job.skipped += 1;
+      job.completed += 1;
+      continue;
+    }
+
+    item.status = "downloading";
+    job.currentTitle = content.title;
+    job.currentPercent = 0;
+
+    const progressInterval = setInterval(() => {
+      const active = getActiveJob(content._id);
+      if (active?.status === "downloading") {
+        job.currentPercent = active.percent ?? 0;
+        item.percent = active.percent ?? 0;
+      }
+    }, 1000);
+
+    try {
+      await downloadContentToLibrary(content);
+      item.status = "ready";
+      item.percent = 100;
+      job.completed += 1;
+    } catch (error) {
+      item.status = "error";
+      item.error = error.message || "Download failed";
+      job.failed += 1;
+    } finally {
+      clearInterval(progressInterval);
+    }
+  }
+
+  job.status = job.failed > 0 && job.completed === job.skipped ? "error" : "done";
+  job.finishedAt = new Date().toISOString();
+  job.currentTitle = null;
+  job.currentPercent = 100;
+};
+
+export const startSubjectLocalLibraryDownload = async (subjectId, videos) => {
+  if (!isLocalLibraryEnabled()) {
+    throw new Error("PC library is only available on the local study server.");
+  }
+
+  const key = String(subjectId);
+  const running = subjectBulkJobs.get(key);
+  if (running?.status === "downloading") return getSubjectLocalLibraryStatus(subjectId);
+
+  const job = {
+    subjectId: key,
+    status: "queued",
+    total: videos.length,
+    completed: 0,
+    skipped: 0,
+    failed: 0,
+    currentTitle: null,
+    currentPercent: 0,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    items: videos.map((content) => ({
+      contentId: String(content._id),
+      title: content.title,
+      status: "pending",
+      percent: 0,
+      error: null,
+    })),
+    storage: getLocalLibraryStorageStats(),
+  };
+
+  subjectBulkJobs.set(key, job);
+  runSubjectBulkJob(subjectId, videos).catch(() => {});
+  return getSubjectLocalLibraryStatus(subjectId);
+};
+
+export const getSubjectLocalLibraryStatus = (subjectId) => {
+  const key = String(subjectId);
+  const job = subjectBulkJobs.get(key);
+  const storage = getLocalLibraryStorageStats();
+
+  if (!job) {
+    return {
+      subjectId: key,
+      status: "idle",
+      total: 0,
+      completed: 0,
+      skipped: 0,
+      failed: 0,
+      percent: 0,
+      storage,
+      items: [],
+    };
+  }
+
+  const doneCount = job.items.filter((item) => item.status === "ready" || item.status === "error").length;
+  const percent = job.total ? Math.round((doneCount / job.total) * 100) : 0;
+
+  return {
+    ...job,
+    percent,
+    storage,
+  };
 };
 
 export const removeLocalLibraryFile = (contentId) => {

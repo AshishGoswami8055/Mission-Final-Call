@@ -49,7 +49,9 @@ import {
   removeLocalLibraryFile,
   startLocalLibraryDownload,
 } from "../services/localLibraryService.js";
-import { formatBytesLabel } from "../utils/contentPlayback.js";
+import { formatBytesLabel, isTelegramStreamContent } from "../utils/contentPlayback.js";
+import { streamTelegramMedia } from "../services/telegramService.js";
+import { toCloudinaryDownloadUrl } from "../services/subjectDownloadService.js";
 
 const assertLocalLibrary = (_req, res, next) => {
   if (!isLocalLibraryEnabled()) {
@@ -917,6 +919,54 @@ export const deleteContentLocalLibrary = async (req, res) => {
 };
 
 export { assertLocalLibrary };
+
+export const downloadContentFile = async (req, res) => {
+  try {
+    const content = await Content.findById(req.params.id);
+    if (!content || content.type !== "video") {
+      return res.status(404).json({ message: "Video not found" });
+    }
+
+    const fileName = String(content.telegramFileName || `${content.title || "video"}.mp4`)
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+      .trim();
+
+    if (content.sourceType === "cloudinary" && content.videoUrl) {
+      return res.redirect(toCloudinaryDownloadUrl(content.videoUrl, fileName));
+    }
+
+    if (content.sourceType === "upload" && content.filePath) {
+      const absolute = path.join(
+        uploadRoot,
+        String(content.filePath).replace(/^\/uploads\/?/, "")
+      );
+      if (!fs.existsSync(absolute)) {
+        return res.status(404).json({ message: "Video file not found" });
+      }
+      res.setHeader("Content-Type", content.mimeType || "video/mp4");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileName.replace(/"/g, "")}"`);
+      fs.createReadStream(absolute).pipe(res);
+      return;
+    }
+
+    if (isTelegramStreamContent(content)) {
+      await streamTelegramMedia({
+        channelId: content.telegramChannelId,
+        messageId: content.telegramMessageId,
+        req,
+        res,
+        asAttachment: true,
+      });
+      return;
+    }
+
+    return res.status(400).json({ message: "This video cannot be downloaded." });
+  } catch (error) {
+    if (!res.headersSent) {
+      res.status(500).json({ message: error.message || "Download failed" });
+    }
+  }
+};
 
 export const deleteContent = async (req, res) => {
   const content = await Content.findById(req.params.id);

@@ -1,5 +1,6 @@
 import express from "express";
 import {
+  downloadContentFile,
   assertLocalLibrary,
   bulkUploadContents,
   cloudifyContent,
@@ -19,10 +20,12 @@ import {
   updateContent,
 } from "../controllers/contentController.js";
 import protect from "../middlewares/authMiddleware.js";
+import protectStream from "../middlewares/streamAuthMiddleware.js";
 import upload from "../middlewares/uploadMiddleware.js";
 
 const router = express.Router();
 
+router.get("/:id/download-file", protectStream, downloadContentFile);
 router.use(protect);
 router.get("/upload-progress/:uploadId", getUploadProgress);
 router.get("/playback-cache/storage", getPlaybackCacheStorage);
