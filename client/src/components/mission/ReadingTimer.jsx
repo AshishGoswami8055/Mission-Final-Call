@@ -1,9 +1,6 @@
 import { FiBookOpen, FiCheck, FiClock, FiPause, FiPlay } from "react-icons/fi";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const shell =
-  "rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 dark:border-white/10 dark:bg-[#1a1a1a]";
-
 const formatTimer = (totalSeconds) => {
   const s = Math.max(0, Math.floor(totalSeconds));
   const h = Math.floor(s / 3600);
@@ -13,7 +10,7 @@ const formatTimer = (totalSeconds) => {
   return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
 };
 
-const ReadingTimer = ({ reading, onStart, onPause, onResume, onComplete, busy = false }) => {
+const ReadingTimer = ({ reading, onStart, onPause, onResume, onComplete, busy = false, compact = false }) => {
   const baseSeconds = reading?.accumulatedSeconds || 0;
   const targetMinutes = reading?.targetMinutes || 60;
   const status = reading?.status || "idle";
@@ -54,62 +51,55 @@ const ReadingTimer = ({ reading, onStart, onPause, onResume, onComplete, busy = 
   }, [status, displaySeconds, baseSeconds, onComplete]);
 
   return (
-    <section className={shell}>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <section className="card p-5">
+      <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-md">
-            <FiBookOpen size={20} />
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-700 dark:bg-white/10 dark:text-slate-200">
+            <FiBookOpen size={17} />
           </span>
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-600 dark:text-emerald-400">
-              Reading session
-            </p>
-            <p className="font-display mt-1 text-3xl font-bold tabular-nums text-slate-900 dark:text-white">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Reading timer</p>
+            <p className={`font-display mt-1 font-bold tabular-nums text-slate-900 dark:text-white ${compact ? "text-2xl" : "text-3xl"}`}>
               {formatTimer(displaySeconds)}
             </p>
-            <p className="mt-1 flex items-center gap-1 text-sm text-slate-500 dark:text-slate-400">
-              <FiClock size={14} />
-              Target 1 hour · {progress}% complete
+            <p className="mt-1 flex items-center gap-1 text-xs text-slate-500">
+              <FiClock size={12} />
+              Target {targetMinutes} min · {progress}%
             </p>
           </div>
         </div>
-
-        <div className="flex flex-wrap gap-2">
-          {status === "idle" || status === "paused" ? (
-            <button
-              type="button"
-              className="btn-primary inline-flex items-center gap-2"
-              disabled={busy}
-              onClick={() => (status === "paused" ? onResume?.() : onStart?.())}
-            >
-              <FiPlay size={16} /> {status === "paused" ? "Resume" : "Start"}
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="btn-secondary inline-flex items-center gap-2"
-              disabled={busy}
-              onClick={handlePause}
-            >
-              <FiPause size={16} /> Pause
-            </button>
-          )}
-          <button
-            type="button"
-            className="btn-secondary inline-flex items-center gap-2"
-            disabled={busy || status === "completed"}
-            onClick={handleComplete}
-          >
-            <FiCheck size={16} /> Complete
-          </button>
-        </div>
       </div>
 
-      <div className="mt-5 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-white/10">
+      <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-white/10">
         <div
-          className="h-full rounded-full bg-linear-to-r from-emerald-500 to-teal-500 transition-all duration-500"
+          className="h-full rounded-full bg-slate-900 transition-all duration-500 dark:bg-slate-100"
           style={{ width: `${progress}%` }}
         />
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        {status === "idle" || status === "paused" ? (
+          <button
+            type="button"
+            className="btn-primary text-xs!"
+            disabled={busy}
+            onClick={() => (status === "paused" ? onResume?.() : onStart?.())}
+          >
+            <FiPlay size={14} /> {status === "paused" ? "Resume" : "Start"}
+          </button>
+        ) : (
+          <button type="button" className="btn-secondary text-xs!" disabled={busy} onClick={handlePause}>
+            <FiPause size={14} /> Pause
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn-secondary text-xs!"
+          disabled={busy || status === "completed"}
+          onClick={handleComplete}
+        >
+          <FiCheck size={14} /> Complete
+        </button>
       </div>
     </section>
   );
