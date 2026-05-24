@@ -3,6 +3,9 @@ import toast from "react-hot-toast";
 import { FiFlag, FiSend } from "react-icons/fi";
 import api from "../../api/client";
 
+const shell =
+  "rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 dark:border-white/10 dark:bg-[#1a1a1a]";
+
 const SundayMockDashboard = ({ mockItem, onSubmitted }) => {
   const [form, setForm] = useState({
     score: "",
@@ -34,7 +37,7 @@ const SundayMockDashboard = ({ mockItem, onSubmitted }) => {
         timeTakenMinutes: Number(form.timeTakenMinutes) || 0,
         weakSubjects,
       });
-      toast.success("Mock test logged — mission updated.");
+      toast.success("Mock test logged.");
       onSubmitted?.();
     } catch (error) {
       toast.error(error.response?.data?.message || "Could not save mock result");
@@ -44,14 +47,16 @@ const SundayMockDashboard = ({ mockItem, onSubmitted }) => {
   };
 
   return (
-    <section className="rounded-2xl border border-rose-500/30 bg-linear-to-br from-rose-950/30 to-[#141414] p-5 dark:border-rose-500/20">
-      <div className="flex items-center gap-2 text-rose-400">
+    <section className={`${shell} border-l-4 border-l-rose-500`}>
+      <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
         <FiFlag size={18} />
-        <span className="text-[10px] font-bold uppercase tracking-[0.25em]">Sunday mock test mission</span>
+        <span className="text-xs font-bold uppercase tracking-wide">Sunday mock test</span>
       </div>
-      <h3 className="font-display mt-3 text-lg font-semibold text-white">{mockItem.title}</h3>
-      <p className="mt-1 text-sm text-rose-200/70">
-        Complete the assigned PYQ mock, then log your performance below.
+      <h3 className="font-display mt-2 text-lg font-semibold text-slate-900 dark:text-white">
+        {mockItem.title}
+      </h3>
+      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+        Complete the assigned PYQ, then log your score below.
       </p>
       <form className="mt-4 grid gap-3 sm:grid-cols-2" onSubmit={handleSubmit}>
         {[
@@ -61,7 +66,7 @@ const SundayMockDashboard = ({ mockItem, onSubmitted }) => {
           ["correctAnswers", "Correct"],
           ["timeTakenMinutes", "Time (minutes)"],
         ].map(([key, label]) => (
-          <label key={key} className="block text-xs text-slate-400">
+          <label key={key} className="block text-xs font-medium text-slate-500">
             {label}
             <input
               className="input mt-1 w-full"
@@ -72,7 +77,7 @@ const SundayMockDashboard = ({ mockItem, onSubmitted }) => {
             />
           </label>
         ))}
-        <label className="block text-xs text-slate-400 sm:col-span-2">
+        <label className="block text-xs font-medium text-slate-500 sm:col-span-2">
           Weak subjects (comma-separated)
           <input
             className="input mt-1 w-full"

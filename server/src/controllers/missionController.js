@@ -19,6 +19,7 @@ import {
   buildDailyTargetSummary,
   syncMissionProgressFromSummary,
 } from "../services/missionSummaryService.js";
+import { getOrCreateAiBriefing } from "../services/aiBriefingService.js";
 
 const populateMissionDiscipline = async (userId, mission, reading) => {
   const streak = await calculateDisciplineStreak(userId);
@@ -55,11 +56,23 @@ export const getTodayMission = async (req, res) => {
     const streak = await calculateDisciplineStreak(userId);
     const readingStreak = await calculateReadingStreak(userId);
     const overview = await buildAnalyticsOverview(userId);
+    overview.streak = streak;
+    overview.readingStreak = readingStreak;
+
+    const aiBriefing = await getOrCreateAiBriefing({
+      userId,
+      userName: req.user?.name || "Cadet",
+      dailyTarget,
+      overview,
+      mission,
+      force: req.query.refreshBriefing === "1",
+    });
 
     res.json({
       mission: mission.toObject(),
       reading: reading.toObject(),
       dailyTarget,
+      aiBriefing,
       userName: req.user?.name || "Cadet",
       streak,
       readingStreak,
@@ -79,6 +92,34 @@ export const getTodayMission = async (req, res) => {
   } catch (error) {
     console.error("[mission.getToday]", error);
     res.status(500).json({ message: error.message || "Could not load today's mission" });
+  }
+};
+
+export const refreshAiBriefing = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const mission = await getOrCreateTodayMission(userId);
+    const dateKey = todayDateKey();
+    const reading =
+      (await ReadingSession.findOne({ userId, date: dateKey })) ||
+      (await ReadingSession.create({ userId, date: dateKey, targetMinutes: DEFAULT_READING_TARGET_MINUTES }));
+
+    await enrichMissionItems(mission);
+    const dailyTarget = buildDailyTargetSummary(mission, reading);
+    const overview = await buildAnalyticsOverview(userId);
+
+    const aiBriefing = await getOrCreateAiBriefing({
+      userId,
+      userName: req.user?.name || "Cadet",
+      dailyTarget,
+      overview,
+      mission,
+      force: true,
+    });
+
+    res.json({ aiBriefing, dailyTarget });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Could not refresh AI briefing" });
   }
 };
 

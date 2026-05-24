@@ -4,7 +4,7 @@ import MissionDashboard from "../components/mission/MissionDashboard";
 const MissionPage = () => (
   <Layout
     title="Today's Target"
-    subtitle="Daily mission command center — discipline, consistency, exam readiness"
+    subtitle="AI-powered daily plan — English, Maths, GS, and structured reading for CDS (II) 2026"
     showSearch={false}
   >
     <MissionDashboard />

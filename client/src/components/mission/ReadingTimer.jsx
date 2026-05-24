@@ -1,5 +1,8 @@
-import { FiBookOpen, FiClock, FiPause, FiPlay, FiCheck } from "react-icons/fi";
+import { FiBookOpen, FiCheck, FiClock, FiPause, FiPlay } from "react-icons/fi";
 import { useCallback, useEffect, useRef, useState } from "react";
+
+const shell =
+  "rounded-2xl border border-slate-200/90 bg-white p-5 sm:p-6 dark:border-white/10 dark:bg-[#1a1a1a]";
 
 const formatTimer = (totalSeconds) => {
   const s = Math.max(0, Math.floor(totalSeconds));
@@ -10,22 +13,13 @@ const formatTimer = (totalSeconds) => {
   return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
 };
 
-const ReadingTimer = ({
-  reading,
-  onStart,
-  onPause,
-  onResume,
-  onComplete,
-  onUpdateTarget,
-  busy = false,
-}) => {
+const ReadingTimer = ({ reading, onStart, onPause, onResume, onComplete, busy = false }) => {
   const baseSeconds = reading?.accumulatedSeconds || 0;
   const targetMinutes = reading?.targetMinutes || 60;
   const status = reading?.status || "idle";
 
   const [displaySeconds, setDisplaySeconds] = useState(baseSeconds);
   const tickRef = useRef(null);
-  const startedAtRef = useRef(null);
 
   useEffect(() => {
     setDisplaySeconds(reading?.accumulatedSeconds || 0);
@@ -37,9 +31,9 @@ const ReadingTimer = ({
       tickRef.current = null;
       return undefined;
     }
-    startedAtRef.current = Date.now();
+    const started = Date.now();
     tickRef.current = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - startedAtRef.current) / 1000);
+      const elapsed = Math.floor((Date.now() - started) / 1000);
       setDisplaySeconds(baseSeconds + elapsed);
     }, 1000);
     return () => {
@@ -60,26 +54,31 @@ const ReadingTimer = ({
   }, [status, displaySeconds, baseSeconds, onComplete]);
 
   return (
-    <div className="rounded-2xl border border-emerald-500/30 bg-linear-to-br from-emerald-950/20 via-[#0f1410] to-[#141414] p-5 text-white shadow-lg dark:border-emerald-500/20">
-      <div className="flex items-center gap-2 text-emerald-400">
-        <FiBookOpen size={18} />
-        <span className="text-[10px] font-bold uppercase tracking-[0.2em]">Reading mission</span>
-      </div>
-      <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="font-display text-4xl font-bold tabular-nums tracking-tight">
-            {formatTimer(displaySeconds)}
-          </p>
-      <p className="mt-2 flex items-center gap-1 text-sm text-emerald-200/70">
-        <FiClock size={14} />
-        Fixed target: 1 hour · {progress}% complete today
-      </p>
+    <section className={shell}>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-md">
+            <FiBookOpen size={20} />
+          </span>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-600 dark:text-emerald-400">
+              Reading session
+            </p>
+            <p className="font-display mt-1 text-3xl font-bold tabular-nums text-slate-900 dark:text-white">
+              {formatTimer(displaySeconds)}
+            </p>
+            <p className="mt-1 flex items-center gap-1 text-sm text-slate-500 dark:text-slate-400">
+              <FiClock size={14} />
+              Target 1 hour · {progress}% complete
+            </p>
+          </div>
         </div>
+
         <div className="flex flex-wrap gap-2">
           {status === "idle" || status === "paused" ? (
             <button
               type="button"
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-400 disabled:opacity-50"
+              className="btn-primary inline-flex items-center gap-2"
               disabled={busy}
               onClick={() => (status === "paused" ? onResume?.() : onStart?.())}
             >
@@ -88,7 +87,7 @@ const ReadingTimer = ({
           ) : (
             <button
               type="button"
-              className="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-semibold hover:bg-white/15 disabled:opacity-50"
+              className="btn-secondary inline-flex items-center gap-2"
               disabled={busy}
               onClick={handlePause}
             >
@@ -97,7 +96,7 @@ const ReadingTimer = ({
           )}
           <button
             type="button"
-            className="inline-flex items-center gap-2 rounded-xl border border-emerald-400/40 px-4 py-2.5 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
+            className="btn-secondary inline-flex items-center gap-2"
             disabled={busy || status === "completed"}
             onClick={handleComplete}
           >
@@ -105,25 +104,14 @@ const ReadingTimer = ({
           </button>
         </div>
       </div>
-      <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/10">
+
+      <div className="mt-5 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-white/10">
         <div
-          className="h-full rounded-full bg-linear-to-r from-emerald-400 to-teal-300 transition-all duration-500"
+          className="h-full rounded-full bg-linear-to-r from-emerald-500 to-teal-500 transition-all duration-500"
           style={{ width: `${progress}%` }}
         />
       </div>
-      <div className="mt-3 flex items-center gap-2 text-xs text-slate-400">
-        <label htmlFor="reading-target">Daily target (min)</label>
-        <input
-          id="reading-target"
-          type="number"
-          min={60}
-          max={60}
-          readOnly
-          className="input w-20 py-1! text-xs! opacity-70"
-          value={60}
-        />
-      </div>
-    </div>
+    </section>
   );
 };
 

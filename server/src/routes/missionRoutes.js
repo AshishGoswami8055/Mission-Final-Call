@@ -11,6 +11,7 @@ import {
   logSession,
   pauseReading,
   regenerateTodayMission,
+  refreshAiBriefing,
   resumeReading,
   startReading,
   submitMockTest,
@@ -23,6 +24,7 @@ router.use(protect);
 
 router.get("/today", getTodayMission);
 router.post("/today/regenerate", regenerateTodayMission);
+router.post("/ai-briefing/refresh", refreshAiBriefing);
 router.post("/items/complete", completeMissionItemHandler);
 
 router.get("/reading/today", getReadingToday);

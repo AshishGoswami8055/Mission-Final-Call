@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
-import { FiRefreshCw } from "react-icons/fi";
-import { useNavigate } from "react-router-dom";
+import { FiBarChart2, FiRefreshCw } from "react-icons/fi";
+import { Link, useNavigate } from "react-router-dom";
 import api from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
 import { courseExamDate, getDefaultCourseId } from "../../config/courses";
+import AiDailyBriefing from "./AiDailyBriefing";
 import TodaysTargetBoard from "./TodaysTargetBoard";
 import ReadingTimer from "./ReadingTimer";
-import StreakCard from "./StreakCard";
-import StudyAnalytics from "./StudyAnalytics";
 import SundayMockDashboard from "./SundayMockDashboard";
 import Loader from "../Loader";
+
+const statBox =
+  "rounded-xl border border-slate-200/80 bg-slate-50/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.03]";
 
 const getCountdown = () => {
   const exam = courseExamDate(getDefaultCourseId());
@@ -25,6 +27,7 @@ const MissionDashboard = () => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [refreshingAi, setRefreshingAi] = useState(false);
   const [completingSlot, setCompletingSlot] = useState(null);
   const [payload, setPayload] = useState(null);
 
@@ -47,7 +50,7 @@ const MissionDashboard = () => {
   const mission = payload?.mission;
   const reading = payload?.reading;
   const dailyTarget = payload?.dailyTarget;
-  const analytics = payload?.analytics || {};
+  const aiBriefing = payload?.aiBriefing;
 
   const mockItem = useMemo(
     () => (mission?.items || []).find((i) => i.slot === "mock_test"),
@@ -61,16 +64,31 @@ const MissionDashboard = () => {
         slot: target.slot,
         contentId: target.contentId,
       });
-      toast.success(`${target.label} marked complete.`);
+      toast.success("Marked complete.");
       await load();
     } catch (error) {
-      toast.error(error.response?.data?.message || "Could not update mission");
+      toast.error(error.response?.data?.message || "Could not update");
     } finally {
       setCompletingSlot(null);
     }
   };
 
-  const handleOpen = (href) => navigate(href);
+  const refreshAi = async () => {
+    setRefreshingAi(true);
+    try {
+      const { data } = await api.post("/mission/ai-briefing/refresh");
+      setPayload((prev) => ({
+        ...prev,
+        aiBriefing: data.aiBriefing,
+        dailyTarget: data.dailyTarget || prev?.dailyTarget,
+      }));
+      toast.success("AI study plan updated.");
+    } catch {
+      toast.error("Could not refresh AI briefing");
+    } finally {
+      setRefreshingAi(false);
+    }
+  };
 
   const readingActions = {
     onStart: async () => {
@@ -104,7 +122,7 @@ const MissionDashboard = () => {
       setBusy(true);
       try {
         await api.post("/mission/reading/complete", { elapsedSeconds });
-        toast.success("Reading session complete — 1 hour target updated.");
+        toast.success("Reading session logged.");
         await load();
       } catch (error) {
         toast.error(error.response?.data?.message || "Could not complete reading");
@@ -112,67 +130,82 @@ const MissionDashboard = () => {
         setBusy(false);
       }
     },
-    onUpdateTarget: async (targetMinutes) => {
-      if (targetMinutes !== 60) {
-        toast("Daily reading target is set to 1 hour for structured CDS prep.", { icon: "📖" });
-      }
-      try {
-        await api.put("/mission/reading/target", { targetMinutes: 60 });
-        await load();
-      } catch {
-        toast.error("Could not update reading target");
-      }
-    },
+    onUpdateTarget: async () => {},
   };
 
   if (loading && !payload) {
-    return <Loader label="Loading today's target…" />;
+    return <Loader label="Preparing your AI study plan…" />;
   }
 
   const daysLeft = payload?.examCountdownDays ?? getCountdown();
-  const displayName = payload?.userName || user?.name || "Ashish";
+  const displayName = payload?.userName || user?.name || "Cadet";
+  const progress = dailyTarget?.progressPercent ?? 0;
 
   return (
-    <div className="space-y-6">
-      <TodaysTargetBoard
-        userName={displayName}
-        dailyTarget={dailyTarget}
-        onLaunch={handleOpen}
-        onComplete={handleComplete}
-        onReadingFocus={() => {
-          document.getElementById("reading-timer-section")?.scrollIntoView({ behavior: "smooth" });
-        }}
-        completingSlot={completingSlot}
-      />
-
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-white px-4 py-3 dark:border-white/10 dark:bg-[#141414]">
-        <div className="flex flex-wrap gap-4 text-sm text-slate-600 dark:text-slate-400">
-          <span>
-            Exam in <strong className="text-rose-500">{daysLeft}</strong> days
-          </span>
-          <span>
-            Discipline streak <strong>{payload?.streak || 0}</strong> days
-          </span>
-          <span>
-            Score <strong>{analytics.disciplineScore || 0}</strong>/100
-          </span>
+    <div className="space-y-5 sm:space-y-6">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className={statBox}>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Exam countdown</p>
+          <p className="font-display mt-1 text-2xl font-bold tabular-nums text-rose-600 dark:text-rose-400">
+            {daysLeft} <span className="text-sm font-medium text-slate-500">days</span>
+          </p>
         </div>
+        <div className={statBox}>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Today&apos;s progress</p>
+          <p className="font-display mt-1 text-2xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400">
+            {progress}%
+          </p>
+        </div>
+        <div className={statBox}>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Discipline streak</p>
+          <p className="font-display mt-1 text-2xl font-bold tabular-nums text-slate-900 dark:text-white">
+            {payload?.streak || 0} <span className="text-sm font-medium text-slate-500">days</span>
+          </p>
+        </div>
+        <div className={statBox}>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Study goal</p>
+          <p className="font-display mt-1 text-2xl font-bold tabular-nums text-slate-900 dark:text-white">
+            {dailyTarget?.totalGoalLabel || "—"}
+          </p>
+        </div>
+      </div>
+
+      <AiDailyBriefing briefing={aiBriefing} onRefresh={refreshAi} refreshing={refreshingAi} />
+
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Link
+          to="/history/intelligence"
+          className="btn-secondary inline-flex items-center gap-2 text-xs!"
+        >
+          <FiBarChart2 size={14} /> Full analytics
+        </Link>
         <button
           type="button"
           className="btn-secondary inline-flex items-center gap-2 text-xs!"
           onClick={async () => {
             try {
               await api.post("/mission/today/regenerate");
-              toast.success("Today's 3 videos refreshed.");
-              load();
+              await refreshAi();
+              toast.success("Today's videos refreshed.");
             } catch {
-              toast.error("Could not regenerate");
+              toast.error("Could not refresh plan");
             }
           }}
         >
           <FiRefreshCw size={14} /> Refresh videos
         </button>
       </div>
+
+      <TodaysTargetBoard
+        userName={displayName}
+        dailyTarget={dailyTarget}
+        onLaunch={(href) => navigate(href)}
+        onComplete={handleComplete}
+        onReadingFocus={() => {
+          document.getElementById("reading-timer-section")?.scrollIntoView({ behavior: "smooth" });
+        }}
+        completingSlot={completingSlot}
+      />
 
       <div id="reading-timer-section">
         <ReadingTimer reading={reading} busy={busy} {...readingActions} />
@@ -181,14 +214,6 @@ const MissionDashboard = () => {
       {mockItem && !mockItem.completed && (
         <SundayMockDashboard mockItem={mockItem} onSubmitted={load} />
       )}
-
-      <StreakCard
-        streak={payload?.streak || 0}
-        readingStreak={payload?.readingStreak || 0}
-        disciplineScore={analytics.disciplineScore || mission?.disciplineScore || 0}
-      />
-
-      <StudyAnalytics analytics={payload?.analytics || {}} />
     </div>
   );
 };
