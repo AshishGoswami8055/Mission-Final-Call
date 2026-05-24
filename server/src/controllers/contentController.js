@@ -33,6 +33,15 @@ import {
 } from "../services/uploadProgressBus.js";
 import { prepareVideoForCloud } from "../services/videoCloudPrepService.js";
 import { migrateTelegramVideoContentToCloudinary } from "../services/telegramVideoImportService.js";
+import {
+  getPlaybackCacheStatus,
+  getPlaybackCacheStorageStats,
+  isCacheEligibleContent,
+  removePlaybackCache,
+  startPlaybackCacheDownload,
+  touchPlaybackCache,
+} from "../services/videoPlaybackCacheService.js";
+import { formatBytesLabel } from "../utils/contentPlayback.js";
 
 const isProductionMediaMode = () => process.env.NODE_ENV === "production";
 
@@ -723,6 +732,87 @@ export const cloudifyContent = async (req, res) => {
     if (uploadId) failProgress(uploadId, error.message || "Cloudify failed");
     console.error("[content.cloudify]", error);
     res.status(500).json({ message: error.message || "Could not upload video to Cloudinary." });
+  }
+};
+
+export const getPlaybackCacheStorage = async (_req, res) => {
+  try {
+    const storage = getPlaybackCacheStorageStats();
+    res.json({
+      ...storage,
+      usedLabel: formatBytesLabel(storage.usedBytes),
+      maxLabel: formatBytesLabel(storage.maxBytes),
+      freeLabel: formatBytesLabel(storage.freeBytes),
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Could not read cache storage" });
+  }
+};
+
+export const getContentPlaybackCache = async (req, res) => {
+  try {
+    const content = await Content.findById(req.params.id);
+    if (!content) return res.status(404).json({ message: "Content not found" });
+
+    const status = getPlaybackCacheStatus(content._id);
+    res.json({
+      ...status,
+      eligible: isCacheEligibleContent(content),
+      sizeLabel: status.sizeBytes ? formatBytesLabel(status.sizeBytes) : null,
+      storage: {
+        ...status.storage,
+        usedLabel: formatBytesLabel(status.storage.usedBytes),
+        maxLabel: formatBytesLabel(status.storage.maxBytes),
+        freeLabel: formatBytesLabel(status.storage.freeBytes),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Could not read playback cache" });
+  }
+};
+
+export const startContentPlaybackCache = async (req, res) => {
+  try {
+    const content = await Content.findById(req.params.id);
+    if (!content) return res.status(404).json({ message: "Content not found" });
+    if (!isCacheEligibleContent(content)) {
+      return res.status(400).json({
+        message: "This video type cannot be downloaded for local playback.",
+      });
+    }
+
+    const status = await startPlaybackCacheDownload(content._id);
+    res.json({
+      ...status,
+      eligible: true,
+      sizeLabel: status.sizeBytes ? formatBytesLabel(status.sizeBytes) : null,
+      storage: {
+        ...status.storage,
+        usedLabel: formatBytesLabel(status.storage.usedBytes),
+        maxLabel: formatBytesLabel(status.storage.maxBytes),
+        freeLabel: formatBytesLabel(status.storage.freeBytes),
+      },
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Could not start download" });
+  }
+};
+
+export const deleteContentPlaybackCache = async (req, res) => {
+  try {
+    removePlaybackCache(req.params.id);
+    const storage = getPlaybackCacheStorageStats();
+    res.json({
+      message: "Cached copy removed.",
+      storage: {
+        ...storage,
+        usedLabel: formatBytesLabel(storage.usedBytes),
+        maxLabel: formatBytesLabel(storage.maxBytes),
+        freeLabel: formatBytesLabel(storage.freeBytes),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Could not remove cache" });
   }
 };
 

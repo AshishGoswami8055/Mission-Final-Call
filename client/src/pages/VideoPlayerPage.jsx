@@ -28,9 +28,10 @@ import {
 import { Link, useParams } from "react-router-dom";
 import api from "../api/client";
 import StudyTracker from "../components/StudyTracker";
+import VideoPlaybackCachePanel from "../components/VideoPlaybackCachePanel";
 import { useStudy } from "../context/StudyContext";
 import { useTheme } from "../context/ThemeContext";
-import { getTelegramVideoUrl, isTelegramLinkVideo, isTelegramStreamContent, isYouTubeUrl, resolveContentSrc } from "../utils/media";
+import { getTelegramVideoUrl, isTelegramLinkVideo, isTelegramStreamContent, isYouTubeUrl, resolveContentSrc, toAbsoluteMediaUrl } from "../utils/media";
 import { downloadDataUrl, loadScreenshotNotes, saveScreenshotNotes } from "../utils/screenshotNotes";
 import { getYouTubeThumbnailDataUrl } from "../utils/youtubeThumbnail";
 
@@ -185,7 +186,9 @@ const VideoPlayerPage = () => {
   const [capturePending, setCapturePending] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [screenshotNotes, setScreenshotNotes] = useState([]);
+  const [cachedPlayUrl, setCachedPlayUrl] = useState(null);
   const [isScrubbing, setIsScrubbing] = useState(false);
+  const usingCacheRef = useRef(false);
   const videoRef = useRef(null);
   const playerRef = useRef(null);
   const hideTimerRef = useRef(null);
@@ -207,7 +210,9 @@ const VideoPlayerPage = () => {
   const telegramLink = item ? getTelegramVideoUrl(item) : "";
   const rawSrc = item ? resolveContentSrc(item) : "";
   const isYoutube = !isTelegramLink && !isTelegramStream && isYouTubeUrl(rawSrc);
+  const canCachePlayback = Boolean(item && (isTelegramStream || item.sourceType === "cloudinary"));
   const src = isTelegramLink || isYoutube ? "" : rawSrc;
+  const playbackSrc = cachedPlayUrl ? toAbsoluteMediaUrl(cachedPlayUrl) : src;
   const canUseAiAsk = false;
   const showAskPanel = false;
 
@@ -221,7 +226,7 @@ const VideoPlayerPage = () => {
 
   const hintedDuration = Number(item?.duration) || 0;
   const hasVideoDuration = duration > 0 && Number.isFinite(duration);
-  const showInitialLoader = Boolean(src) && !hasVideoDuration && !isTelegramStream;
+  const showInitialLoader = Boolean(playbackSrc) && !hasVideoDuration && !isTelegramStream && !cachedPlayUrl;
 
   const applyVideoDuration = useCallback((video) => {
     const dur = Number(video?.duration);
@@ -254,16 +259,39 @@ const VideoPlayerPage = () => {
   }, []);
 
   useEffect(() => {
-    if (!src) {
+    if (!playbackSrc) {
       setBufferPercent(0);
       return;
     }
     setBufferPercent(0);
     setLoadElapsedSec(0);
-    setDuration(isTelegramStream && hintedDuration > 0 ? hintedDuration : 0);
+    setDuration(isTelegramStream && hintedDuration > 0 && !cachedPlayUrl ? hintedDuration : 0);
     setCurrentTime(0);
     loadStartedAtRef.current = Date.now();
-  }, [src, id, isTelegramStream, hintedDuration]);
+  }, [playbackSrc, id, isTelegramStream, hintedDuration, cachedPlayUrl]);
+
+  useEffect(() => {
+    setCachedPlayUrl(null);
+    usingCacheRef.current = false;
+  }, [id]);
+
+  const handlePlaybackEnded = useCallback(async () => {
+    setIsPlaying(false);
+    setShowControls(true);
+    if (id && videoRef.current) {
+      saveVideoPosition(id, videoRef.current.currentTime);
+    }
+    if (usingCacheRef.current && id) {
+      try {
+        await api.delete(`/contents/${id}/playback-cache`);
+        setCachedPlayUrl(null);
+        usingCacheRef.current = false;
+        toast.success("Cached copy removed after watching.");
+      } catch {
+        /* non-blocking */
+      }
+    }
+  }, [id]);
 
   useEffect(() => {
     if (!showInitialLoader) {
@@ -924,6 +952,15 @@ const VideoPlayerPage = () => {
               <p className={`text-xs sm:text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
                 {item.subjectId?.name} / {item.chapterId?.chapterName}
               </p>
+              <VideoPlaybackCachePanel
+                contentId={id}
+                eligible={canCachePlayback}
+                isDark={isDark}
+                onPlayUrlChange={setCachedPlayUrl}
+                onUsingCacheChange={(value) => {
+                  usingCacheRef.current = value;
+                }}
+              />
               <div className="mt-4">
                 <div className="rounded-xl bg-black overflow-visible">
                 {isTelegramLink ? (
@@ -993,10 +1030,10 @@ const VideoPlayerPage = () => {
                   >
                     <div className="overflow-hidden rounded-xl relative">
                     <video
-                      key={src}
+                      key={playbackSrc}
                       ref={videoRef}
                       className="aspect-video w-full"
-                      src={src}
+                      src={playbackSrc}
                       controls={false}
                       preload="auto"
                       playsInline
@@ -1068,6 +1105,7 @@ const VideoPlayerPage = () => {
                           saveVideoPosition(id, videoRef.current.currentTime);
                         }
                       }}
+                      onEnded={handlePlaybackEnded}
                       onClick={togglePlay}
                       onDoubleClick={toggleFullscreen}
                     >
