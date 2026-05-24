@@ -50,11 +50,14 @@ export const fetchSubjectSmoothPlaybackStatus = async (subjectId) => {
   return data;
 };
 
-export const pollSubjectSmoothPlayback = async (subjectId, { onProgress, intervalMs = 2000 } = {}) => {
+export const pollSubjectSmoothPlayback = async (subjectId, { onProgress, intervalMs = 3000 } = {}) => {
   while (true) {
     const status = await fetchSubjectSmoothPlaybackStatus(subjectId);
     onProgress?.(status);
-    if (status.status === "done" || status.status === "error" || status.status === "idle") {
+    if (status.status === "done" || status.status === "error") {
+      return status;
+    }
+    if (status.status === "idle" && status.total === 0) {
       return status;
     }
     await sleep(intervalMs);

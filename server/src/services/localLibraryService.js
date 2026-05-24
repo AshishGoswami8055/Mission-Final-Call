@@ -28,6 +28,8 @@ const getWarnRatio = () => {
 
 const metaPathFor = (contentId) => path.join(LOCAL_LIBRARY_DIR, `${contentId}.meta.json`);
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const safeExt = (fileName = "", mimeType = "") => {
   const fromName = path.extname(String(fileName)).toLowerCase();
   if (fromName && fromName.length <= 6) return fromName;
@@ -222,15 +224,15 @@ const runDownloadJob = async (content) => {
   };
 
   try {
-    if (isTelegramStreamContent(content)) {
+    if (content.sourceType === "cloudinary" && content.videoUrl) {
+      await downloadRemoteUrlToFile(content.videoUrl, destPath, onProgress);
+    } else if (isTelegramStreamContent(content)) {
       await downloadTelegramMediaToFile({
         channelId: content.telegramChannelId,
         messageId: content.telegramMessageId,
         destPath,
         onProgress,
       });
-    } else if (content.sourceType === "cloudinary" && content.videoUrl) {
-      await downloadRemoteUrlToFile(content.videoUrl, destPath, onProgress);
     } else if (content.sourceType === "upload" && content.filePath) {
       const source = path.join(uploadRoot, String(content.filePath).replace(/^\/uploads\/?/, ""));
       if (!fs.existsSync(source)) throw new Error("Source video file not found.");
@@ -377,8 +379,10 @@ const runSubjectBulkJob = async (subjectId, videos) => {
       item.status = "error";
       item.error = error.message || "Download failed";
       job.failed += 1;
+      console.error(`[local-library] subject ${key} video ${content._id} failed:`, error.message);
     } finally {
       clearInterval(progressInterval);
+      await sleep(3000);
     }
   }
 
@@ -395,7 +399,9 @@ export const startSubjectLocalLibraryDownload = async (subjectId, videos) => {
 
   const key = String(subjectId);
   const running = subjectBulkJobs.get(key);
-  if (running?.status === "downloading") return getSubjectLocalLibraryStatus(subjectId);
+  if (running?.status === "downloading" || running?.status === "queued") {
+    return getSubjectLocalLibraryStatus(subjectId);
+  }
 
   const job = {
     subjectId: key,

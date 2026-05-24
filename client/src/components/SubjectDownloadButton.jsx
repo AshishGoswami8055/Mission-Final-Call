@@ -32,7 +32,7 @@ const SubjectDownloadButton = ({
     pollRef.current = true;
     try {
       await startSubjectSmoothPlayback(subject._id);
-      toast.success(`Saving all ${videoCount} videos to your PC library…`);
+      toast.success(`Saving all ${videoCount} videos to your PC library… Close any open video tabs first.`);
 
       const finalStatus = await pollSubjectSmoothPlayback(subject._id, {
         onProgress: (status) => {
@@ -42,8 +42,13 @@ const SubjectDownloadButton = ({
       });
 
       if (finalStatus.failed > 0) {
+        const firstError = finalStatus.items?.find((item) => item.error)?.error;
+        const authHint = firstError?.includes("AUTH_KEY_DUPLICATED")
+          ? " Close all video tabs, restart the server, then try again."
+          : "";
         toast.error(
-          `Saved ${finalStatus.completed - finalStatus.skipped}/${finalStatus.total} videos. ${finalStatus.failed} failed.`
+          `Saved ${finalStatus.completed - finalStatus.skipped}/${finalStatus.total} videos. ${finalStatus.failed} failed.${firstError ? ` (${firstError})` : ""}${authHint}`,
+          { duration: 8000 }
         );
       } else {
         toast.success(

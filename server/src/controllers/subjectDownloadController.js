@@ -7,7 +7,8 @@ import {
   getSubjectDownloadPack,
   getSubjectLibraryVideos,
 } from "../services/subjectDownloadService.js";
-import { formatBytesLabel } from "../utils/contentPlayback.js";
+import { getActiveSession } from "../services/telegramService.js";
+import { formatBytesLabel, isTelegramStreamContent } from "../utils/contentPlayback.js";
 
 const assertLocalLibrary = (_req, res, next) => {
   if (!isLocalLibraryEnabled()) {
@@ -67,6 +68,16 @@ export const startSubjectLocalLibraryHandler = async (req, res) => {
     if (!pack) return res.status(404).json({ message: "Subject not found" });
     if (!pack.eligibleCount) {
       return res.status(400).json({ message: "No downloadable videos in this subject." });
+    }
+
+    const needsTelegram = pack.videos.some((video) => isTelegramStreamContent(video));
+    if (needsTelegram) {
+      const session = await getActiveSession();
+      if (!session?.stringSession) {
+        return res.status(400).json({
+          message: "Log in to Telegram first (Telegram settings in the app) before downloading this subject.",
+        });
+      }
     }
 
     const status = await startSubjectLocalLibraryDownload(req.params.id, pack.videos);

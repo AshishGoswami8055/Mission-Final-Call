@@ -12,7 +12,38 @@ const bigInt = require("big-integer");
 const pendingLogins = new Map();
 
 let activeClient = null;
-let activeClientPromise = null;
+let telegramOpChain = Promise.resolve();
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const telegramErrorText = (error) =>
+  String(error?.errorMessage || error?.message || error || "");
+
+const isAuthKeyDuplicated = (error) =>
+  telegramErrorText(error).includes("AUTH_KEY_DUPLICATED");
+
+const isRetryableTelegramError = (error) => {
+  const message = telegramErrorText(error).toLowerCase();
+  return (
+    isAuthKeyDuplicated(error) ||
+    message.includes("not connected") ||
+    message.includes("connection closed") ||
+    message.includes("timeout") ||
+    message.includes("network") ||
+    message.includes("econnreset") ||
+    message.includes("socket")
+  );
+};
+
+/** Serializes all GramJS work — only one Telegram operation at a time per process. */
+export const withTelegramLock = (task) => {
+  const run = telegramOpChain.then(() => task(), () => task());
+  telegramOpChain = run.catch(() => {});
+  return run;
+};
+
+/** @deprecated use withTelegramLock */
+export const withTelegramDownloadLock = withTelegramLock;
 
 const getApiCredentials = () => {
   const apiId = Number(process.env.TELEGRAM_API_ID);
@@ -29,6 +60,7 @@ const createClient = (stringSession = "") => {
   const { apiId, apiHash } = getApiCredentials();
   return new TelegramClient(new StringSession(stringSession), apiId, apiHash, {
     connectionRetries: 5,
+    autoReconnect: false,
   });
 };
 
@@ -44,45 +76,58 @@ const disconnectClient = async (client) => {
 export const getActiveSession = async () =>
   TelegramSession.findOne({ isActive: true }).sort({ updatedAt: -1 });
 
-export const disconnectActiveClient = async () => {
-  if (activeClient) {
-    await disconnectClient(activeClient);
-    activeClient = null;
-  }
-  activeClientPromise = null;
-};
+export const disconnectActiveClient = async () =>
+  withTelegramLock(async () => {
+    if (activeClient) {
+      await disconnectClient(activeClient);
+      activeClient = null;
+      await sleep(3000);
+    }
+  });
 
-export const getTelegramClient = async () => {
+/** Internal: returns the single shared client (must run inside withTelegramLock). */
+const ensureTelegramClient = async () => {
   if (activeClient?.connected) return activeClient;
-  if (activeClientPromise) return activeClientPromise;
 
-  activeClientPromise = (async () => {
-    const session = await getActiveSession();
-    if (!session?.stringSession) {
-      throw new Error("No active Telegram session. Log in first.");
+  if (activeClient) {
+    try {
+      if (!activeClient.connected) {
+        await activeClient.connect();
+      }
+      if (await activeClient.isUserAuthorized()) {
+        return activeClient;
+      }
+    } catch (error) {
+      console.warn("[telegram] reconnect failed:", telegramErrorText(error));
+      await disconnectClient(activeClient);
+      activeClient = null;
+      await sleep(5000);
     }
-
-    const client = createClient(session.stringSession);
-    await client.connect();
-    if (!(await client.isUserAuthorized())) {
-      await disconnectClient(client);
-      throw new Error("Telegram session expired. Log in again.");
-    }
-
-    activeClient = client;
-    return client;
-  })();
-
-  try {
-    return await activeClientPromise;
-  } finally {
-    activeClientPromise = null;
   }
+
+  const session = await getActiveSession();
+  if (!session?.stringSession) {
+    throw new Error("No active Telegram session. Log in first.");
+  }
+
+  const client = createClient(session.stringSession);
+  await client.connect();
+  if (!(await client.isUserAuthorized())) {
+    await disconnectClient(client);
+    throw new Error("Telegram session expired. Log in again.");
+  }
+
+  activeClient = client;
+  return client;
 };
+
+export const getTelegramClient = async () => withTelegramLock(() => ensureTelegramClient());
 
 export const startTelegramLogin = async (phoneRaw) => {
   const phone = normalizePhone(phoneRaw);
   if (!phone) throw new Error("Phone number is required.");
+
+  await disconnectActiveClient();
 
   const existing = pendingLogins.get(phone);
   if (existing?.client) {
@@ -627,7 +672,7 @@ export const fetchAllChannelMediaEnriched = async ({ channelId, maxMessages = 30
 };
 
 export const getTelegramMessageMedia = async ({ channelId, messageId, topicId = null }) => {
-  const client = await getTelegramClient();
+  const client = await ensureTelegramClient();
   const entity = await client.getEntity(channelId);
   const messages = await client.getMessages(entity, { ids: Number(messageId) });
   const message = Array.isArray(messages) ? messages[0] : messages;
@@ -659,8 +704,7 @@ const writeWithBackpressure = (writable, chunk) =>
     writable.once("error", reject);
   });
 
-/** Stream a Telegram document/video to disk (handles large files without loading into RAM). */
-export const downloadTelegramMediaToFile = async ({
+const downloadTelegramMediaToFileOnce = async ({
   channelId,
   messageId,
   destPath,
@@ -718,6 +762,28 @@ export const downloadTelegramMediaToFile = async ({
   return { size: bytesLoaded, fileName: meta.fileName, mediaType: meta.mediaType };
 };
 
+/** Stream a Telegram document/video to disk (handles large files without loading into RAM). */
+export const downloadTelegramMediaToFile = async (params) =>
+  withTelegramLock(async () => {
+    let lastError = null;
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      try {
+        return await downloadTelegramMediaToFileOnce(params);
+      } catch (error) {
+        lastError = error;
+        if (!isRetryableTelegramError(error) || attempt === 5) throw error;
+        const waitMs = isAuthKeyDuplicated(error) ? 10000 + attempt * 5000 : 2500 * attempt;
+        console.warn(
+          `[telegram-download] retry ${attempt}/5 for message ${params.messageId}:`,
+          telegramErrorText(error),
+          `(wait ${waitMs}ms)`
+        );
+        await sleep(waitMs);
+      }
+    }
+    throw lastError || new Error("Failed to download Telegram media.");
+  });
+
 export const downloadTelegramDocumentToFile = async (params) => {
   const result = await downloadTelegramMediaToFile(params);
   if (result.mediaType !== "pdf") {
@@ -752,7 +818,8 @@ const parseRangeHeader = (rangeHeader, totalSize) => {
   return { start, end, partial: true };
 };
 
-export const streamTelegramMedia = async ({ channelId, messageId, req, res, asAttachment = false }) => {
+export const streamTelegramMedia = async ({ channelId, messageId, req, res, asAttachment = false }) =>
+  withTelegramLock(async () => {
   const { client, message, meta } = await getTelegramMessageMedia({ channelId, messageId });
   const totalSize = meta.size || 0;
 
@@ -824,4 +891,4 @@ export const streamTelegramMedia = async ({ channelId, messageId, req, res, asAt
   }
 
   if (!res.writableEnded) res.end();
-};
+  });
