@@ -558,7 +558,11 @@ const TelegramImportPage = () => {
                           disabled={busy || !programmeId}
                           onClick={() => handleAddSubjects()}
                         >
-                          <FiUploadCloud size={14} />
+                          {busy ? (
+                            <FiLoader size={14} className="animate-spin" />
+                          ) : (
+                            <FiUploadCloud size={14} />
+                          )}
                           Add to course ({addableSelectedCount})
                         </button>
                       )}
@@ -586,6 +590,7 @@ const TelegramImportPage = () => {
                       disabled={busy}
                       onClick={handleClearCourse}
                     >
+                      {busy ? <FiLoader size={12} className="inline animate-spin" /> : null}{" "}
                       Remove all subjects from this batch
                     </button>
                   )}
@@ -709,7 +714,12 @@ const TelegramImportPage = () => {
                                 disabled={busy || !programmeId}
                                 onClick={() => handleDownloadNew([activeTopic.id])}
                               >
-                                <FiRefreshCw size={12} /> Download {activeTopic.newCount} new
+                                {busy ? (
+                                  <FiLoader size={12} className="animate-spin" />
+                                ) : (
+                                  <FiRefreshCw size={12} />
+                                )}{" "}
+                                Download {activeTopic.newCount} new
                               </button>
                             )}
                             {activeTopic.importedCount === 0 && (
@@ -719,7 +729,12 @@ const TelegramImportPage = () => {
                                 disabled={busy || !programmeId}
                                 onClick={() => handleAddSubjects([activeTopic.id])}
                               >
-                                <FiUploadCloud size={12} /> Add to course
+                                {busy ? (
+                                  <FiLoader size={12} className="animate-spin" />
+                                ) : (
+                                  <FiUploadCloud size={12} />
+                                )}{" "}
+                                Add to course
                               </button>
                             )}
                           </div>

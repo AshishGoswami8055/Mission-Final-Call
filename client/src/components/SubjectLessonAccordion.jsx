@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { FiChevronDown, FiEdit2, FiFileText, FiPlayCircle, FiTrash2, FiVideo } from "react-icons/fi";
+import { FiChevronDown, FiEdit2, FiFileText, FiLoader, FiPlayCircle, FiTrash2, FiVideo } from "react-icons/fi";
 import { Link } from "react-router-dom";
 import { isTelegramLinkVideo } from "../utils/media";
 
@@ -22,7 +22,7 @@ const sortContents = (items, chapterOrder) => {
   });
 };
 
-const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent, onRenameContent }) => {
+const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent, onRenameContent, deletingContentId }) => {
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState("");
   const [savingRename, setSavingRename] = useState(false);
@@ -116,7 +116,7 @@ const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent, onRena
                       disabled={savingRename || !renameValue.trim()}
                       onClick={(event) => saveRename(item, event)}
                     >
-                      Save
+                      {savingRename ? <FiLoader size={12} className="animate-spin" /> : "Save"}
                     </button>
                     <button
                       type="button"
@@ -153,13 +153,18 @@ const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent, onRena
                 <button
                   type="button"
                   aria-label={`Delete ${item.title}`}
+                  disabled={deletingContentId === item._id}
                   className="shrink-0 rounded-lg p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/30"
                   onClick={(e) => {
                     e.stopPropagation();
                     onDeleteContent(item);
                   }}
                 >
-                  <FiTrash2 size={15} />
+                  {deletingContentId === item._id ? (
+                    <FiLoader size={15} className="animate-spin" />
+                  ) : (
+                    <FiTrash2 size={15} />
+                  )}
                 </button>
               )}
               <FiChevronDown
@@ -197,7 +202,13 @@ const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent, onRena
   );
 };
 
-const SubjectLessonAccordion = ({ contents = [], chapters = [], onDeleteContent, onRenameContent }) => {
+const SubjectLessonAccordion = ({
+  contents = [],
+  chapters = [],
+  onDeleteContent,
+  onRenameContent,
+  deletingContentId = null,
+}) => {
   const [expandedId, setExpandedId] = useState(null);
   const [activeTab, setActiveTab] = useState("videos");
 
@@ -275,6 +286,7 @@ const SubjectLessonAccordion = ({ contents = [], chapters = [], onDeleteContent,
           onToggle={setExpandedId}
           onDeleteContent={onDeleteContent}
           onRenameContent={onRenameContent}
+          deletingContentId={deletingContentId}
         />
       ) : (
         <LessonList
@@ -284,6 +296,7 @@ const SubjectLessonAccordion = ({ contents = [], chapters = [], onDeleteContent,
           onToggle={setExpandedId}
           onDeleteContent={onDeleteContent}
           onRenameContent={onRenameContent}
+          deletingContentId={deletingContentId}
         />
       )}
     </div>

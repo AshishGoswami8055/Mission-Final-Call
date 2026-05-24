@@ -131,6 +131,10 @@ const DashboardPage = () => {
   const [updatesLoading, setUpdatesLoading] = useState(false);
   const [updatingSubjectId, setUpdatingSubjectId] = useState("");
   const [batchUpdating, setBatchUpdating] = useState(false);
+  const [renamingSubjectId, setRenamingSubjectId] = useState("");
+  const [deletingSubjectId, setDeletingSubjectId] = useState("");
+  const [deletingContentId, setDeletingContentId] = useState("");
+  const [clearingCourse, setClearingCourse] = useState(false);
   const [updateProgress, setUpdateProgress] = useState(null);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const mobileActionsRef = useRef(null);
@@ -651,23 +655,58 @@ const DashboardPage = () => {
     ) {
       return;
     }
+    setClearingCourse(true);
+    setUpdateProgress({
+      active: true,
+      phase: "deleting",
+      percent: 15,
+      message: "Clearing course…",
+    });
     try {
       const { data } = await api.post(`/programmes/${selectedProgrammeId}/clear-course`);
+      setUpdateProgress({
+        active: true,
+        phase: "done",
+        percent: 100,
+        message: `Cleared ${data.deletedSubjects || count} subject(s)`,
+      });
       setActiveCourseSubjectId("");
       await refreshAll();
       toast.success(
         `Cleared ${data.deletedSubjects || count} subject(s) · ${data.deletedContents || 0} lesson(s) removed`
       );
+      setTimeout(() => setUpdateProgress(null), 900);
     } catch (error) {
+      setUpdateProgress({
+        active: true,
+        phase: "error",
+        percent: 0,
+        message: error.response?.data?.message || "Could not clear course",
+      });
       toast.error(error.response?.data?.message || "Could not clear course");
+    } finally {
+      setClearingCourse(false);
     }
   };
 
   const handleDeleteSubjectById = async (subject) => {
     if (!subject?._id) return;
     if (!window.confirm(`Delete "${subject.name}" and all its lessons?`)) return;
+    setDeletingSubjectId(subject._id);
+    setUpdateProgress({
+      active: true,
+      phase: "deleting",
+      percent: 20,
+      message: `Deleting ${subject.name}…`,
+    });
     try {
       await api.delete(`/subjects/${subject._id}`);
+      setUpdateProgress({
+        active: true,
+        phase: "done",
+        percent: 100,
+        message: "Subject deleted",
+      });
       if (activeCourseSubjectId === subject._id) setActiveCourseSubjectId("");
       if (selectedSubjectId === subject._id) {
         setSelectedSubjectId("");
@@ -675,15 +714,46 @@ const DashboardPage = () => {
       }
       await refreshAll();
       toast.success("Subject deleted");
+      setTimeout(() => setUpdateProgress(null), 900);
     } catch (error) {
+      setUpdateProgress({
+        active: true,
+        phase: "error",
+        percent: 0,
+        message: error.response?.data?.message || "Delete failed",
+      });
       toast.error(error.response?.data?.message || "Delete failed");
+    } finally {
+      setDeletingSubjectId("");
     }
   };
 
   const handleDeleteContentItem = async (item) => {
     if (!item?._id) return;
     if (!window.confirm(`Delete "${item.title}"?`)) return;
-    await handleDeleteContent(item._id);
+    setDeletingContentId(item._id);
+    try {
+      await handleDeleteContent(item._id);
+    } finally {
+      setDeletingContentId("");
+    }
+  };
+
+  const handleRenameSubject = async (subject, name) => {
+    if (!subject?._id) return;
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === subject.name) return;
+    setRenamingSubjectId(subject._id);
+    try {
+      await api.put(`/subjects/${subject._id}`, { name: trimmed });
+      await Promise.all([fetchSubjects(), fetchCourseContents(), fetchChapterStats()]);
+      toast.success("Subject renamed");
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Could not rename subject");
+      throw error;
+    } finally {
+      setRenamingSubjectId("");
+    }
   };
 
   const handleRenameContentItem = async (item, title) => {
@@ -1204,6 +1274,7 @@ const DashboardPage = () => {
             onDeleteSubject={handleDeleteSubjectById}
             onDeleteContent={handleDeleteContentItem}
             onRenameContent={handleRenameContentItem}
+            onRenameSubject={handleRenameSubject}
             onClearCourse={handleClearCourse}
             subjectUpdates={enrichedSubjectUpdates}
             updatesLoading={updatesLoading}
@@ -1212,6 +1283,10 @@ const DashboardPage = () => {
             onUpdateSubject={handleUpdateSubject}
             updatingSubjectId={updatingSubjectId}
             batchUpdating={batchUpdating}
+            renamingSubjectId={renamingSubjectId}
+            deletingSubjectId={deletingSubjectId}
+            deletingContentId={deletingContentId}
+            clearingCourse={clearingCourse}
           />
         )}
 

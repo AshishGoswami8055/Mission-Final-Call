@@ -26,6 +26,8 @@ const OperationProgressOverlay = ({ progress, onDismiss }) => {
     !isError &&
     (progress.phase === "importing" ||
       progress.phase === "syncing" ||
+      progress.phase === "deleting" ||
+      progress.phase === "cleaning" ||
       progress.phase === "telegram-download" ||
       progress.phase === "uploading" ||
       progress.phase === "finalizing");

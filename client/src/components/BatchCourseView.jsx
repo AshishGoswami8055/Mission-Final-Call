@@ -1,5 +1,15 @@
 import { useMemo, useState } from "react";
-import { FiArrowLeft, FiGrid, FiList, FiRefreshCw, FiSearch, FiTrash2, FiUploadCloud } from "react-icons/fi";
+import {
+  FiArrowLeft,
+  FiEdit2,
+  FiGrid,
+  FiList,
+  FiLoader,
+  FiRefreshCw,
+  FiSearch,
+  FiTrash2,
+  FiUploadCloud,
+} from "react-icons/fi";
 import SubjectGridCard from "./SubjectGridCard";
 import SubjectListRow from "./SubjectListRow";
 import SubjectLessonAccordion from "./SubjectLessonAccordion";
@@ -17,6 +27,7 @@ const BatchCourseView = ({
   onDeleteSubject,
   onDeleteContent,
   onRenameContent,
+  onRenameSubject,
   onClearCourse,
   subjectUpdates = {},
   updatesLoading = false,
@@ -25,10 +36,16 @@ const BatchCourseView = ({
   onUpdateSubject,
   updatingSubjectId = null,
   batchUpdating = false,
+  renamingSubjectId = null,
+  deletingSubjectId = null,
+  deletingContentId = null,
+  clearingCourse = false,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState("list");
   const [filterTab, setFilterTab] = useState("all");
+  const [editingSubjectName, setEditingSubjectName] = useState(false);
+  const [subjectRenameValue, setSubjectRenameValue] = useState("");
 
   const sortedSubjects = useMemo(() => {
     return [...subjects].sort((a, b) => {
@@ -101,6 +118,36 @@ const BatchCourseView = ({
     (c) => String(c.subjectId?._id || c.subjectId) === String(activeSubjectId)
   );
 
+  const subjectDetailBusy =
+    updatingSubjectId === activeSubjectId ||
+    renamingSubjectId === activeSubjectId ||
+    deletingSubjectId === activeSubjectId;
+
+  const startSubjectDetailRename = () => {
+    setEditingSubjectName(true);
+    setSubjectRenameValue(activeSubject?.name || "");
+  };
+
+  const cancelSubjectDetailRename = () => {
+    setEditingSubjectName(false);
+    setSubjectRenameValue("");
+  };
+
+  const saveSubjectDetailRename = async () => {
+    const nextName = subjectRenameValue.trim();
+    if (!nextName || nextName === activeSubject?.name) {
+      cancelSubjectDetailRename();
+      return;
+    }
+    if (!onRenameSubject || !activeSubject) return;
+    try {
+      await onRenameSubject(activeSubject, nextName);
+      cancelSubjectDetailRename();
+    } catch {
+      /* parent shows toast */
+    }
+  };
+
   if (activeSubjectId && activeSubject) {
     return (
       <section className="space-y-4">
@@ -109,13 +156,66 @@ const BatchCourseView = ({
             <FiArrowLeft size={14} /> Back to subjects
           </button>
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
+            <div className="min-w-0 flex-1">
               <p className="text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Home / {batchName} / {activeSubject.name}
               </p>
-              <h2 className="font-display mt-1 text-2xl font-bold text-slate-900 dark:text-slate-50 sm:text-3xl">
-                {activeSubject.name}
-              </h2>
+              {editingSubjectName ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <input
+                    className="input min-w-0 flex-1 py-2 text-lg font-bold"
+                    value={subjectRenameValue}
+                    onChange={(event) => setSubjectRenameValue(event.target.value)}
+                    autoFocus
+                    disabled={renamingSubjectId === activeSubjectId}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") saveSubjectDetailRename();
+                      if (event.key === "Escape") cancelSubjectDetailRename();
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn-primary text-sm"
+                    disabled={renamingSubjectId === activeSubjectId || !subjectRenameValue.trim()}
+                    onClick={saveSubjectDetailRename}
+                  >
+                    {renamingSubjectId === activeSubjectId ? (
+                      <FiLoader size={14} className="animate-spin" />
+                    ) : (
+                      "Save"
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary text-sm"
+                    disabled={renamingSubjectId === activeSubjectId}
+                    onClick={cancelSubjectDetailRename}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <h2 className="font-display text-2xl font-bold text-slate-900 dark:text-slate-50 sm:text-3xl">
+                    {activeSubject.name}
+                  </h2>
+                  {onRenameSubject && (
+                    <button
+                      type="button"
+                      className="btn-ghost px-2 py-1.5 text-sm"
+                      disabled={subjectDetailBusy}
+                      title="Rename subject"
+                      onClick={startSubjectDetailRename}
+                    >
+                      {renamingSubjectId === activeSubjectId ? (
+                        <FiLoader size={14} className="animate-spin" />
+                      ) : (
+                        <FiEdit2 size={14} />
+                      )}
+                    </button>
+                  )}
+                </div>
+              )}
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                 {subjectContents.filter((c) => c.type === "video").length} videos ·{" "}
                 {subjectContents.filter((c) => c.type === "pdf").length} PDFs
@@ -130,13 +230,14 @@ const BatchCourseView = ({
                       ? "btn-primary text-sm"
                       : "btn-secondary text-sm"
                   }
-                  disabled={updatingSubjectId === activeSubjectId}
+                  disabled={subjectDetailBusy}
                   onClick={() => onUpdateSubject(activeSubject)}
                 >
-                  <FiRefreshCw
-                    size={14}
-                    className={updatingSubjectId === activeSubjectId ? "animate-spin" : ""}
-                  />
+                  {updatingSubjectId === activeSubjectId ? (
+                    <FiLoader size={14} className="animate-spin" />
+                  ) : (
+                    <FiRefreshCw size={14} />
+                  )}
                   Update subject
                   {subjectUpdates[String(activeSubjectId)]?.newCount
                     ? ` (${subjectUpdates[String(activeSubjectId)].newCount} new)`
@@ -147,9 +248,15 @@ const BatchCourseView = ({
                 <button
                   type="button"
                   className="btn-ghost text-sm text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/30"
+                  disabled={subjectDetailBusy}
                   onClick={() => onDeleteSubject(activeSubject)}
                 >
-                  <FiTrash2 size={14} /> Delete subject
+                  {deletingSubjectId === activeSubjectId ? (
+                    <FiLoader size={14} className="animate-spin" />
+                  ) : (
+                    <FiTrash2 size={14} />
+                  )}{" "}
+                  Delete subject
                 </button>
               )}
             </div>
@@ -160,6 +267,7 @@ const BatchCourseView = ({
           chapters={subjectChapters}
           onDeleteContent={onDeleteContent}
           onRenameContent={onRenameContent}
+          deletingContentId={deletingContentId}
         />
       </section>
     );
@@ -192,9 +300,15 @@ const BatchCourseView = ({
               <button
                 type="button"
                 className="btn-ghost text-sm text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/30"
+                disabled={clearingCourse || batchUpdating}
                 onClick={onClearCourse}
               >
-                <FiTrash2 size={14} /> Clear course
+                {clearingCourse ? (
+                  <FiLoader size={14} className="animate-spin" />
+                ) : (
+                  <FiTrash2 size={14} />
+                )}{" "}
+                Clear course
               </button>
             )}
             {onUpdateBatch && hasTelegramSubjects && (
@@ -205,14 +319,15 @@ const BatchCourseView = ({
                     ? "btn-primary"
                     : "btn-secondary"
                 }`}
-                disabled={batchUpdating || updatesLoading}
+                disabled={batchUpdating || updatesLoading || clearingCourse}
                 onClick={onUpdateBatch}
                 title="Download new lessons for all subjects from Telegram"
               >
-                <FiRefreshCw
-                  size={14}
-                  className={batchUpdating || updatesLoading ? "animate-spin" : ""}
-                />
+                {batchUpdating || updatesLoading ? (
+                  <FiLoader size={14} className="animate-spin" />
+                ) : (
+                  <FiRefreshCw size={14} />
+                )}
                 Update all subjects
                 <span className="hidden sm:inline"> from Telegram</span>
                 {(updatesAvailable?.subjectsWithUpdates || batchSummary.subjectsWithUpdates) > 0 && (
@@ -325,7 +440,11 @@ const BatchCourseView = ({
               updateInfo={subjectUpdates[String(subject._id)]}
               onClick={onSelectSubject}
               onUpdateSubject={onUpdateSubject}
+              onRenameSubject={onRenameSubject}
+              onDeleteSubject={onDeleteSubject}
               updating={updatingSubjectId === subject._id}
+              renaming={renamingSubjectId === subject._id}
+              deleting={deletingSubjectId === subject._id}
             />
           ))}
         </div>
@@ -340,7 +459,10 @@ const BatchCourseView = ({
               updateInfo={subjectUpdates[String(subject._id)]}
               onClick={onSelectSubject}
               onDelete={onDeleteSubject}
+              onRenameSubject={onRenameSubject}
               onUpdateSubject={onUpdateSubject}
+              renaming={renamingSubjectId === subject._id}
+              deleting={deletingSubjectId === subject._id}
               compact
             />
           ))}
