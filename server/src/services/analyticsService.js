@@ -63,7 +63,6 @@ export const buildAnalyticsOverview = async (userId) => {
   const today = todayDateKey();
   const streak = await calculateDisciplineStreak(userId);
   const readingStreak = await calculateReadingStreak(userId);
-  const readingStreak = await calculateReadingStreak(userId);
   const totals = await getTotalStudyMinutes(userId);
 
   const todayMission = await DailyMission.findOne({ userId, date: today }).lean();
