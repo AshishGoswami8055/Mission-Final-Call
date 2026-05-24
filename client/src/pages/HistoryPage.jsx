@@ -12,6 +12,11 @@ const HistoryPage = () => {
       title="Watch history"
       subtitle="Videos you watched recently"
       showSearch={false}
+      actions={
+        <Link to="/history/intelligence" className="btn-secondary text-sm!">
+          Study intelligence
+        </Link>
+      }
     >
       <div className="space-y-5">
         {!watchHistory.length ? (

@@ -2,10 +2,12 @@ import {
   FiBookmark,
   FiBookOpen,
   FiClock,
+  FiCrosshair,
   FiFileText,
   FiGrid,
   FiLogOut,
   FiType,
+  FiTrendingUp,
 } from "react-icons/fi";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -23,6 +25,12 @@ const NAV_ITEMS = [
     label: "Dashboard",
     icon: FiGrid,
     match: (p) => p === "/",
+  },
+  {
+    to: "/mission",
+    label: "Today's Target",
+    icon: FiCrosshair,
+    match: (p) => p.startsWith("/mission"),
   },
   {
     to: "/papers",
@@ -52,7 +60,13 @@ const NAV_ITEMS = [
     to: "/history",
     label: "Watch History",
     icon: FiClock,
-    match: (p) => p.startsWith("/history"),
+    match: (p) => p === "/history",
+  },
+  {
+    to: "/history/intelligence",
+    label: "Study Intelligence",
+    icon: FiTrendingUp,
+    match: (p) => p.startsWith("/history/intelligence"),
   },
 ];
 

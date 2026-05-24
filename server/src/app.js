@@ -16,6 +16,7 @@ import progressRoutes from "./routes/progressRoutes.js";
 import subjectRoutes from "./routes/subjectRoutes.js";
 import vocabularyRoutes from "./routes/vocabularyRoutes.js";
 import telegramRoutes from "./routes/telegramRoutes.js";
+import missionRoutes from "./routes/missionRoutes.js";
 import { errorHandler, notFound } from "./middlewares/errorMiddleware.js";
 
 dotenv.config();
@@ -49,6 +50,7 @@ app.use("/api/progress", progressRoutes);
 app.use("/api/vocabulary", vocabularyRoutes);
 app.use("/api/cloud-mappings", cloudMappingRoutes);
 app.use("/api/telegram", telegramRoutes);
+app.use("/api/mission", missionRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

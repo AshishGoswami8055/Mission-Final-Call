@@ -1,6 +1,8 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import DashboardPage from "./pages/DashboardPage";
 import TelegramImportPage from "./pages/TelegramImportPage";
+import MissionPage from "./pages/MissionPage";
+import IntelligenceHistoryPage from "./pages/IntelligenceHistoryPage";
 import HistoryPage from "./pages/HistoryPage";
 import LoginPage from "./pages/LoginPage";
 import OneWordSubstitutionPage from "./pages/OneWordSubstitutionPage";
@@ -92,6 +94,22 @@ function App() {
         element={
           <PrivateRoute>
             <PaperViewerPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/mission"
+        element={
+          <PrivateRoute>
+            <MissionPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/history/intelligence"
+        element={
+          <PrivateRoute>
+            <IntelligenceHistoryPage />
           </PrivateRoute>
         }
       />

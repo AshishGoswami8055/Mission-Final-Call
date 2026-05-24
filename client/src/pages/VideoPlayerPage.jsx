@@ -365,6 +365,18 @@ const VideoPlayerPage = () => {
       const mins = studyAccumSecondsRef.current / 60;
       const subjectId = currentItem?.subjectId?._id ?? currentItem?.subjectId;
       if (mins > 0) addStudyMinutes(mins, subjectId);
+      if (currentItem && mins >= 1) {
+        api
+          .post("/mission/session/log", {
+            type: "video",
+            durationMinutes: Math.round(mins),
+            contentId: currentItem._id,
+            subjectId,
+            subjectName: currentItem.subjectId?.name || "",
+            meta: { title: currentItem.title },
+          })
+          .catch(() => {});
+      }
       if (currentItem) {
         addToWatchHistory({
           contentId: currentItem._id,
