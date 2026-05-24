@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { FiChevronDown, FiEdit2, FiFileText, FiLoader, FiPlayCircle, FiTrash2, FiVideo } from "react-icons/fi";
 import { Link } from "react-router-dom";
+import { getContentDateLabels } from "../utils/contentDates";
 import { isTelegramLinkVideo } from "../utils/media";
 
 const sortContents = (items, chapterOrder) => {
@@ -73,6 +74,7 @@ const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent, onRena
         const route = item.type === "video" ? `/video/${item._id}` : `/pdf/${item._id}`;
         const isExternalTelegram = item.type === "video" && isTelegramLinkVideo(item);
         const chapterName = item.chapterId?.chapterName || "General";
+        const { posted, added, isNew } = getContentDateLabels(item);
 
         return (
           <div
@@ -131,10 +133,38 @@ const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent, onRena
                   <>
                     <span className="block truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
                       {index + 1}. {item.title}
+                      {isNew && (
+                        <span className="ml-2 inline-flex align-middle rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                          New
+                        </span>
+                      )}
                     </span>
-                    <span className="mt-0.5 block truncate text-xs text-slate-500 dark:text-slate-400">
-                      {chapterName}
-                      {item.completed ? " · Completed" : ""}
+                    <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+                      <span className="truncate">{chapterName}</span>
+                      {posted && (
+                        <>
+                          <span className="text-slate-300 dark:text-slate-600">·</span>
+                          <span className="shrink-0">Posted {posted}</span>
+                        </>
+                      )}
+                      {added && added !== posted && (
+                        <>
+                          <span className="text-slate-300 dark:text-slate-600">·</span>
+                          <span className="shrink-0 text-slate-400 dark:text-slate-500">Added {added}</span>
+                        </>
+                      )}
+                      {!posted && added && (
+                        <>
+                          <span className="text-slate-300 dark:text-slate-600">·</span>
+                          <span className="shrink-0">Added {added}</span>
+                        </>
+                      )}
+                      {item.completed && (
+                        <>
+                          <span className="text-slate-300 dark:text-slate-600">·</span>
+                          <span className="shrink-0 text-emerald-600 dark:text-emerald-400">Completed</span>
+                        </>
+                      )}
                     </span>
                   </>
                 )}
