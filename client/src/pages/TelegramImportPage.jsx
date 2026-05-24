@@ -454,7 +454,9 @@ const TelegramImportPage = () => {
         {!session.connected ? (
           <div className="card mx-auto max-w-lg p-6">
             <h2 className="text-lg font-semibold">Connect Telegram</h2>
-            <p className="mt-1 text-sm text-slate-500">Log in once. After that, new lessons are handled for you.</p>
+            <p className="mt-1 text-sm text-slate-500">
+              Log in separately on localhost and on production — each server needs its own Telegram login for videos to play.
+            </p>
             {!needsPassword ? (
               <form className="mt-4 space-y-3" onSubmit={otp ? handleVerifyOtp : handleLogin}>
                 <input className="input" type="tel" placeholder="+91XXXXXXXXXX" value={phone} onChange={(e) => setPhone(e.target.value)} required />
@@ -476,7 +478,10 @@ const TelegramImportPage = () => {
             {!selectedChannel && (
               <div className="card p-4">
                 <div className="mb-3 flex items-center justify-between">
-                  <p className="text-sm text-slate-500">Logged in as {session.phone}</p>
+                  <p className="text-sm text-slate-500">
+                    Logged in as {session.phone}
+                    {session.deploymentKey ? ` · ${session.deploymentKey}` : ""}
+                  </p>
                   <button
                     type="button"
                     className="btn-ghost text-xs"

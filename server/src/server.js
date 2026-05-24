@@ -12,6 +12,8 @@ import { migrateProgrammesAndSubjects } from "./services/programmeMigrationServi
 import { cleanupBrokenYoutubeTempFiles, organizeContentUploadsBySubject } from "./services/uploadOrganizationService.js";
 import { organizePaperUploadsByYear } from "./services/paperOrganizationService.js";
 import { startTelegramAutoSync } from "./services/telegramSyncService.js";
+import TelegramSession from "./models/TelegramSession.js";
+import { getTelegramDeploymentKey } from "./services/telegramService.js";
 
 dotenv.config();
 // Build the Cloudinary multi-account registry now that .env is loaded.
@@ -65,6 +67,19 @@ const start = async () => {
   if (paperMigration.moved || paperMigration.updated || paperMigration.missing || paperMigration.removedLegacyDirs) {
     console.log(
       `[uploads] organized PYQ papers: scanned=${paperMigration.scanned}, moved=${paperMigration.moved}, updated=${paperMigration.updated}, missing=${paperMigration.missing}, skipped=${paperMigration.skipped}, removedLegacyDirs=${paperMigration.removedLegacyDirs || 0}`
+    );
+  }
+
+  const legacySessions = await TelegramSession.updateMany(
+    {
+      isActive: true,
+      $or: [{ deploymentKey: { $exists: false } }, { deploymentKey: null }, { deploymentKey: "" }],
+    },
+    { $set: { isActive: false } }
+  );
+  if (legacySessions.modifiedCount) {
+    console.log(
+      `[telegram] Deactivated ${legacySessions.modifiedCount} old shared session(s). Log in to Telegram again on this server (${getTelegramDeploymentKey()}).`
     );
   }
 

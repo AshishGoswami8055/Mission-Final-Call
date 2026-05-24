@@ -15,6 +15,13 @@ const telegramSessionSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    /** Separates localhost vs Render so both can use Telegram without AUTH_KEY_DUPLICATED. */
+    deploymentKey: {
+      type: String,
+      default: "local",
+      trim: true,
+      index: true,
+    },
   },
   { timestamps: true }
 );

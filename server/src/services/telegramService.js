@@ -2,7 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { applyCorsHeaders } from "../config/cors.js";
-import { streamTelegramMediaWithCache } from "./telegramStreamCacheService.js";
 import TelegramSession from "../models/TelegramSession.js";
 
 const require = createRequire(import.meta.url);
@@ -36,6 +35,18 @@ const isAuthKeyDuplicated = (error) =>
   telegramErrorText(error).includes("AUTH_KEY_DUPLICATED");
 
 export { isAuthKeyDuplicated, telegramErrorText };
+
+/** Each server (local vs Render) needs its own Telegram login session. */
+export const getTelegramDeploymentKey = () => {
+  const explicit = String(process.env.TELEGRAM_DEPLOYMENT_KEY || "").trim();
+  if (explicit) return explicit;
+  if (process.env.RENDER || process.env.RENDER_SERVICE_ID) return "render";
+  if (process.env.NODE_ENV === "production") return "production";
+  return "local";
+};
+
+const authKeyConflictMessage = () =>
+  `Telegram session conflict: log in to Telegram in app settings on THIS server only (${getTelegramDeploymentKey()}). Localhost and Render need separate logins.`;
 
 const isRetryableTelegramError = (error) => {
   const message = telegramErrorText(error).toLowerCase();
@@ -87,8 +98,10 @@ const disconnectClient = async (client) => {
   }
 };
 
-export const getActiveSession = async () =>
-  TelegramSession.findOne({ isActive: true }).sort({ updatedAt: -1 });
+export const getActiveSession = async () => {
+  const deploymentKey = getTelegramDeploymentKey();
+  return TelegramSession.findOne({ isActive: true, deploymentKey }).sort({ updatedAt: -1 });
+};
 
 export const resetTelegramSessionClient = async (waitMs = 15000) => {
   if (activeClient) {
@@ -124,7 +137,10 @@ const ensureTelegramClient = async () => {
           console.warn("[telegram] reconnect failed:", telegramErrorText(error));
           await disconnectClient(activeClient);
           activeClient = null;
-          await sleep(isAuthKeyDuplicated(error) ? 15000 : 3000);
+          if (isAuthKeyDuplicated(error)) {
+            throw new Error(authKeyConflictMessage());
+          }
+          await sleep(3000);
         }
       }
 
@@ -145,7 +161,7 @@ const ensureTelegramClient = async () => {
       } catch (error) {
         await disconnectClient(client);
         if (isAuthKeyDuplicated(error)) {
-          await sleep(15000);
+          throw new Error(authKeyConflictMessage());
         }
         throw error;
       }
@@ -235,22 +251,24 @@ export const verifyTelegramPassword = async ({ phone: phoneRaw, password }) => {
 
 const finalizeTelegramLogin = async (phone, client) => {
   const stringSession = client.session.save();
+  const deploymentKey = getTelegramDeploymentKey();
 
-  await TelegramSession.updateMany({ isActive: true }, { isActive: false });
-  await TelegramSession.create({ stringSession, phone, isActive: true });
+  await TelegramSession.updateMany({ isActive: true, deploymentKey }, { isActive: false });
+  await TelegramSession.create({ stringSession, phone, isActive: true, deploymentKey });
 
   pendingLogins.delete(phone);
   await disconnectActiveClient();
   activeClient = client;
 
-  return { phone, connected: true };
+  return { phone, connected: true, deploymentKey };
 };
 
 export const logoutTelegram = async () => {
+  const deploymentKey = getTelegramDeploymentKey();
   pendingLogins.clear();
   await disconnectActiveClient();
-  await TelegramSession.updateMany({ isActive: true }, { isActive: false });
-  return { loggedOut: true };
+  await TelegramSession.updateMany({ isActive: true, deploymentKey }, { isActive: false });
+  return { loggedOut: true, deploymentKey };
 };
 
 const getDialogPhoto = async (client, entity) => {
@@ -807,7 +825,7 @@ export const downloadTelegramMediaToFile = async (params) =>
         return await downloadTelegramMediaToFileOnce(params);
       } catch (error) {
         lastError = error;
-        if (!isRetryableTelegramError(error) || attempt === 5) throw error;
+        if (!isRetryableTelegramError(error) || attempt === 5 || isAuthKeyDuplicated(error)) throw error;
         const waitMs = isAuthKeyDuplicated(error) ? 10000 + attempt * 5000 : 2500 * attempt;
         console.warn(
           `[telegram-download] retry ${attempt}/5 for message ${params.messageId}:`,
@@ -938,17 +956,7 @@ export const streamTelegramMedia = async ({ channelId, messageId, req, res, asAt
   withTelegramLock(async () => {
     activeStreamCount += 1;
     try {
-      if (asAttachment) {
-        await streamTelegramMediaDirect({ channelId, messageId, req, res, asAttachment: true });
-        return;
-      }
-      await streamTelegramMediaWithCache({
-        channelId,
-        messageId,
-        req,
-        res,
-        getMedia: getTelegramMessageMedia,
-      });
+      await streamTelegramMediaDirect({ channelId, messageId, req, res, asAttachment });
     } finally {
       activeStreamCount = Math.max(0, activeStreamCount - 1);
     }
