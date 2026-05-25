@@ -180,12 +180,11 @@ const ExamCountdown = ({ compact = false, activeCourseId = getDefaultCourseId() 
                 r={RING_RADIUS}
                 fill="none"
                 stroke="currentColor"
-                className="text-teal-500 dark:text-teal-400"
+                className="text-teal-500 transition-[stroke-dashoffset] duration-1000 ease-out dark:text-teal-400"
                 strokeWidth={RING_STROKE - 2}
                 strokeDasharray={RING_CIRC}
                 strokeDashoffset={seasonRingOffset}
                 strokeLinecap="round"
-                className="transition-[stroke-dashoffset] duration-1000 ease-out"
               />
               <circle
                 cx={RING_SIZE / 2}
@@ -193,12 +192,11 @@ const ExamCountdown = ({ compact = false, activeCourseId = getDefaultCourseId() 
                 r={RING_RADIUS - 5}
                 fill="none"
                 stroke="currentColor"
-                className="text-slate-800 dark:text-slate-200"
+                className="text-slate-800 transition-[stroke-dashoffset] duration-1000 ease-out dark:text-slate-200"
                 strokeWidth={3}
                 strokeDasharray={RING_CIRC * 0.88}
                 strokeDashoffset={examRingOffset * 0.88}
                 strokeLinecap="round"
-                className="transition-[stroke-dashoffset] duration-1000 ease-out"
               />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center text-center">

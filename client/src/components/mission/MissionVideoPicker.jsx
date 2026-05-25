@@ -118,7 +118,7 @@ const MissionVideoPicker = ({ selectedVideo, onSelect, slotLabel }) => {
 
   const renderVideoRow = (video) => {
     const selected = String(selectedVideo?._id) === String(video._id);
-    const { posted, added, isNew } = getContentDateLabels(video);
+    const { posted, isNew } = getContentDateLabels(video);
 
     return (
       <button
@@ -147,12 +147,6 @@ const MissionVideoPicker = ({ selectedVideo, onSelect, slotLabel }) => {
                 <>
                   <span className="text-slate-300 dark:text-slate-600">·</span>
                   <span>Posted {posted}</span>
-                </>
-              )}
-              {added && added !== posted && (
-                <>
-                  <span className="text-slate-300 dark:text-slate-600">·</span>
-                  <span>Added {added}</span>
                 </>
               )}
             </p>

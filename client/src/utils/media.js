@@ -87,6 +87,16 @@ export const hasLocalVideoFile = (item) =>
   item?.videoSourceType === "local" &&
   Boolean(item.filePath);
 
+/** Video can be saved to the localhost PC library for smooth playback. */
+export const canLocalLibraryDownload = (item) =>
+  Boolean(
+    item?.type === "video" &&
+      !isTelegramLinkVideo(item) &&
+      (isTelegramStreamContent(item) ||
+        item.sourceType === "cloudinary" ||
+        (item.sourceType === "upload" && item.filePath))
+  );
+
 /**
  * Resolve the playable/viewable source URL for any content item:
  * - Telegram stream (GramJS proxy) → /api/telegram/stream/:messageId

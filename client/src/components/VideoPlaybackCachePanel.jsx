@@ -83,6 +83,10 @@ const VideoPlaybackCachePanel = ({
   const downloading = status?.job?.status === "downloading";
   const cached = status?.cached && status?.ready;
   const level = storage?.level || "ok";
+  const progressPercent = Math.min(
+    100,
+    Math.max(0, Math.round(Number(status?.job?.percent) || 0))
+  );
   const shell = isDark
     ? "border-neutral-800 bg-neutral-950/80"
     : "border-slate-200/90 bg-slate-50/80";
@@ -99,7 +103,7 @@ const VideoPlaybackCachePanel = ({
             {cached
               ? "Playing from server copy for smoother streaming."
               : downloading
-                ? `Downloading… ${status?.job?.percent ?? 0}%`
+                ? `Downloading… ${progressPercent}%`
                 : "Stream stuttering? Save a temporary copy on the server."}
           </p>
         </div>
@@ -178,7 +182,7 @@ const VideoPlaybackCachePanel = ({
         <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-white/10">
           <div
             className="h-full rounded-full bg-sky-500 transition-all"
-            style={{ width: `${Math.min(100, status.job.percent)}%` }}
+            style={{ width: `${progressPercent}%` }}
           />
         </div>
       )}
