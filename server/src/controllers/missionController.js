@@ -24,6 +24,7 @@ import { getOrCreateAiBriefing } from "../services/aiBriefingService.js";
 import {
   addManualMissionItem,
   buildMissionPlanResponse,
+  getMissionPickerSubjects,
   getVideosForMissionPicker,
   removeMissionItem,
   replaceMissionSlotVideo,
@@ -543,11 +544,21 @@ export const updateReadingTarget = async (req, res) => {
 
 export const getMissionVideoPicker = async (req, res) => {
   try {
-    const { slot, search, limit } = req.query;
-    const items = await getVideosForMissionPicker({ slot, search, limit });
-    res.json({ items });
+    const { slot, search, limit, subjectId } = req.query;
+    const items = await getVideosForMissionPicker({ slot, search, limit, subjectId });
+    res.json({ items, total: items.length });
   } catch (error) {
     res.status(500).json({ message: error.message || "Could not load videos" });
+  }
+};
+
+export const getMissionPickerSubjectsHandler = async (req, res) => {
+  try {
+    const { search } = req.query;
+    const items = await getMissionPickerSubjects({ search });
+    res.json({ items, total: items.length });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Could not load subjects" });
   }
 };
 

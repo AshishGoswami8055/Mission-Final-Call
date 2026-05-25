@@ -15,6 +15,7 @@ const SubjectGridCard = ({
   compact = false,
   renaming = false,
   deleting = false,
+  pickerMode = false,
 }) => {
   const [editing, setEditing] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -173,7 +174,7 @@ const SubjectGridCard = ({
         )}
       </button>
       )}
-      {!editing && (
+      {!editing && !pickerMode && (
         <div className="absolute top-2 right-2 z-20 flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
           {onRenameSubject && (
             <button
@@ -202,7 +203,7 @@ const SubjectGridCard = ({
           )}
         </div>
       )}
-      {!editing && (
+      {!editing && !pickerMode && (
         <SubjectDownloadButton
           subject={subject}
           videoCount={videoCount}

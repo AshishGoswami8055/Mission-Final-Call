@@ -29,41 +29,80 @@ const getProgrammeSubjectIds = async () => {
   return subjects;
 };
 
-export const getVideosForMissionPicker = async ({ slot, search = "", limit = 50 }) => {
+export const getVideosForMissionPicker = async ({ slot, search = "", limit = 50, subjectId = null }) => {
   const subjects = await getProgrammeSubjectIds();
   const bucket = slot && MISSION_VIDEO_SLOTS.includes(slot) ? slot : null;
 
   let subjectIds = subjects.map((s) => s._id);
-  if (bucket) {
+  if (subjectId) {
+    subjectIds = subjectIds.filter((id) => String(id) === String(subjectId));
+  } else if (bucket && !search?.trim()) {
     subjectIds = subjects.filter((s) => classifySubjectBucket(s.name) === bucket).map((s) => s._id);
   }
 
   if (!subjectIds.length) return [];
 
   const filter = {
-    subjectId: { $in: subjectIds },
+    subjectId: subjectId ? subjectId : { $in: subjectIds },
     type: "video",
   };
   if (search?.trim()) {
     filter.title = { $regex: search.trim(), $options: "i" };
   }
 
+  const limitCap = subjectId || search?.trim() ? 5000 : Math.min(Number(limit) || 50, 100);
+
   const videos = await Content.find(filter)
     .populate("subjectId", "name")
     .populate("chapterId", "chapterName")
-    .sort({ createdAt: -1 })
-    .limit(Math.min(Number(limit) || 50, 100))
+    .sort({ importSortOrder: 1, telegramMessageId: 1, createdAt: -1, title: 1 })
+    .limit(limitCap)
     .lean();
 
   return videos.map((video) => ({
     _id: video._id,
     title: video.title,
+    subjectId: video.subjectId?._id || video.subjectId,
     subjectName: video.subjectId?.name || "",
     chapterName: video.chapterId?.chapterName || "",
     durationMinutes:
       secondsToMinutes(video.duration) || SLOT_DEFAULT_MINUTES[bucket] || SLOT_DEFAULT_MINUTES.gs || 45,
     bucket: classifySubjectBucket(video.subjectId?.name || ""),
+    uploadedAt: video.uploadedAt || null,
+    createdAt: video.createdAt || null,
+    importSortOrder: video.importSortOrder ?? null,
   }));
+};
+
+/** Subjects with video counts for dashboard-style mission video picker. */
+export const getMissionPickerSubjects = async ({ search = "" } = {}) => {
+  const subjects = await getProgrammeSubjectIds();
+  if (!subjects.length) return [];
+
+  const subjectIds = subjects.map((s) => s._id);
+  const counts = await Content.aggregate([
+    { $match: { subjectId: { $in: subjectIds }, type: "video" } },
+    { $group: { _id: "$subjectId", videos: { $sum: 1 } } },
+  ]);
+  const countMap = Object.fromEntries(counts.map((row) => [String(row._id), row.videos || 0]));
+
+  let list = subjects
+    .map((subject) => ({
+      _id: subject._id,
+      name: subject.name,
+      bucket: classifySubjectBucket(subject.name),
+      videos: countMap[String(subject._id)] || 0,
+    }))
+    .filter((subject) => subject.videos > 0);
+
+  const query = search?.trim();
+  if (query) {
+    const re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    list = list.filter((subject) => re.test(subject.name));
+  }
+
+  list.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  return list;
 };
 
 const buildVideoItem = async (userId, slot, content) => {

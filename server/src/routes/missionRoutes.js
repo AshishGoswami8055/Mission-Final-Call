@@ -20,6 +20,7 @@ import {
   startTodayStudy,
   updateReadingTarget,
   getMissionVideoPicker,
+  getMissionPickerSubjectsHandler,
   updateMissionPlanItemHandler,
   addMissionManualItemHandler,
   removeMissionPlanItemHandler,
@@ -34,6 +35,7 @@ router.post("/today/regenerate", regenerateTodayMission);
 router.post("/study/start", startTodayStudy);
 router.post("/ai-briefing/refresh", refreshAiBriefing);
 router.post("/items/complete", completeMissionItemHandler);
+router.get("/videos/picker/subjects", getMissionPickerSubjectsHandler);
 router.get("/videos/picker", getMissionVideoPicker);
 router.put("/items/update", updateMissionPlanItemHandler);
 router.post("/items/manual", addMissionManualItemHandler);

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
-import { FiClock, FiEdit2, FiPlay, FiPlus, FiSearch, FiX } from "react-icons/fi";
+import { useEffect, useState } from "react";
+import { FiEdit2, FiPlus, FiX } from "react-icons/fi";
 import toast from "react-hot-toast";
 import api from "../../api/client";
+import MissionVideoPicker from "./MissionVideoPicker";
 
 const SLOT_LABELS = {
   english: "English video",
@@ -31,44 +32,42 @@ const MissionTaskEditorModal = ({ target, mode = "edit", onClose, onSaved }) => 
 
   const [title, setTitle] = useState(target?.title || "");
   const [durationMinutes, setDurationMinutes] = useState(target?.minutes || 30);
-  const [search, setSearch] = useState("");
-  const [videos, setVideos] = useState([]);
-  const [loadingVideos, setLoadingVideos] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  const pickerSlot = isVideoSlot ? target.slot : isAdd || isCustom ? undefined : target?.slot;
-
-  const loadVideos = useCallback(async () => {
-    setLoadingVideos(true);
-    try {
-      const { data } = await api.get("/mission/videos/picker", {
-        params: {
-          slot: pickerSlot,
-          search: search.trim() || undefined,
-          limit: 40,
-        },
-      });
-      setVideos(data.items || []);
-    } catch {
-      toast.error("Could not load videos");
-    } finally {
-      setLoadingVideos(false);
-    }
-  }, [pickerSlot, search]);
-
   useEffect(() => {
-    if (isReading) return;
-    const timer = setTimeout(loadVideos, search ? 250 : 0);
-    return () => clearTimeout(timer);
-  }, [isReading, loadVideos, search]);
+    if (!target?.contentId) return;
+    let cancelled = false;
+    const loadSelected = async () => {
+      try {
+        const { data } = await api.get(`/contents/${target.contentId}`);
+        if (!cancelled && data) {
+          setSelectedVideo({
+            ...data,
+            subjectName: data.subjectId?.name || "",
+            chapterName: data.chapterId?.chapterName || "",
+            durationMinutes: data.duration
+              ? Math.max(1, Math.round(Number(data.duration) / 60))
+              : 45,
+          });
+        }
+      } catch {
+        /* ignore — picker will show empty selection */
+      }
+    };
+    loadSelected();
+    return () => {
+      cancelled = true;
+    };
+  }, [target?.contentId]);
 
-  useEffect(() => {
-    if (target?.contentId && videos.length) {
-      const match = videos.find((v) => String(v._id) === String(target.contentId));
-      if (match) setSelectedVideo(match);
+  const handleVideoSelect = (video) => {
+    setSelectedVideo(video);
+    if (isCustom || isAdd) {
+      setTitle((prev) => prev || video.title);
+      setDurationMinutes(video.durationMinutes || 30);
     }
-  }, [target?.contentId, videos]);
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -118,10 +117,11 @@ const MissionTaskEditorModal = ({ target, mode = "edit", onClose, onSaved }) => 
 
   const modalTitle = isAdd ? "Add manual task" : `Edit ${SLOT_LABELS[target?.slot] || "task"}`;
   const HeaderIcon = isAdd ? FiPlus : FiEdit2;
+  const slotShortLabel = SLOT_LABELS[slotKey]?.replace(" video", "").replace(" session", "") || "Task";
 
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="modal-card modal-card-lg" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-card modal-card-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-4 dark:border-white/10">
           <div className="flex min-w-0 items-start gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-700 dark:bg-white/10 dark:text-slate-200">
@@ -131,8 +131,10 @@ const MissionTaskEditorModal = ({ target, mode = "edit", onClose, onSaved }) => 
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="font-display text-lg font-semibold text-slate-900 dark:text-white">{modalTitle}</h2>
                 {slotKey && (
-                  <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${SLOT_ACCENT[slotKey] || SLOT_ACCENT.custom}`}>
-                    {SLOT_LABELS[slotKey]?.replace(" video", "").replace(" session", "") || "Task"}
+                  <span
+                    className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${SLOT_ACCENT[slotKey] || SLOT_ACCENT.custom}`}
+                  >
+                    {slotShortLabel}
                   </span>
                 )}
               </div>
@@ -140,7 +142,7 @@ const MissionTaskEditorModal = ({ target, mode = "edit", onClose, onSaved }) => 
                 {isReading
                   ? "Set how long you want to read today."
                   : isVideoSlot
-                    ? "Replace the AI pick with any video from your library."
+                    ? "Browse subjects like the dashboard and pick any video from your library."
                     : "Add your own study task or link a video."}
               </p>
             </div>
@@ -182,79 +184,11 @@ const MissionTaskEditorModal = ({ target, mode = "edit", onClose, onSaved }) => 
               )}
 
               {(isCustom || isAdd || isVideoSlot) && (
-                <>
-                  <label className="block">
-                    <span className={fieldLabel}>{isVideoSlot ? "Pick a video" : "Link a video (optional)"}</span>
-                    <div className="relative">
-                      <FiSearch
-                        className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
-                        size={15}
-                      />
-                      <input
-                        type="search"
-                        className="input pl-10"
-                        placeholder="Search videos…"
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                      />
-                    </div>
-                  </label>
-
-                  <div className="overflow-hidden rounded-xl border border-slate-200/80 bg-slate-50/50 dark:border-white/10 dark:bg-white/[0.02]">
-                    <div className="max-h-56 overflow-y-auto p-2">
-                      {loadingVideos && (
-                        <p className="px-3 py-4 text-center text-sm text-slate-500">Loading videos…</p>
-                      )}
-                      {!loadingVideos && !videos.length && (
-                        <p className="px-3 py-4 text-center text-sm text-slate-500">No videos found.</p>
-                      )}
-                      <ul className="space-y-1.5">
-                        {videos.map((video) => {
-                          const selected = String(selectedVideo?._id) === String(video._id);
-                          return (
-                            <li key={video._id}>
-                              <button
-                                type="button"
-                                className={`w-full rounded-xl border px-3 py-3 text-left transition-all ${
-                                  selected
-                                    ? "border-slate-900 bg-white shadow-sm dark:border-slate-100 dark:bg-[#1a1a1a]"
-                                    : "border-transparent bg-white hover:border-slate-200 dark:bg-[#141414] dark:hover:border-white/10"
-                                }`}
-                                onClick={() => {
-                                  setSelectedVideo(video);
-                                  if (isCustom || isAdd) setTitle((prev) => prev || video.title);
-                                  if (isCustom || isAdd) setDurationMinutes(video.durationMinutes || 30);
-                                }}
-                              >
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="min-w-0">
-                                    <p className="text-sm font-medium text-slate-900 dark:text-slate-50">{video.title}</p>
-                                    <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">
-                                      {[video.subjectName, video.chapterName].filter(Boolean).join(" · ")}
-                                    </p>
-                                  </div>
-                                  <span className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-200/80 bg-slate-50 px-2 py-1 text-[11px] font-medium tabular-nums text-slate-600 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300">
-                                    <FiClock size={11} />
-                                    {video.durationMinutes}m
-                                  </span>
-                                </div>
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  </div>
-
-                  {selectedVideo && (
-                    <div className="flex items-center gap-2 rounded-xl border border-slate-200/80 bg-white px-3 py-2.5 text-sm dark:border-white/10 dark:bg-[#141414]">
-                      <FiPlay size={14} className="shrink-0 text-slate-500" />
-                      <span className="min-w-0 truncate text-slate-700 dark:text-slate-200">
-                        Selected: <span className="font-medium">{selectedVideo.title}</span>
-                      </span>
-                    </div>
-                  )}
-                </>
+                <MissionVideoPicker
+                  selectedVideo={selectedVideo}
+                  onSelect={handleVideoSelect}
+                  slotLabel={isVideoSlot ? slotShortLabel : null}
+                />
               )}
 
               {(isCustom || isAdd) && (
