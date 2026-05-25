@@ -481,4 +481,25 @@ export const resolveLocalLibraryPlayUrl = (contentId) => {
   return status.ready ? status.playUrl : null;
 };
 
+/** All content IDs with a ready file on the PC library. */
+export const listReadyLocalLibraryContentIds = () => {
+  if (!isLocalLibraryEnabled() || !fs.existsSync(LOCAL_LIBRARY_DIR)) return [];
+  const ids = [];
+  for (const name of fs.readdirSync(LOCAL_LIBRARY_DIR)) {
+    if (!name.endsWith(".meta.json")) continue;
+    const contentId = name.slice(0, -".meta.json".length);
+    const status = getLocalLibraryStatus(contentId);
+    if (status.ready) ids.push(contentId);
+  }
+  return ids;
+};
+
+/** Which videos in this subject are saved to the PC library. */
+export const getSubjectCachedContentIds = async (subjectId) => {
+  const readySet = new Set(listReadyLocalLibraryContentIds());
+  if (!readySet.size) return [];
+  const videos = await Content.find({ subjectId, type: "video" }).select("_id").lean();
+  return videos.filter((video) => readySet.has(String(video._id))).map((video) => String(video._id));
+};
+
 export { isCacheEligibleContent as isLocalLibraryEligibleContent };

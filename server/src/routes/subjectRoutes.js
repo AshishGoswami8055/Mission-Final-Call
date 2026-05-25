@@ -9,6 +9,7 @@ import {
   assertSubjectLocalLibrary,
   getSubjectDownloadPackHandler,
   getSubjectLocalLibraryHandler,
+  getSubjectCachedLibraryIdsHandler,
   startSubjectLocalLibraryHandler,
 } from "../controllers/subjectDownloadController.js";
 import protect from "../middlewares/authMiddleware.js";
@@ -17,6 +18,7 @@ const router = express.Router();
 
 router.use(protect);
 router.get("/:id/download-pack", getSubjectDownloadPackHandler);
+router.get("/:id/local-library/cached", assertSubjectLocalLibrary, getSubjectCachedLibraryIdsHandler);
 router.get("/:id/local-library", assertSubjectLocalLibrary, getSubjectLocalLibraryHandler);
 router.post("/:id/local-library", assertSubjectLocalLibrary, startSubjectLocalLibraryHandler);
 router.route("/").get(getSubjects).post(createSubject);

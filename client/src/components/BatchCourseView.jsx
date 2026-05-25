@@ -265,6 +265,7 @@ const BatchCourseView = ({
         <SubjectLessonAccordion
           contents={subjectContents}
           chapters={subjectChapters}
+          subjectId={activeSubjectId}
           onDeleteContent={onDeleteContent}
           onRenameContent={onRenameContent}
           deletingContentId={deletingContentId}

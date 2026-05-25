@@ -1,8 +1,55 @@
-import { useMemo, useState } from "react";
-import { FiChevronDown, FiEdit2, FiFileText, FiLoader, FiPlayCircle, FiTrash2, FiVideo } from "react-icons/fi";
+import { useEffect, useMemo, useState } from "react";
+import {
+  FiChevronDown,
+  FiEdit2,
+  FiFileText,
+  FiHardDrive,
+  FiLoader,
+  FiPlayCircle,
+  FiSparkles,
+  FiTrash2,
+  FiVideo,
+} from "react-icons/fi";
 import { Link } from "react-router-dom";
-import { getContentDateLabels } from "../utils/contentDates";
-import { isTelegramLinkVideo } from "../utils/media";
+import api from "../api/client";
+import {
+  filterRecentlyAdded,
+  getContentDateLabels,
+  NEW_CONTENT_DAYS,
+} from "../utils/contentDates";
+import { isLocalFrontend, isTelegramLinkVideo } from "../utils/media";
+
+const BADGE_CLASS =
+  "inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide";
+
+const ContentStatusBadges = ({ item, type, onPc = false, showPcStatus = false }) => {
+  const { isNew } = getContentDateLabels(item);
+
+  return (
+    <span className="ml-2 inline-flex flex-wrap items-center gap-1 align-middle">
+      {isNew && (
+        <span className={`${BADGE_CLASS} bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300`}>
+          New
+        </span>
+      )}
+      {item.completed && (
+        <span className={`${BADGE_CLASS} bg-sky-100 text-sky-700 dark:bg-sky-950/50 dark:text-sky-300`}>
+          Watched
+        </span>
+      )}
+      {showPcStatus && type === "video" && onPc && (
+        <span className={`${BADGE_CLASS} bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300`}>
+          <FiHardDrive size={9} /> On PC
+        </span>
+      )}
+      {showPcStatus && type === "video" && !onPc && (
+        <span className={`${BADGE_CLASS} bg-slate-100 text-slate-500 dark:bg-white/10 dark:text-slate-400`}>
+          Not on PC
+        </span>
+      )}
+    </span>
+  );
+};
 
 const sortContents = (items, chapterOrder) => {
   return [...items].sort((a, b) => {
@@ -23,7 +70,26 @@ const sortContents = (items, chapterOrder) => {
   });
 };
 
-const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent, onRenameContent, deletingContentId }) => {
+const sortByNewestAdded = (items) =>
+  [...items].sort((a, b) => {
+    const ta = new Date(a.createdAt || 0).getTime();
+    const tb = new Date(b.createdAt || 0).getTime();
+    if (tb !== ta) return tb - ta;
+    return String(a.title).localeCompare(String(b.title));
+  });
+
+const LessonList = ({
+  items,
+  type,
+  expandedId,
+  onToggle,
+  onDeleteContent,
+  onRenameContent,
+  deletingContentId,
+  pcCachedIds = new Set(),
+  showPcStatus = false,
+  emptyMessage,
+}) => {
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState("");
   const [savingRename, setSavingRename] = useState(false);
@@ -62,7 +128,8 @@ const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent, onRena
   if (!items.length) {
     return (
       <p className="rounded-xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400 dark:border-slate-700">
-        No {type === "video" ? "videos" : "PDFs"} in this subject yet.
+        {emptyMessage ||
+          `No ${type === "video" ? "videos" : "PDFs"} in this subject yet.`}
       </p>
     );
   }
@@ -71,15 +138,23 @@ const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent, onRena
     <div className="space-y-2">
       {items.map((item, index) => {
         const isOpen = expandedId === item._id;
-        const route = item.type === "video" ? `/video/${item._id}` : `/pdf/${item._id}`;
-        const isExternalTelegram = item.type === "video" && isTelegramLinkVideo(item);
+        const rowType = item.type || type || "video";
+        const route = rowType === "video" ? `/video/${item._id}` : `/pdf/${item._id}`;
+        const isExternalTelegram = rowType === "video" && isTelegramLinkVideo(item);
         const chapterName = item.chapterId?.chapterName || "General";
-        const { posted, added, isNew } = getContentDateLabels(item);
+        const { posted, added } = getContentDateLabels(item);
+        const onPc = pcCachedIds.has(String(item._id));
 
         return (
           <div
             key={item._id}
-            className="overflow-hidden rounded-xl border border-slate-200/90 bg-white dark:border-white/10 dark:bg-[#1a1a1a]"
+            className={`overflow-hidden rounded-xl border bg-white dark:bg-[#1a1a1a] ${
+              item.completed
+                ? "border-sky-200/90 dark:border-sky-500/20"
+                : onPc
+                  ? "border-violet-200/90 dark:border-violet-500/20"
+                  : "border-slate-200/90 dark:border-white/10"
+            }`}
           >
             <button
               type="button"
@@ -88,12 +163,12 @@ const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent, onRena
             >
               <span
                 className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-                  type === "video"
+                  rowType === "video"
                     ? "bg-sky-100 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300"
                     : "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
                 }`}
               >
-                {type === "video" ? <FiPlayCircle size={16} /> : <FiFileText size={16} />}
+                {rowType === "video" ? <FiPlayCircle size={16} /> : <FiFileText size={16} />}
               </span>
               <span className="min-w-0 flex-1">
                 {renamingId === item._id ? (
@@ -131,13 +206,14 @@ const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent, onRena
                   </div>
                 ) : (
                   <>
-                    <span className="block truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
-                      {index + 1}. {item.title}
-                      {isNew && (
-                        <span className="ml-2 inline-flex align-middle rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
-                          New
-                        </span>
-                      )}
+                    <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">
+                      <span className="truncate">{index + 1}. {item.title}</span>
+                      <ContentStatusBadges
+                        item={item}
+                        type={rowType}
+                        onPc={onPc}
+                        showPcStatus={showPcStatus}
+                      />
                     </span>
                     <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-slate-500 dark:text-slate-400">
                       <span className="truncate">{chapterName}</span>
@@ -147,22 +223,12 @@ const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent, onRena
                           <span className="shrink-0">Posted {posted}</span>
                         </>
                       )}
-                      {added && added !== posted && (
+                      {added && (
                         <>
                           <span className="text-slate-300 dark:text-slate-600">·</span>
-                          <span className="shrink-0 text-slate-400 dark:text-slate-500">Added {added}</span>
-                        </>
-                      )}
-                      {!posted && added && (
-                        <>
-                          <span className="text-slate-300 dark:text-slate-600">·</span>
-                          <span className="shrink-0">Added {added}</span>
-                        </>
-                      )}
-                      {item.completed && (
-                        <>
-                          <span className="text-slate-300 dark:text-slate-600">·</span>
-                          <span className="shrink-0 text-emerald-600 dark:text-emerald-400">Completed</span>
+                          <span className={`shrink-0 ${added !== posted ? "font-medium text-emerald-600 dark:text-emerald-400" : ""}`}>
+                            Added {added}
+                          </span>
                         </>
                       )}
                     </span>
@@ -219,8 +285,8 @@ const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent, onRena
                     to={route}
                     className="inline-flex items-center gap-2 rounded-xl bg-teal-700 px-5 py-2.5 text-sm font-semibold text-white shadow transition hover:bg-teal-600"
                   >
-                    {type === "video" ? <FiPlayCircle size={15} /> : <FiFileText size={15} />}
-                    {type === "video" ? "Watch Class" : "Open PDF"}
+                    {rowType === "video" ? <FiPlayCircle size={15} /> : <FiFileText size={15} />}
+                    {rowType === "video" ? "Watch Class" : "Open PDF"}
                   </Link>
                 )}
               </div>
@@ -235,12 +301,15 @@ const LessonList = ({ items, type, expandedId, onToggle, onDeleteContent, onRena
 const SubjectLessonAccordion = ({
   contents = [],
   chapters = [],
+  subjectId = null,
   onDeleteContent,
   onRenameContent,
   deletingContentId = null,
 }) => {
   const [expandedId, setExpandedId] = useState(null);
-  const [activeTab, setActiveTab] = useState("videos");
+  const [activeTab, setActiveTab] = useState("new");
+  const [pcCachedIds, setPcCachedIds] = useState(new Set());
+  const showPcStatus = isLocalFrontend();
 
   const chapterOrder = useMemo(() => {
     const map = new Map(chapters.map((c, idx) => [c._id, idx]));
@@ -255,6 +324,37 @@ const SubjectLessonAccordion = ({
     () => sortContents(contents.filter((c) => c.type === "pdf"), chapterOrder),
     [contents, chapterOrder]
   );
+  const newItems = useMemo(
+    () => sortByNewestAdded(filterRecentlyAdded(contents, NEW_CONTENT_DAYS)),
+    [contents]
+  );
+  const newVideos = useMemo(() => newItems.filter((c) => c.type === "video"), [newItems]);
+  const newPdfs = useMemo(() => newItems.filter((c) => c.type === "pdf"), [newItems]);
+
+  useEffect(() => {
+    setActiveTab(newItems.length ? "new" : videos.length ? "videos" : "pdfs");
+    setExpandedId(null);
+  }, [subjectId, newItems.length, videos.length, pdfs.length]);
+
+  useEffect(() => {
+    if (!showPcStatus || !subjectId) {
+      setPcCachedIds(new Set());
+      return;
+    }
+    let cancelled = false;
+    const loadCached = async () => {
+      try {
+        const { data } = await api.get(`/subjects/${subjectId}/local-library/cached`);
+        if (!cancelled) setPcCachedIds(new Set(data.cachedIds || []));
+      } catch {
+        if (!cancelled) setPcCachedIds(new Set());
+      }
+    };
+    loadCached();
+    return () => {
+      cancelled = true;
+    };
+  }, [subjectId, showPcStatus, contents.length]);
 
   if (!videos.length && !pdfs.length) {
     return (
@@ -265,16 +365,35 @@ const SubjectLessonAccordion = ({
   }
 
   const tabs = [
-    { id: "videos", label: "Videos", count: videos.length, icon: FiPlayCircle },
-    { id: "pdfs", label: "PDFs", count: pdfs.length, icon: FiFileText },
+    {
+      id: "new",
+      label: `New (${NEW_CONTENT_DAYS}d)`,
+      count: newItems.length,
+      icon: FiSparkles,
+      accent: "bg-emerald-600",
+    },
+    { id: "videos", label: "Videos", count: videos.length, icon: FiPlayCircle, accent: "bg-sky-700" },
+    { id: "pdfs", label: "PDFs", count: pdfs.length, icon: FiFileText, accent: "bg-amber-600" },
   ];
 
-  const defaultTab = videos.length ? "videos" : "pdfs";
-  const currentTab = activeTab === "videos" && !videos.length ? "pdfs" : activeTab === "pdfs" && !pdfs.length ? "videos" : activeTab || defaultTab;
+  const currentTab =
+    activeTab === "new" && !newItems.length
+      ? videos.length
+        ? "videos"
+        : "pdfs"
+      : activeTab === "videos" && !videos.length
+        ? newItems.length
+          ? "new"
+          : "pdfs"
+        : activeTab === "pdfs" && !pdfs.length
+          ? newItems.length
+            ? "new"
+            : "videos"
+          : activeTab;
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const disabled = tab.count === 0;
@@ -286,9 +405,7 @@ const SubjectLessonAccordion = ({
               onClick={() => setActiveTab(tab.id)}
               className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition sm:gap-2 sm:px-4 sm:py-2 sm:text-sm ${
                 currentTab === tab.id
-                  ? tab.id === "videos"
-                    ? "bg-sky-700 text-white shadow"
-                    : "bg-amber-600 text-white shadow"
+                  ? `${tab.accent} text-white shadow`
                   : disabled
                     ? "cursor-not-allowed bg-slate-100 text-slate-400 dark:bg-white/5 dark:text-slate-600"
                     : "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-white/10 dark:text-slate-200 dark:hover:bg-white/15"
@@ -306,9 +423,34 @@ const SubjectLessonAccordion = ({
             </button>
           );
         })}
+        {showPcStatus && (
+          <span className="ml-auto hidden text-[10px] font-medium uppercase tracking-wider text-slate-400 sm:inline">
+            <span className="mr-2 inline-flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full bg-violet-500" /> On PC
+            </span>
+            <span className="mr-2 inline-flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full bg-sky-500" /> Watched
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" /> New
+            </span>
+          </span>
+        )}
       </div>
 
-      {currentTab === "videos" ? (
+      {currentTab === "new" ? (
+        <LessonList
+          items={newItems}
+          expandedId={expandedId}
+          onToggle={setExpandedId}
+          onDeleteContent={onDeleteContent}
+          onRenameContent={onRenameContent}
+          deletingContentId={deletingContentId}
+          pcCachedIds={pcCachedIds}
+          showPcStatus={showPcStatus}
+          emptyMessage={`Nothing added in the last ${NEW_CONTENT_DAYS} days. Check the Videos tab for older lessons.`}
+        />
+      ) : currentTab === "videos" ? (
         <LessonList
           items={videos}
           type="video"
@@ -317,6 +459,8 @@ const SubjectLessonAccordion = ({
           onDeleteContent={onDeleteContent}
           onRenameContent={onRenameContent}
           deletingContentId={deletingContentId}
+          pcCachedIds={pcCachedIds}
+          showPcStatus={showPcStatus}
         />
       ) : (
         <LessonList
@@ -327,6 +471,8 @@ const SubjectLessonAccordion = ({
           onDeleteContent={onDeleteContent}
           onRenameContent={onRenameContent}
           deletingContentId={deletingContentId}
+          pcCachedIds={pcCachedIds}
+          showPcStatus={false}
         />
       )}
     </div>

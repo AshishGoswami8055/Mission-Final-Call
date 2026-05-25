@@ -1,5 +1,6 @@
 import {
   getSubjectLocalLibraryStatus,
+  getSubjectCachedContentIds,
   isLocalLibraryEnabled,
   startSubjectLocalLibraryDownload,
 } from "../services/localLibraryService.js";
@@ -59,6 +60,15 @@ export const getSubjectLocalLibraryHandler = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ message: error.message || "Could not read subject library status" });
+  }
+};
+
+export const getSubjectCachedLibraryIdsHandler = async (req, res) => {
+  try {
+    const cachedIds = await getSubjectCachedContentIds(req.params.id);
+    res.json({ cachedIds, total: cachedIds.length });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Could not read PC library cache" });
   }
 };
 
