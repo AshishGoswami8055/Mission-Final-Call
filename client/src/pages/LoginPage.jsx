@@ -9,19 +9,77 @@ import {
   FiShield,
 } from "react-icons/fi";
 import { useNavigate } from "react-router-dom";
+import api from "../api/client";
 import Loader from "../components/Loader";
+import { courseExamDate, getDefaultCourseId } from "../config/courses";
+import { VIDEO_STREAK_GOAL_MINUTES } from "../constants/streak";
+import { useStudy } from "../context/StudyContext";
 import { useAuth } from "../context/AuthContext";
 
 const REMEMBERED_LOGIN_KEY = "cds_remembered_login";
 
+const formatTodayStudy = (minutes = 0) => {
+  const mins = Math.floor(Number(minutes) || 0);
+  if (mins >= 60) {
+    const hours = Math.floor(mins / 60);
+    const rest = mins % 60;
+    return rest ? `${hours}h ${rest}m` : `${hours}h`;
+  }
+  return `${mins}m`;
+};
+
+const getFallbackExamDays = () => {
+  const exam = courseExamDate(getDefaultCourseId());
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  exam.setHours(0, 0, 0, 0);
+  return Math.max(0, Math.ceil((exam - now) / 86400000));
+};
+
 const LoginPage = () => {
   const { login } = useAuth();
+  const { todayMinutes } = useStudy();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [workspaceStats, setWorkspaceStats] = useState(null);
+  const [statsLoading, setStatsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadStats = async () => {
+      setStatsLoading(true);
+      try {
+        const { data } = await api.get("/workspace/public-stats");
+        if (!cancelled) setWorkspaceStats(data);
+      } catch {
+        if (!cancelled) {
+          setWorkspaceStats({
+            examCountdownDays: getFallbackExamDays(),
+            totalItems: null,
+            videoCount: null,
+            pdfCount: null,
+          });
+        }
+      } finally {
+        if (!cancelled) setStatsLoading(false);
+      }
+    };
+    loadStats();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const daysLeft = workspaceStats?.examCountdownDays ?? getFallbackExamDays();
+  const totalItems = workspaceStats?.totalItems;
+  const todayLabel = formatTodayStudy(todayMinutes);
+  const todayProgress = Math.min(100, Math.round((todayMinutes / VIDEO_STREAK_GOAL_MINUTES) * 100));
+  const itemsLabel =
+    statsLoading && totalItems == null ? "…" : totalItems != null ? totalItems.toLocaleString() : "—";
 
   useEffect(() => {
     const remembered = localStorage.getItem(REMEMBERED_LOGIN_KEY);
@@ -108,8 +166,17 @@ const LoginPage = () => {
                   <FiShield size={16} />
                 </span>
                 <div className="min-w-0 flex-1 space-y-1.5">
-                  <div className="h-2 w-3/5 rounded-full bg-white/30" />
-                  <div className="h-2 w-2/5 rounded-full bg-white/15" />
+                  <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                    <div
+                      className="h-full rounded-full bg-linear-to-r from-orange-400 to-amber-300 transition-[width] duration-500"
+                      style={{ width: `${todayProgress}%` }}
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    {todayProgress >= 100
+                      ? "Today's 1h video goal met"
+                      : `${todayLabel} of ${VIDEO_STREAK_GOAL_MINUTES}m today`}
+                  </p>
                 </div>
               </div>
               <div className="mt-4 grid grid-cols-3 gap-2">
@@ -118,7 +185,7 @@ const LoginPage = () => {
                     Days left
                   </p>
                   <p className="font-display mt-0.5 text-lg font-semibold tabular-nums text-white">
-                    121
+                    {statsLoading ? "…" : daysLeft}
                   </p>
                 </div>
                 <div className="rounded-lg border border-white/5 bg-black/30 p-2.5">
@@ -126,7 +193,7 @@ const LoginPage = () => {
                     Today
                   </p>
                   <p className="font-display mt-0.5 text-lg font-semibold tabular-nums text-white">
-                    1h
+                    {todayLabel}
                   </p>
                 </div>
                 <div className="rounded-lg border border-white/5 bg-black/30 p-2.5">
@@ -134,10 +201,15 @@ const LoginPage = () => {
                     Items
                   </p>
                   <p className="font-display mt-0.5 text-lg font-semibold tabular-nums text-white">
-                    248
+                    {itemsLabel}
                   </p>
                 </div>
               </div>
+              {!statsLoading && workspaceStats?.videoCount != null && (
+                <p className="mt-3 text-[10px] text-slate-500">
+                  {workspaceStats.videoCount} videos · {workspaceStats.pdfCount} PDFs in library
+                </p>
+              )}
             </div>
             <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
               CDS · IMA · 2026 written

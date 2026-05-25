@@ -17,6 +17,7 @@ import subjectRoutes from "./routes/subjectRoutes.js";
 import vocabularyRoutes from "./routes/vocabularyRoutes.js";
 import telegramRoutes from "./routes/telegramRoutes.js";
 import missionRoutes from "./routes/missionRoutes.js";
+import workspaceRoutes from "./routes/workspaceRoutes.js";
 import { errorHandler, notFound } from "./middlewares/errorMiddleware.js";
 
 dotenv.config();
@@ -39,6 +40,7 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use("/uploads", express.static(uploadsPath));
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
+app.use("/api/workspace", workspaceRoutes);
 
 app.use("/api/auth", authRoutes);
 app.use("/api/programmes", programmeRoutes);
