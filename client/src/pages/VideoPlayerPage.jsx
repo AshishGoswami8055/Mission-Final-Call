@@ -344,12 +344,22 @@ const VideoPlayerPage = () => {
 
   const handleVideoError = useCallback(() => {
     const tryLocalFallback = async () => {
+      const currentItem = itemRef.current;
+      const telegram = currentItem ? isTelegramStreamContent(currentItem) : false;
+
       if (usingLocalLibraryRef.current || cachedPlayUrlRef.current) {
         toast.error("Local video file failed to load.");
         return;
       }
       if (!isLocalFrontend() || !canCachePlayback || !id) {
-        toast.error("Video failed to load. Check Telegram connection and refresh.");
+        if (telegram) {
+          toast.error(
+            "Telegram video failed to load. Open Import from Telegram, confirm the server is connected, then retry.",
+            { duration: 9000 }
+          );
+        } else {
+          toast.error("Video failed to load. Please refresh the page and try again.");
+        }
         return;
       }
       try {

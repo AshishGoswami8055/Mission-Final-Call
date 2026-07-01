@@ -1,4 +1,4 @@
-import { serverBaseUrl } from "../api/client";
+import { getMediaApiBaseUrl, getServerBaseUrl } from "../api/client";
 
 /**
  * Mirrors server rules: app behaves as "localhost dev" when opened on these hosts.
@@ -18,12 +18,13 @@ export const toAbsoluteMediaUrl = (url) => {
   if (!url) return "";
   if (/^https?:\/\//i.test(url)) return url;
   if (url.startsWith("/")) {
+    const serverBaseUrl = getServerBaseUrl();
     if (typeof window !== "undefined" && serverBaseUrl && serverBaseUrl !== window.location.origin) {
       return `${serverBaseUrl}${url}`;
     }
     return url;
   }
-  return `${serverBaseUrl}${url}`;
+  return `${getServerBaseUrl()}${url}`;
 };
 
 /** Keep /api and /uploads on the page origin so canvas screenshot capture works in dev. */
@@ -62,14 +63,6 @@ export const isTelegramStreamContent = (item) =>
     (item.sourceType === "telegram" || item.telegramSource === true)
   );
 
-const resolveApiBase = () => {
-  // Video/canvas capture needs same-origin URLs in the browser (Vite proxies /api).
-  if (typeof window !== "undefined") return "/api";
-  const configured = String(import.meta.env.VITE_API_URL || "").trim();
-  if (configured) return configured.replace(/\/$/, "");
-  return "/api";
-};
-
 export const getTelegramStreamUrl = (item) => {
   if (!isTelegramStreamContent(item)) return "";
   return buildTelegramPreviewStreamUrl(item.telegramChannelId, item.telegramMessageId);
@@ -78,7 +71,7 @@ export const getTelegramStreamUrl = (item) => {
 /** Preview / stream URL for Telegram media before import (channelId + messageId). */
 export const buildTelegramPreviewStreamUrl = (channelId, messageId) => {
   if (!channelId || !messageId) return "";
-  const apiBase = resolveApiBase();
+  const apiBase = getMediaApiBaseUrl();
   let url = `${apiBase}/telegram/stream/${encodeURIComponent(messageId)}?channelId=${encodeURIComponent(channelId)}`;
   try {
     const token = localStorage.getItem("cds_token");

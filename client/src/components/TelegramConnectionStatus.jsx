@@ -64,7 +64,7 @@ const TelegramConnectionStatus = ({
               "Videos streamed from Telegram may buffer forever until you log in and the server reconnects."}
           </p>
           <div className="flex flex-wrap gap-2">
-            <Link to="/telegram" className="btn-secondary text-xs">
+            <Link to="/import/telegram" className="btn-secondary text-xs">
               Open Telegram settings
             </Link>
             <button type="button" className="btn-secondary text-xs" onClick={onRefresh}>
