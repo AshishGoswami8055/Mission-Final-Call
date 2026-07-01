@@ -15,7 +15,7 @@ const TelegramConnectionStatus = ({
   if (checking) {
     return (
       <div
-        className={`mb-3 flex items-center gap-2 rounded-xl border px-3 py-2 text-sm ${
+        className={`mb-0 flex items-center gap-2 rounded-xl border px-3 py-2 text-sm md:mb-3 md:py-2 ${
           isDark ? "border-neutral-700 bg-neutral-900 text-slate-300" : "border-slate-200 bg-slate-50 text-slate-600"
         }`}
       >
@@ -28,7 +28,7 @@ const TelegramConnectionStatus = ({
   if (live) {
     return (
       <div
-        className={`mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 text-sm ${
+        className={`mb-0 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 text-sm md:mb-3 ${
           isDark
             ? "border-emerald-900/50 bg-emerald-950/30 text-emerald-300"
             : "border-emerald-200 bg-emerald-50 text-emerald-800"
@@ -49,7 +49,7 @@ const TelegramConnectionStatus = ({
 
   return (
     <div
-      className={`mb-3 rounded-xl border px-3 py-3 text-sm ${
+      className={`mb-0 rounded-xl border px-3 py-3 text-sm md:mb-3 ${
         isDark ? "border-amber-900/50 bg-amber-950/30 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-900"
       }`}
     >

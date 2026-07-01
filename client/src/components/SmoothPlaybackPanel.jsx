@@ -109,7 +109,7 @@ const SmoothPlaybackPanel = ({
     : "border-slate-200/90 bg-slate-50/80";
 
   return (
-    <div className={`mt-3 rounded-xl border px-3 py-3 sm:px-4 ${shell}`}>
+    <div className={`mt-0 rounded-xl border px-3 py-3 md:mt-3 sm:px-4 ${shell}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -125,7 +125,7 @@ const SmoothPlaybackPanel = ({
                   ? `${statusMessage}${progressPercent > 0 ? ` ${progressPercent}%` : ""}`
                   : "Download this lecture to your PC for fast, smooth playback."}
           </p>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-500">
+          <p className="mt-1 hidden text-xs text-slate-500 dark:text-slate-500 md:block">
             Study time still syncs to your account — visible on production too.
           </p>
         </div>

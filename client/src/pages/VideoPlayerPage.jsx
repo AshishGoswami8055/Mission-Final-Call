@@ -17,6 +17,7 @@ import {
 import { Link, useParams } from "react-router-dom";
 import api from "../api/client";
 import { useTelegramPlaybackStatus } from "../hooks/useTelegramPlaybackStatus";
+import MobileCollapsibleSection from "../components/MobileCollapsibleSection";
 import StudyTracker from "../components/StudyTracker";
 import CdsPlyrPlayer from "../components/CdsPlyrPlayer";
 import TelegramConnectionStatus from "../components/TelegramConnectionStatus";
@@ -35,6 +36,7 @@ const VIDEO_POSITION_KEY = (contentId) => `cds_video_position_${contentId}`;
 const VIDEO_PAGE_THEME_KEY = "cds_video_page_theme";
 const MIN_RESUME_SECONDS = 5;
 const SAVE_INTERVAL_SECONDS = 5;
+const MOBILE_PDF_PREVIEW = 5;
 
 const formatTime = (seconds = 0) => {
   const safe = Math.max(0, Math.floor(seconds));
@@ -136,6 +138,7 @@ const VideoPlayerPage = () => {
   const [playbackSourceReady, setPlaybackSourceReady] = useState(false);
   const [playerGeneration, setPlayerGeneration] = useState(0);
   const [playbackStalled, setPlaybackStalled] = useState(false);
+  const [mobilePdfShowAll, setMobilePdfShowAll] = useState(false);
   const usingCacheRef = useRef(false);
   const usingLocalLibraryRef = useRef(false);
   const videoRef = useRef(null);
@@ -271,6 +274,7 @@ const VideoPlayerPage = () => {
   useEffect(() => {
     setPlayerGeneration(0);
     setPlaybackStalled(false);
+    setMobilePdfShowAll(false);
   }, [id]);
 
   const handleRetryPlayback = useCallback(async () => {
@@ -767,7 +771,7 @@ const VideoPlayerPage = () => {
         isDark ? "page-viewer--dark text-slate-100" : "text-slate-800"
       }`}
     >
-      <header className="watch-toolbar lg:mx-auto lg:max-w-[1400px] lg:border-0 lg:bg-transparent lg:px-6 lg:backdrop-blur-none">
+      <header className="watch-toolbar hidden md:flex lg:mx-auto lg:max-w-[1400px] lg:border-0 lg:bg-transparent lg:px-6 lg:backdrop-blur-none">
         <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
           <Link
             to="/"
@@ -804,6 +808,19 @@ const VideoPlayerPage = () => {
       ) : (
         <>
           <div className="watch-stage">
+            <div className="watch-float-nav md:hidden" aria-hidden={false}>
+              <Link to="/" className="watch-float-btn" aria-label="Back">
+                <FiArrowLeft size={20} />
+              </Link>
+              <button
+                type="button"
+                className="watch-float-btn"
+                onClick={() => setPageDark((d) => !d)}
+                aria-label="Toggle theme"
+              >
+                {isDark ? <FiSun size={18} /> : <FiMoon size={18} />}
+              </button>
+            </div>
             {isTelegramLink ? (
               <div className="relative aspect-video w-full overflow-hidden bg-black">
                 {item?.thumbnail ? (
@@ -948,141 +965,200 @@ const VideoPlayerPage = () => {
           </div>
 
           <div className="watch-body">
-            <div>
-              <h1 className="text-base font-semibold leading-snug sm:text-2xl">{item.title}</h1>
-              <p className={`mt-1 text-xs sm:text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
-                {item.subjectId?.name} / {item.chapterId?.chapterName}
+            <div className="watch-meta">
+              <h1 className="text-[15px] font-semibold leading-snug md:text-2xl">{item.title}</h1>
+              <p className={`mt-0.5 line-clamp-1 text-xs md:mt-1 md:text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+                {item.subjectId?.name} · {item.chapterId?.chapterName}
               </p>
             </div>
 
-            {isLocalFrontend() ? (
-              <SmoothPlaybackPanel
-                contentId={id}
-                eligible={canCachePlayback}
-                isDark={isDark}
-                onPlayUrlChange={setCachedPlayUrl}
-                onUsingLocalLibraryChange={(value) => {
-                  usingLocalLibraryRef.current = value;
-                  usingCacheRef.current = value;
-                }}
-                onPrepareDownload={async () => {
-                  const video = videoRef.current;
-                  if (video && !video.paused) {
-                    video.pause();
-                    setIsPlaying(false);
-                    await new Promise((resolve) => setTimeout(resolve, 600));
-                  }
-                }}
-              />
-            ) : (
-              <VideoPlaybackCachePanel
-                contentId={id}
-                eligible={canCachePlayback}
-                isDark={isDark}
-                onPlayUrlChange={setCachedPlayUrl}
-                onUsingCacheChange={(value) => {
-                  usingCacheRef.current = value;
-                }}
-              />
-            )}
-
-            {isTelegramStream ? (
-              <TelegramConnectionStatus
-                checking={telegramStatus.checking}
-                connected={telegramStatus.connected}
-                live={telegramStatus.live}
-                error={telegramStatus.error}
-                phone={telegramStatus.phone}
-                isDark={isDark}
-                onRefresh={refreshTelegramStatus}
-                onResetSession={handleResetTelegramSession}
-                resetting={telegramStatusResetting}
-              />
-            ) : null}
-
-            <div
-              className={`rounded-xl border p-3 sm:rounded-2xl sm:p-4 ${
-                isDark ? "border-neutral-800 bg-neutral-950" : "border-slate-200 bg-white"
-              }`}
+            {/* Mobile: tools collapsed by default */}
+            <MobileCollapsibleSection
+              key={`tools-${id}`}
+              title="Playback tools"
+              subtitle={
+                isTelegramStream && !telegramStatus.live
+                  ? "Telegram connection required"
+                  : "Smooth playback & cache"
+              }
+              defaultOpen={isTelegramStream && !telegramStatus.live && !telegramStatus.checking}
+              isDark={isDark}
+              badge={isTelegramStream && !telegramStatus.live ? "!" : ""}
             >
-            <h2 className="text-sm font-semibold">Chapter PDFs</h2>
-            <p className={`text-xs ${isDark ? "text-slate-400" : "text-slate-500"}`}>
-              Quick notes for this video chapter.
-            </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {loadingPdfs && <p className={`text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>Loading PDFs…</p>}
-              {!loadingPdfs && !relatedPdfs.length && (
-                <p className={`text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
-                  No PDF found in this chapter yet.
-                </p>
-              )}
-              {relatedPdfs.map((pdf) => {
-                const pdfSrc = resolveContentSrc(pdf);
-                return (
-                  <a
-                    key={pdf._id}
-                    href={pdfSrc}
-                    target="_blank"
-                    rel="noreferrer"
-                    className={`inline-flex max-w-full items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-medium ${
-                      isDark
-                        ? "border-neutral-700 bg-neutral-900 text-slate-200 hover:bg-neutral-800"
-                        : "border-blue-200 bg-white text-blue-700 hover:bg-blue-50"
-                    }`}
-                    title={pdf.title}
-                  >
-                    <FiFileText size={12} />
-                    <span className="max-w-52 truncate">{pdf.title}</span>
-                  </a>
-                );
-              })}
-            </div>
-          </div>
-
-          <div
-            className={`rounded-xl border p-3 sm:rounded-2xl sm:p-4 ${
-              isDark ? "border-neutral-800 bg-neutral-950" : "border-slate-200 bg-white"
-            }`}
-          >
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <h2 className="text-sm font-semibold">Screenshot Notes</h2>
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  className="btn-secondary flex-1 text-xs sm:flex-none"
-                  onClick={handleDownloadAllScreenshotsPdf}
-                  disabled={exportingPdf || !screenshotNotes.length}
-                >
-                  <FiDownload size={13} />
-                  {exportingPdf ? "Generating PDF..." : "Download PDF"}
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary flex-1 text-xs sm:flex-none"
-                  onClick={handleCaptureScreenshot}
-                  disabled={capturePending}
-                >
-                  <FiCamera size={13} />
-                  {capturePending ? "Saving..." : "Capture note"}
-                </button>
+              <div className="space-y-2 md:space-y-3">
+                {isLocalFrontend() ? (
+                  <SmoothPlaybackPanel
+                    contentId={id}
+                    eligible={canCachePlayback}
+                    isDark={isDark}
+                    onPlayUrlChange={setCachedPlayUrl}
+                    onUsingLocalLibraryChange={(value) => {
+                      usingLocalLibraryRef.current = value;
+                      usingCacheRef.current = value;
+                    }}
+                    onPrepareDownload={async () => {
+                      const video = videoRef.current;
+                      if (video && !video.paused) {
+                        video.pause();
+                        setIsPlaying(false);
+                        await new Promise((resolve) => setTimeout(resolve, 600));
+                      }
+                    }}
+                  />
+                ) : (
+                  <VideoPlaybackCachePanel
+                    contentId={id}
+                    eligible={canCachePlayback}
+                    isDark={isDark}
+                    onPlayUrlChange={setCachedPlayUrl}
+                    onUsingCacheChange={(value) => {
+                      usingCacheRef.current = value;
+                    }}
+                  />
+                )}
+                {isTelegramStream ? (
+                  <TelegramConnectionStatus
+                    checking={telegramStatus.checking}
+                    connected={telegramStatus.connected}
+                    live={telegramStatus.live}
+                    error={telegramStatus.error}
+                    phone={telegramStatus.phone}
+                    isDark={isDark}
+                    onRefresh={refreshTelegramStatus}
+                    onResetSession={handleResetTelegramSession}
+                    resetting={telegramStatusResetting}
+                  />
+                ) : null}
               </div>
-            </div>
-            <p className={`text-xs ${isDark ? "text-slate-400" : "text-slate-500"}`}>
-              Capture key frames while watching. Click image to open in new tab, or click timestamp to jump in video.
-            </p>
-            {(isYoutube || isTelegramLink) && (
-              <p className="mt-2 text-xs text-sky-500 dark:text-sky-400">
-                For externally hosted videos (YouTube, Telegram links): notes use thumbnails where available; use Capture when
-                the video plays inside this page.
+            </MobileCollapsibleSection>
+
+            <MobileCollapsibleSection
+              key={`pdfs-${id}`}
+              title="Chapter PDFs"
+              subtitle={
+                relatedPdfs.length
+                  ? `${relatedPdfs.length} document${relatedPdfs.length === 1 ? "" : "s"} in this chapter`
+                  : "No PDFs in this chapter"
+              }
+              badge={relatedPdfs.length ? String(relatedPdfs.length) : ""}
+              defaultOpen={relatedPdfs.length > 0 && relatedPdfs.length <= 3}
+              isDark={isDark}
+            >
+              <div className="flex flex-col gap-2">
+                {loadingPdfs && (
+                  <p className={`text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>Loading PDFs…</p>
+                )}
+                {!loadingPdfs && !relatedPdfs.length && (
+                  <p className={`text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+                    No PDF found in this chapter yet.
+                  </p>
+                )}
+                <div className="flex flex-col gap-2 md:hidden">
+                  {(mobilePdfShowAll ? relatedPdfs : relatedPdfs.slice(0, MOBILE_PDF_PREVIEW)).map((pdf) => {
+                    const pdfSrc = resolveContentSrc(pdf);
+                    return (
+                      <a
+                        key={pdf._id}
+                        href={pdfSrc}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={`flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-sm font-medium transition active:scale-[0.99] ${
+                          isDark
+                            ? "border-neutral-700 bg-neutral-900 text-slate-200 hover:bg-neutral-800"
+                            : "border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100"
+                        }`}
+                        title={pdf.title}
+                      >
+                        <FiFileText size={14} className="shrink-0" />
+                        <span className="min-w-0 truncate">{pdf.title}</span>
+                      </a>
+                    );
+                  })}
+                  {!mobilePdfShowAll && relatedPdfs.length > MOBILE_PDF_PREVIEW && (
+                    <button
+                      type="button"
+                      className="btn-ghost w-full text-xs"
+                      onClick={() => setMobilePdfShowAll(true)}
+                    >
+                      Show all {relatedPdfs.length} PDFs
+                    </button>
+                  )}
+                </div>
+                <div className="hidden flex-wrap gap-2 md:flex">
+                  {relatedPdfs.map((pdf) => {
+                    const pdfSrc = resolveContentSrc(pdf);
+                    return (
+                      <a
+                        key={pdf._id}
+                        href={pdfSrc}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={`inline-flex max-w-full items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-medium ${
+                          isDark
+                            ? "border-neutral-700 bg-neutral-900 text-slate-200 hover:bg-neutral-800"
+                            : "border-blue-200 bg-white text-blue-700 hover:bg-blue-50"
+                        }`}
+                        title={pdf.title}
+                      >
+                        <FiFileText size={12} />
+                        <span className="max-w-52 truncate">{pdf.title}</span>
+                      </a>
+                    );
+                  })}
+                </div>
+              </div>
+            </MobileCollapsibleSection>
+
+            <MobileCollapsibleSection
+              key={`notes-${id}`}
+              title="Screenshot notes"
+              subtitle={
+                screenshotNotes.length
+                  ? `${screenshotNotes.length} saved frame${screenshotNotes.length === 1 ? "" : "s"}`
+                  : "Capture frames while watching"
+              }
+              badge={screenshotNotes.length ? String(screenshotNotes.length) : ""}
+              defaultOpen={screenshotNotes.length > 0}
+              isDark={isDark}
+            >
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between md:mb-1">
+                <div className="flex gap-2 md:hidden" />
+                <div className="flex w-full gap-2 sm:w-auto">
+                  <button
+                    type="button"
+                    className="btn-secondary flex-1 text-xs sm:flex-none"
+                    onClick={handleCaptureScreenshot}
+                    disabled={capturePending}
+                  >
+                    <FiCamera size={13} />
+                    {capturePending ? "Saving…" : "Capture"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary flex-1 text-xs sm:flex-none"
+                    onClick={handleDownloadAllScreenshotsPdf}
+                    disabled={exportingPdf || !screenshotNotes.length}
+                  >
+                    <FiDownload size={13} />
+                    {exportingPdf ? "PDF…" : "Export PDF"}
+                  </button>
+                </div>
+              </div>
+              <p className={`mt-2 hidden text-xs md:block ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+                Capture key frames while watching. Tap a timestamp to jump in the video.
               </p>
-            )}
-            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {!screenshotNotes.length && (
-                <p className={`text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
-                  No screenshot notes yet.
+              {(isYoutube || isTelegramLink) && (
+                <p className="mt-2 hidden text-xs text-sky-500 dark:text-sky-400 md:block">
+                  For externally hosted videos, notes use thumbnails where available.
                 </p>
               )}
-              {screenshotNotes.map((note) => (
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {!screenshotNotes.length && (
+                  <p className={`text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+                    No screenshot notes yet.
+                  </p>
+                )}
+                {screenshotNotes.map((note) => (
                 <article
                   key={note.id}
                   className={`overflow-hidden rounded-lg border ${
@@ -1164,8 +1240,8 @@ const VideoPlayerPage = () => {
                   </div>
                 </article>
               ))}
-            </div>
-          </div>
+              </div>
+            </MobileCollapsibleSection>
           </div>
         </>
       )}

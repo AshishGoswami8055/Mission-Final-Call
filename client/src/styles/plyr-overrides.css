@@ -42,6 +42,13 @@
   .watch-stage .cds-plyr-shell .plyr__time {
     font-size: 12px;
   }
+
+  .watch-stage .cds-plyr-shell,
+  .watch-stage .cds-plyr-shell .plyr,
+  .watch-stage .cds-plyr-shell video {
+    width: 100%;
+    max-width: 100%;
+  }
 }
 
 .cds-plyr-shell .plyr__control--overlaid {
