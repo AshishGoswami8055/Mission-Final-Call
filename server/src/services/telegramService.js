@@ -757,6 +757,35 @@ export const fetchAllChannelMediaEnriched = async ({ channelId, maxMessages = 30
   return items;
 };
 
+/**
+ * Fast update check: fetch ONLY media messages newer than `minId` in a single
+ * Telegram round-trip (no per-topic scans). When `minId` equals the newest
+ * imported message id, Telegram returns nothing and the check is instant.
+ */
+export const fetchNewChannelMediaSince = async ({ channelId, minId = 0, maxMessages = 3000 }) => {
+  const client = await getTelegramClient();
+  const entity = await client.getEntity(channelId);
+
+  const options = { limit: Math.min(Math.max(Number(maxMessages) || 3000, 1), 3000) };
+  const numericMinId = Number(minId) || 0;
+  if (numericMinId > 0) options.minId = numericMinId;
+
+  const rawMessages = await client.getMessages(entity, options);
+  const captionByMediaId = enrichCaptionsFromTopicContext(rawMessages);
+
+  const items = [];
+  for (const message of rawMessages) {
+    if (numericMinId > 0 && Number(message.id) <= numericMinId) continue;
+    const meta = getDocumentMeta(message);
+    if (!meta) continue;
+    const extraCaption = captionByMediaId.get(Number(meta.messageId));
+    if (extraCaption) applyCaptionToMeta(meta, extraCaption);
+    items.push(meta);
+  }
+  items.sort((a, b) => a.messageId - b.messageId);
+  return items;
+};
+
 export const getTelegramMessageMedia = async ({ channelId, messageId, topicId = null }) => {
   const client = await ensureTelegramClient();
   const entity = await client.getEntity(channelId);

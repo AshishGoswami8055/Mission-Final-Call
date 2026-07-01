@@ -10,6 +10,7 @@ import {
   fetchForumTopicsForChannel,
   fetchForumTopicsByIds,
   fetchMediaInTopic,
+  fetchNewChannelMediaSince,
   getActiveSession,
 } from "./telegramService.js";
 import { deleteContentsWithAssets } from "./contentCleanupService.js";
@@ -29,7 +30,11 @@ import {
   reconcileBlockedTopicsForProgramme,
   unblockTelegramSubjectsForImport,
 } from "./telegramSubjectBlocklist.js";
-import { isVirtualFlatTopicId } from "../utils/telegramFlatChannel.js";
+import {
+  isVirtualFlatTopicId,
+  inferFlatChannelSubjectKey,
+  subjectKeyToVirtualTopicId,
+} from "../utils/telegramFlatChannel.js";
 
 const normalizeKey = (value = "") =>
   String(value || "")
@@ -1144,48 +1149,110 @@ export const getProgrammeSubjectUpdates = async ({ programmeId }) => {
   }
 
   const mappingByChannel = new Map(mappings.map((row) => [String(row.channelId), row]));
-  const previewCache = new Map();
-  const subjects = [];
 
+  const subjectsByChannel = new Map();
   for (const sub of batchSubjects) {
     const channelId = String(sub.telegramChannelId);
+    if (!subjectsByChannel.has(channelId)) subjectsByChannel.set(channelId, []);
+    subjectsByChannel.get(channelId).push(sub);
+  }
+
+  const subjects = [];
+
+  for (const [channelId, channelSubjects] of subjectsByChannel) {
     const mapping = mappingByChannel.get(channelId);
     if (!mapping) {
-      subjects.push({
-        subjectId: String(sub._id),
-        subjectName: sub.name,
-        topicId: Number(sub.telegramTopicId) || null,
-        newCount: 0,
-        hasUpdate: false,
-        newVideos: 0,
-        newPdfs: 0,
-        topicTitle: sub.name,
-        linkedToChannel: false,
-      });
+      for (const sub of channelSubjects) {
+        subjects.push({
+          subjectId: String(sub._id),
+          subjectName: sub.name,
+          topicId: Number(sub.telegramTopicId) || null,
+          newCount: 0,
+          hasUpdate: false,
+          newVideos: 0,
+          newPdfs: 0,
+          topicTitle: sub.name,
+          linkedToChannel: false,
+        });
+      }
       continue;
     }
 
-    if (!previewCache.has(channelId)) {
-      previewCache.set(channelId, await fetchForumTopicsPreview({ channelId }));
-    }
-    const preview = previewCache.get(channelId);
-    const topicById = new Map(preview.topics.map((t) => [Number(t.id), t]));
-    const topic = findPreviewTopicForSubject(sub, { mapping, preview, topicById });
-    const newMedia = (topic?.media || []).filter((m) => !m.imported);
-    const newCount = topic ? (topic.newCount ?? newMedia.length) : 0;
+    // Newest imported message id for this channel — Telegram only returns
+    // messages after this, so an up-to-date channel responds instantly.
+    const newestImported = await Content.findOne({ telegramChannelId: channelId })
+      .sort({ telegramMessageId: -1 })
+      .select("telegramMessageId")
+      .lean();
+    const minId = Number(newestImported?.telegramMessageId || 0);
 
-    subjects.push({
-      subjectId: String(sub._id),
-      subjectName: sub.name,
-      topicId: Number(topic?.id || sub.telegramTopicId),
-      newCount,
-      hasUpdate: newCount > 0,
-      newVideos: newMedia.filter((m) => m.mediaType === "video").length,
-      newPdfs: newMedia.filter((m) => m.mediaType === "pdf").length,
-      topicTitle: topic?.title || sub.name,
-      linkedToChannel: Boolean(topic),
-      channelId,
-    });
+    let newMedia = [];
+    try {
+      newMedia = await fetchNewChannelMediaSince({ channelId, minId });
+    } catch {
+      newMedia = [];
+    }
+
+    // Safety: drop anything already imported (e.g. older gaps re-surfaced).
+    if (newMedia.length) {
+      const candidateIds = newMedia.map((m) => Number(m.messageId));
+      const importedRows = await Content.find({
+        telegramChannelId: channelId,
+        telegramMessageId: { $in: candidateIds },
+      })
+        .select("telegramMessageId")
+        .lean();
+      const importedSet = new Set(importedRows.map((r) => Number(r.telegramMessageId)));
+      newMedia = newMedia.filter((m) => !importedSet.has(Number(m.messageId)));
+    }
+
+    const isFlatChannel = mapping.channelMode === "flat";
+
+    // Bucket new media by topic (forum) or inferred subject key (flat).
+    const countsByTopic = new Map();
+    const countsByKey = new Map();
+    const bump = (bucket, mapRef, mediaType) => {
+      const row = mapRef.get(bucket) || { total: 0, video: 0, pdf: 0 };
+      row.total += 1;
+      if (mediaType === "video") row.video += 1;
+      else row.pdf += 1;
+      mapRef.set(bucket, row);
+    };
+
+    for (const media of newMedia) {
+      if (isFlatChannel) {
+        const key = inferFlatChannelSubjectKey(media);
+        if (key) bump(key, countsByKey, media.mediaType);
+      } else {
+        const tid = Number(media.topicId) || 0;
+        if (tid) bump(tid, countsByTopic, media.mediaType);
+      }
+    }
+
+    for (const sub of channelSubjects) {
+      let counts = { total: 0, video: 0, pdf: 0 };
+      let topicId = Number(sub.telegramTopicId) || null;
+
+      if (isFlatChannel && sub.telegramSubjectKey) {
+        counts = countsByKey.get(sub.telegramSubjectKey) || counts;
+        topicId = subjectKeyToVirtualTopicId(sub.telegramSubjectKey);
+      } else if (!isFlatChannel && sub.telegramTopicId) {
+        counts = countsByTopic.get(Number(sub.telegramTopicId)) || counts;
+      }
+
+      subjects.push({
+        subjectId: String(sub._id),
+        subjectName: sub.name,
+        topicId,
+        newCount: counts.total,
+        hasUpdate: counts.total > 0,
+        newVideos: counts.video,
+        newPdfs: counts.pdf,
+        topicTitle: sub.name,
+        linkedToChannel: true,
+        channelId,
+      });
+    }
   }
 
   const totalNew = subjects.reduce((sum, s) => sum + s.newCount, 0);
