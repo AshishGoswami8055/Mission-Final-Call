@@ -31,12 +31,25 @@ import CoachingBatchSection from "../components/CoachingBatchSection";
 import OperationProgressOverlay from "../components/OperationProgressOverlay";
 import ExamCountdown from "../components/ExamCountdown";
 import Layout from "../components/Layout";
+import { useStudy } from "../context/StudyContext";
+import MobileDashboardFab from "../components/MobileDashboardFab";
+import MobileDashboardGlance from "../components/MobileDashboardGlance";
 import { SkeletonCard } from "../components/Loader";
 import ProgrammeModal from "../components/ProgrammeModal";
 import StudyTracker from "../components/StudyTracker";
 import SubjectModal from "../components/SubjectModal";
 import { useLocation, useNavigate } from "react-router-dom";
-import { COURSES, getCourseById, getDefaultCourseId } from "../config/courses";
+import { COURSES, courseExamDate, getCourseById, getDefaultCourseId } from "../config/courses";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const getExamDaysLeft = (courseId) => {
+  const target = courseExamDate(courseId);
+  const current = new Date();
+  current.setHours(0, 0, 0, 0);
+  const exam = new Date(target);
+  exam.setHours(0, 0, 0, 0);
+  return Math.max(0, Math.ceil((exam - current) / DAY_MS));
+};
 
 const FILTERS_STORAGE_KEY = "cds_dashboard_filters";
 
@@ -84,6 +97,7 @@ const DashboardPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
+  const { todayMinutes, targetMinutes } = useStudy();
   const initialFilters = getInitialFilters();
   // If the persisted cycle id is no longer in the COURSES list (e.g. legacy
   // "cds-1-2026" after we narrowed the UI to CDS (II) 2026), drop it to the
@@ -1343,10 +1357,27 @@ const DashboardPage = () => {
       searchValue={search}
       onSearchChange={setSearch}
       searchPlaceholder="Search content…"
+      showSearch={showLibraryView}
+      mobileCompactHeader
     >
-      <div className="space-y-4">
-        {/* Metric tiles — first row, matches the reference exactly */}
-        <section className="anim-fade-in-up stagger grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <MobileDashboardFab
+        onAddContent={() => setContentModalOpen(true)}
+        onImportTelegram={openTelegramImport}
+        importDisabled={!selectedProgrammeId}
+      />
+
+      <div className="space-y-3 md:space-y-4">
+        <MobileDashboardGlance
+          todayMinutes={todayMinutes}
+          targetMinutes={targetMinutes}
+          completionPercent={completionPercent}
+          totalVideos={dashboardStats.totalVideos}
+          totalItems={scopedTotal}
+          daysLeft={getExamDaysLeft(selectedCdsCycleId)}
+        />
+
+        {/* Metric tiles — desktop/tablet only */}
+        <section className="anim-fade-in-up stagger hidden gap-3 md:grid sm:grid-cols-2 xl:grid-cols-4">
           {[
             {
               label: "Total content",
@@ -1395,8 +1426,8 @@ const DashboardPage = () => {
           ))}
         </section>
 
-        {/* Charts row — Study tracker + Exam countdown */}
-        <section className="grid gap-3 lg:grid-cols-2">
+        {/* Charts row — desktop/tablet only */}
+        <section className="hidden gap-3 md:grid lg:grid-cols-2">
           <StudyTracker subjects={subjects} />
           <ExamCountdown activeCourseId={selectedCdsCycleId} />
         </section>
@@ -1415,7 +1446,7 @@ const DashboardPage = () => {
 
         {/* Chapter progress callout */}
         {progress && (
-          <div className="card flex flex-wrap items-center justify-between gap-3 p-4">
+          <div className="card hidden flex-wrap items-center justify-between gap-3 p-4 md:flex">
             <div className="min-w-0">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Chapter progress

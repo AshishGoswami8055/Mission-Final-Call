@@ -111,7 +111,7 @@ const SubjectListRow = ({
 
   return (
     <div
-      className={`group flex items-center gap-3 rounded-xl border border-slate-200/90 bg-white px-3 py-2.5 transition hover:border-teal-300 hover:bg-teal-50/40 dark:border-white/10 dark:bg-[#1a1a1a] dark:hover:border-teal-700 dark:hover:bg-teal-950/20 sm:px-4 sm:py-3 ${
+      className={`group flex items-center gap-2 rounded-xl border border-slate-200/90 bg-white px-3 py-3 transition active:bg-slate-50 dark:border-white/10 dark:bg-[#1a1a1a] dark:active:bg-white/5 md:gap-3 md:py-2.5 md:hover:border-teal-300 md:hover:bg-teal-50/40 md:dark:hover:border-teal-700 md:dark:hover:bg-teal-950/20 sm:px-4 sm:md:py-3 ${
         busy ? "opacity-80" : ""
       }`}
     >
@@ -137,18 +137,20 @@ const SubjectListRow = ({
               </span>
             )}
           </span>
-          <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+          <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500 dark:text-slate-400">
             <span>{total ? `${total} lessons` : "No content"}</span>
-            {videoCount > 0 && <span>{videoCount} videos</span>}
-            {pdfCount > 0 && <span>{pdfCount} PDFs</span>}
             {total > 0 && (
               <span className={completionPct === 100 ? "font-medium text-emerald-600 dark:text-emerald-400" : ""}>
-                {completionPct}% complete
+                · {completionPct}%
               </span>
             )}
+            <span className="hidden md:inline">
+              {videoCount > 0 && <span>{videoCount} videos</span>}
+              {pdfCount > 0 && <span>{pdfCount} PDFs</span>}
+            </span>
           </span>
           {total > 0 && (
-            <span className="mt-2 block h-1.5 max-w-xs overflow-hidden rounded-full bg-slate-100 dark:bg-white/10">
+            <span className="mt-2 hidden h-1.5 max-w-xs overflow-hidden rounded-full bg-slate-100 dark:bg-white/10 md:block">
               <span
                 className={`block h-full rounded-full transition-all ${
                   completionPct === 100 ? "bg-emerald-500" : "bg-teal-500"
@@ -160,7 +162,7 @@ const SubjectListRow = ({
         </span>
         <FiChevronRight className="shrink-0 text-slate-300 group-hover:text-teal-500 dark:text-slate-600" size={18} />
       </button>
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="hidden shrink-0 items-center gap-1 md:flex">
         {onRenameSubject && (
           <button
             type="button"

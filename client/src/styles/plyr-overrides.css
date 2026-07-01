@@ -15,9 +15,33 @@
 }
 
 .cds-plyr-shell .plyr {
-  border-radius: 0.75rem;
+  border-radius: 0;
   overflow: hidden;
   width: 100%;
+}
+
+@media (min-width: 1024px) {
+  .cds-plyr-shell .plyr {
+    border-radius: 0.75rem;
+  }
+}
+
+.watch-stage .cds-plyr-shell {
+  --plyr-control-spacing: 10px;
+}
+
+@media (max-width: 639px) {
+  .watch-stage .cds-plyr-shell .plyr__controls {
+    padding: 8px 6px;
+  }
+
+  .watch-stage .cds-plyr-shell .plyr__control {
+    padding: 6px;
+  }
+
+  .watch-stage .cds-plyr-shell .plyr__time {
+    font-size: 12px;
+  }
 }
 
 .cds-plyr-shell .plyr__control--overlaid {

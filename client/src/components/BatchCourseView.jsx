@@ -155,14 +155,14 @@ const BatchCourseView = ({
 
   if (activeSubjectId && activeSubject) {
     return (
-      <section className="space-y-4">
-        <div className="rounded-2xl border border-slate-200/90 bg-white p-4 dark:border-white/10 dark:bg-[#1a1a1a] sm:p-5">
-          <button type="button" className="btn-ghost mb-3 text-sm" onClick={onBackToSubjects}>
-            <FiArrowLeft size={14} /> Back to subjects
+      <section className="space-y-3 md:space-y-4">
+        <div className="mobile-course-header sticky top-0 z-20 border-b border-slate-200/90 bg-white/95 backdrop-blur-md dark:border-white/10 dark:bg-[#0a0a0a]/95 md:static md:rounded-2xl md:border md:p-4 md:backdrop-blur-none sm:md:p-5">
+          <button type="button" className="btn-ghost -ml-1 mb-1 px-2! py-1.5! text-sm md:mb-3" onClick={onBackToSubjects}>
+            <FiArrowLeft size={16} /> Back
           </button>
-          <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-start justify-between gap-2 md:flex-wrap md:gap-3">
             <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              <p className="hidden text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400 md:block">
                 Home / {batchName} / {activeSubject.name}
               </p>
               {editingSubjectName ? (
@@ -200,8 +200,8 @@ const BatchCourseView = ({
                   </button>
                 </div>
               ) : (
-                <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <h2 className="font-display text-2xl font-bold text-slate-900 dark:text-slate-50 sm:text-3xl">
+                <div className="mt-0.5 flex flex-wrap items-center gap-2 md:mt-1">
+                  <h2 className="font-display text-lg font-bold leading-tight text-slate-900 dark:text-slate-50 md:text-2xl sm:md:text-3xl">
                     {activeSubject.name}
                   </h2>
                   {onRenameSubject && (
@@ -221,12 +221,12 @@ const BatchCourseView = ({
                   )}
                 </div>
               )}
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 md:mt-1 md:text-sm">
                 {subjectContents.filter((c) => c.type === "video").length} videos ·{" "}
                 {subjectContents.filter((c) => c.type === "pdf").length} PDFs
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="hidden shrink-0 flex-wrap gap-2 md:flex">
               {activeSubject.telegramTopicId != null && onUpdateSubject && (
                 <button
                   type="button"
@@ -286,8 +286,8 @@ const BatchCourseView = ({
   }
 
   return (
-    <section className="space-y-4">
-      <div className="rounded-2xl border border-slate-200/90 bg-white p-4 dark:border-white/10 dark:bg-[#1a1a1a] sm:p-5">
+    <section className="space-y-3 md:space-y-4">
+      <div className="hidden rounded-2xl border border-slate-200/90 bg-white p-4 dark:border-white/10 dark:bg-[#1a1a1a] md:block sm:p-5">
         <p className="text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
           Home / Course Details
         </p>
@@ -403,42 +403,72 @@ const BatchCourseView = ({
         )}
       </div>
 
+      <div className="flex items-center justify-between gap-2 md:hidden">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-50">{batchName}</p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            {displaySubjects.length} subjects · {batchSummary.completionPct}% complete
+          </p>
+        </div>
+        {onUpdateBatch && hasTelegramSubjects && (
+          <button
+            type="button"
+            className="btn-secondary shrink-0 px-3! py-2! text-xs"
+            disabled={batchUpdating || checkingUpdates || updatesLoading}
+            onClick={onUpdateBatch}
+          >
+            {batchUpdating ? <FiLoader size={14} className="animate-spin" /> : <FiRefreshCw size={14} />}
+            Sync
+          </button>
+        )}
+      </div>
+
+      {displaySubjects.length > 0 && batchSummary.totalLessons > 0 && (
+        <div className="md:hidden">
+          <div className="h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-white/10">
+            <div
+              className="h-full rounded-full bg-teal-600 transition-all"
+              style={{ width: `${batchSummary.completionPct}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       {displaySubjects.length > 0 && (
-        <div className="rounded-2xl border border-slate-200/90 bg-white p-3 dark:border-white/10 dark:bg-[#1a1a1a] sm:p-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-            <div className="relative min-w-0 flex-1">
-              <FiSearch
-                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                size={16}
-              />
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search subjects…"
-                className="input w-full pl-10 text-sm"
-              />
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {[
-                { id: "all", label: "All" },
-                { id: "updates", label: "Has updates" },
-                { id: "incomplete", label: "In progress" },
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                    filterTab === tab.id
-                      ? "bg-teal-600 text-white"
-                      : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-white/10 dark:text-slate-300 dark:hover:bg-white/15"
-                  }`}
-                  onClick={() => setFilterTab(tab.id)}
-                >
-                  {tab.label}
-                </button>
-              ))}
-              <div className="flex rounded-lg border border-slate-200 p-0.5 dark:border-white/10">
+        <div className="rounded-xl border border-slate-200/90 bg-white p-3 dark:border-white/10 dark:bg-[#1a1a1a] md:rounded-2xl md:p-4">
+          <div className="relative min-w-0">
+            <FiSearch
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+              size={16}
+            />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search subjects…"
+              className="input w-full pl-10 text-sm"
+            />
+          </div>
+          <div className="mt-2 flex gap-1.5 overflow-x-auto md:mt-3 md:flex-wrap md:items-center md:gap-2">
+            {[
+              { id: "all", label: "All" },
+              { id: "updates", label: "Updates" },
+              { id: "incomplete", label: "In progress" },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                  filterTab === tab.id
+                    ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
+                    : "bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-300"
+                }`}
+                onClick={() => setFilterTab(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+            <div className="ml-auto hidden rounded-lg border border-slate-200 p-0.5 dark:border-white/10 md:flex">
                 <button
                   type="button"
                   className={`rounded-md p-2 transition ${
@@ -465,8 +495,7 @@ const BatchCourseView = ({
                 </button>
               </div>
             </div>
-          </div>
-          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+          <p className="mt-2 hidden text-xs text-slate-500 dark:text-slate-400 md:block">
             Showing {filteredSubjects.length} of {displaySubjects.length} subjects
             {searchQuery.trim() ? ` matching “${searchQuery.trim()}”` : ""}
           </p>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import MobileBottomNav from "./MobileBottomNav";
 import MobileNav from "./MobileNav";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
@@ -29,6 +30,7 @@ const Layout = ({
   onSearchChange,
   searchPlaceholder = "Search…",
   showSearch = true,
+  mobileCompactHeader = false,
   children,
 }) => {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -45,30 +47,37 @@ const Layout = ({
       {/* Main column — dark canvas behind cards (reference store overview) */}
       <div className="flex min-w-0 flex-1 flex-col bg-white dark:bg-[#0a0a0a]">
         <Topbar
-          onOpenMobileNav={() => setMobileNavOpen(true)}
           searchValue={searchValue}
           onSearchChange={onSearchChange}
           searchPlaceholder={searchPlaceholder}
           showSearch={showSearch}
         />
 
-        <main className="anim-fade-in flex-1 overflow-x-hidden px-3 py-4 sm:px-6 sm:py-6">
+        <main className="layout-main-compact anim-fade-in flex-1 overflow-x-hidden px-3 py-3 pb-[calc(5.25rem+env(safe-area-inset-bottom,0px))] sm:px-6 sm:py-6 lg:pb-6">
           {(title || actions) && (
-            <header className="mb-4 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+            <header
+              className={`mb-3 flex flex-col gap-2 sm:mb-5 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between ${
+                mobileCompactHeader ? "layout-header-mobile-compact" : ""
+              }`}
+            >
               <div className="min-w-0 flex-1">
                 {title && (
-                  <h1 className="font-display truncate text-xl text-slate-900 sm:text-2xl sm:text-[28px] dark:text-slate-50">
+                  <h1 className="font-display truncate text-lg text-slate-900 sm:text-2xl sm:text-[28px] dark:text-slate-50">
                     {title}
                   </h1>
                 )}
                 {subtitle && (
-                  <p className="mt-1 max-w-2xl text-xs text-slate-500 sm:text-sm dark:text-slate-400">
+                  <p
+                    className={`mt-1 max-w-2xl text-xs text-slate-500 sm:text-sm dark:text-slate-400 ${
+                      mobileCompactHeader ? "hidden md:block" : ""
+                    }`}
+                  >
                     {subtitle}
                   </p>
                 )}
               </div>
               {actions && (
-                <div className="flex w-full shrink-0 flex-wrap items-center gap-1.5 sm:w-auto sm:justify-end">
+                <div className="layout-header-actions flex w-full shrink-0 flex-wrap items-center gap-1.5 sm:w-auto sm:justify-end">
                   {actions}
                 </div>
               )}
@@ -77,6 +86,8 @@ const Layout = ({
           {children}
         </main>
       </div>
+
+      <MobileBottomNav onOpenMenu={() => setMobileNavOpen(true)} />
 
       {/* Mobile drawer */}
       <MobileNav

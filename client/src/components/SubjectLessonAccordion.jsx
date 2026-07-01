@@ -113,7 +113,48 @@ const LessonList = ({
   }
 
   return (
-    <div className="space-y-2">
+    <>
+      <div className="overflow-hidden rounded-xl border border-slate-200/90 bg-white dark:border-white/10 dark:bg-[#1a1a1a] md:hidden">
+        {items.map((item, index) => {
+          const rowType = item.type || type || "video";
+          const route = rowType === "video" ? `/video/${item._id}` : `/pdf/${item._id}`;
+          const isExternalTelegram = rowType === "video" && isTelegramLinkVideo(item);
+          const chapterName = item.chapterId?.chapterName || "General";
+          const { posted } = getContentDateLabels(item);
+          const href = isExternalTelegram ? item.videoUrl || item.url : route;
+          const RowTag = isExternalTelegram ? "a" : Link;
+          const rowProps = isExternalTelegram
+            ? { href, target: "_blank", rel: "noopener noreferrer" }
+            : { to: route };
+
+          return (
+            <RowTag key={item._id} {...rowProps} className="mobile-lesson-row">
+              <span
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                  rowType === "video"
+                    ? "bg-sky-100 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300"
+                    : "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+                }`}
+              >
+                {rowType === "video" ? <FiPlayCircle size={16} /> : <FiFileText size={16} />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
+                  {index + 1}. {item.title}
+                  <NewBadge item={item} />
+                </span>
+                <span className="mt-0.5 block truncate text-xs text-slate-500 dark:text-slate-400">
+                  {chapterName}
+                  {posted ? ` · ${posted}` : ""}
+                </span>
+              </span>
+              <FiChevronDown size={16} className="-rotate-90 shrink-0 text-slate-400" />
+            </RowTag>
+          );
+        })}
+      </div>
+
+      <div className="hidden space-y-2 md:block">
       {items.map((item, index) => {
         const isOpen = expandedId === item._id;
         const rowType = item.type || type || "video";
@@ -275,7 +316,8 @@ const LessonList = ({
           </div>
         );
       })}
-    </div>
+      </div>
+    </>
   );
 };
 
@@ -386,27 +428,30 @@ const SubjectLessonAccordion = ({
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
+    <div className="space-y-3 md:space-y-4">
+      <div className="flex gap-1.5 overflow-x-auto pb-0.5 md:flex-wrap md:gap-2 md:overflow-visible md:pb-0">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const disabled = tab.count === 0;
+          const mobileLabel =
+            tab.id === "new" ? "New" : tab.id === "videos" ? "Videos" : "PDFs";
           return (
             <button
               key={tab.id}
               type="button"
               disabled={disabled}
               onClick={() => setActiveTab(tab.id)}
-              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition sm:gap-2 sm:px-4 sm:py-2 sm:text-sm ${
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold transition md:gap-2 md:px-4 md:text-sm ${
                 currentTab === tab.id
                   ? `${tab.accent} text-white shadow`
                   : disabled
                     ? "cursor-not-allowed bg-slate-100 text-slate-400 dark:bg-white/5 dark:text-slate-600"
-                    : "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-white/10 dark:text-slate-200 dark:hover:bg-white/15"
+                    : "bg-slate-100 text-slate-700 dark:bg-white/10 dark:text-slate-200"
               }`}
             >
               <Icon size={14} />
-              {tab.label}
+              <span className="md:hidden">{mobileLabel}</span>
+              <span className="hidden md:inline">{tab.label}</span>
               <span
                 className={`rounded-full px-1.5 py-0.5 text-[10px] tabular-nums ${
                   currentTab === tab.id ? "bg-white/20" : "bg-white/60 dark:bg-black/20"

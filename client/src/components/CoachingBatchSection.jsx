@@ -15,9 +15,9 @@ const CoachingBatchSection = ({
   onOpenCloudMappings,
 }) => {
   return (
-    <section className="card flex flex-wrap items-center justify-between gap-3 p-3 sm:px-4">
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+    <section className="card p-3 md:flex md:flex-wrap md:items-center md:justify-between md:gap-3 md:px-4">
+      <div className="mobile-batch-scroll md:flex md:min-w-0 md:flex-wrap md:items-center md:gap-2 md:overflow-visible md:px-0">
+        <span className="hidden shrink-0 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 md:inline">
           Batch
         </span>
         {!programmes.length ? (
@@ -60,15 +60,15 @@ const CoachingBatchSection = ({
         )}
       </div>
 
-      <div className="flex shrink-0 items-center gap-1.5">
-        <Link to="/cloudinary" className="btn-ghost text-xs" title="Cloudinary storage & usage">
+      <div className="mt-2 flex shrink-0 items-center justify-end gap-1 md:mt-0 md:gap-1.5">
+        <Link to="/cloudinary" className="btn-ghost hidden p-2! md:inline-flex md:text-xs" title="Cloudinary storage & usage">
           <FiHardDrive size={14} />
           <span className="hidden sm:inline">Storage</span>
         </Link>
         {onOpenCloudMappings && (
           <button
             type="button"
-            className="btn-ghost text-xs"
+            className="btn-ghost hidden p-2! md:inline-flex md:text-xs"
             onClick={onOpenCloudMappings}
             title="Pick which Cloudinary account each subject uses"
           >
@@ -76,9 +76,9 @@ const CoachingBatchSection = ({
             <span className="hidden sm:inline">Cloud routing</span>
           </button>
         )}
-        <button type="button" className="btn-secondary text-xs" onClick={onAddBatch}>
-          <FiPlus size={14} />
-          <span className="hidden sm:inline">Add batch</span>
+        <button type="button" className="btn-ghost p-2! md:btn-secondary md:text-xs" onClick={onAddBatch} title="Add batch">
+          <FiPlus size={16} />
+          <span className="hidden md:inline">Add batch</span>
         </button>
       </div>
     </section>

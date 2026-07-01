@@ -1,4 +1,4 @@
-import { FiBell, FiMenu, FiMoon, FiSearch, FiSun } from "react-icons/fi";
+import { FiBell, FiMoon, FiSearch, FiSun } from "react-icons/fi";
 import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
@@ -30,18 +30,9 @@ const Topbar = ({
   const { user, isAuthenticated } = useAuth();
 
   return (
-    <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-slate-200/80 bg-white px-3 py-2.5 sm:gap-3 sm:px-6 sm:py-3 dark:border-white/[0.08] dark:bg-[#0a0a0a]/90">
-      <button
-        type="button"
-        className="btn-ghost p-2! lg:hidden"
-        onClick={onOpenMobileNav}
-        aria-label="Open menu"
-      >
-        <FiMenu size={20} />
-      </button>
-
+    <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-slate-200/80 bg-white/95 px-2 py-2 backdrop-blur-md sm:gap-3 sm:px-6 sm:py-3 dark:border-white/[0.08] dark:bg-[#0a0a0a]/90">
       {showSearch ? (
-        <div className="relative min-w-0 max-w-md flex-1">
+        <div className="relative min-w-0 max-w-md flex-1 max-sm:mx-1">
           <FiSearch
             className="pointer-events-none absolute left-3.5 top-1/2 z-10 -translate-y-1/2 text-slate-400 dark:text-slate-500"
             size={15}
@@ -59,7 +50,11 @@ const Topbar = ({
       )}
 
       <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
-        {isAuthenticated && <VideoStreakBadge compact />}
+        {isAuthenticated && (
+          <span className="hidden sm:contents">
+            <VideoStreakBadge compact />
+          </span>
+        )}
 
         <button
           type="button"

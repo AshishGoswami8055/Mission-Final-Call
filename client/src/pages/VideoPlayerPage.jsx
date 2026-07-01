@@ -762,242 +762,249 @@ const VideoPlayerPage = () => {
   }, [isYoutube, isTelegramLink]);
 
   return (
-    <div className={`page-viewer ${isDark ? "bg-black text-slate-100" : "bg-slate-100 text-slate-800"}`}>
-      <div className="mx-auto max-w-[1400px] space-y-3 sm:space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            <Link to="/" className="btn-secondary inline-flex text-sm">
-              <FiArrowLeft /> Back
-            </Link>
-            <StudyTracker compact />
-            <VideoStreakBadge compact />
-          </div>
-          <button
-            type="button"
-            className="btn-secondary inline-flex rounded-xl p-2.5"
-            onClick={() => setPageDark((d) => !d)}
-            aria-label="Dark mode for this page"
-            title={isDark ? "Light mode" : "Dark mode"}
+    <div
+      className={`page-viewer page-viewer--watch ${
+        isDark ? "page-viewer--dark text-slate-100" : "text-slate-800"
+      }`}
+    >
+      <header className="watch-toolbar lg:mx-auto lg:max-w-[1400px] lg:border-0 lg:bg-transparent lg:px-6 lg:backdrop-blur-none">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
+          <Link
+            to="/"
+            className={`inline-flex shrink-0 items-center justify-center rounded-full p-2 transition ${
+              isDark
+                ? "text-white hover:bg-white/10"
+                : "text-slate-800 hover:bg-slate-100"
+            } sm:rounded-xl sm:border sm:border-slate-200 sm:bg-white sm:px-3 sm:py-2 sm:text-sm sm:font-medium sm:shadow-sm dark:sm:border-slate-700 dark:sm:bg-slate-900 dark:sm:text-slate-200`}
+            aria-label="Back to dashboard"
           >
-            {isDark ? <FiSun size={18} /> : <FiMoon size={18} />}
-          </button>
+            <FiArrowLeft size={20} />
+            <span className="hidden sm:ml-1 sm:inline">Back</span>
+          </Link>
+          <StudyTracker compact />
+          <VideoStreakBadge compact />
         </div>
-        <div
-          className={`rounded-2xl border p-3 sm:p-5 ${
-            isDark
-              ? "border-neutral-800 bg-black"
-              : "border-slate-200 bg-white"
-          }`}
+        <button
+          type="button"
+          className={`inline-flex shrink-0 items-center justify-center rounded-full p-2 transition ${
+            isDark ? "text-white hover:bg-white/10" : "text-slate-700 hover:bg-slate-100"
+          } sm:rounded-xl sm:border sm:border-slate-200 sm:bg-white sm:p-2.5 dark:sm:border-slate-700 dark:sm:bg-slate-900`}
+          onClick={() => setPageDark((d) => !d)}
+          aria-label="Dark mode for this page"
+          title={isDark ? "Light mode" : "Dark mode"}
         >
-          {!item ? (
-            <div className="py-16 text-center text-sm text-slate-400 sm:py-20">Loading video...</div>
-          ) : (
-            <>
-              <h1 className="text-lg font-semibold sm:text-2xl">{item.title}</h1>
-              <p className={`text-xs sm:text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
-                {item.subjectId?.name} / {item.chapterId?.chapterName}
-              </p>
-              {isLocalFrontend() ? (
-                <SmoothPlaybackPanel
+          {isDark ? <FiSun size={18} /> : <FiMoon size={18} />}
+        </button>
+      </header>
+
+      {!item ? (
+        <div className="watch-stage flex aspect-video items-center justify-center">
+          <FiLoader className="animate-spin text-2xl text-teal-400" />
+        </div>
+      ) : (
+        <>
+          <div className="watch-stage">
+            {isTelegramLink ? (
+              <div className="relative aspect-video w-full overflow-hidden bg-black">
+                {item?.thumbnail ? (
+                  <img
+                    src={item.thumbnail}
+                    alt=""
+                    className="absolute inset-0 h-full w-full object-cover opacity-60"
+                  />
+                ) : null}
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/55 px-6 text-center">
+                  <p className="text-sm font-medium text-white">Video on Telegram</p>
+                  <p className="max-w-md text-xs text-slate-300">
+                    Playback opens in Telegram (or your browser). Study time on this page still counts toward your
+                    tracker.
+                  </p>
+                  <a
+                    href={telegramLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:bg-sky-500"
+                  >
+                    Open in Telegram
+                  </a>
+                </div>
+              </div>
+            ) : isYoutube ? (
+              <div className="relative aspect-video w-full overflow-hidden bg-black">
+                {youtubeThumb ? (
+                  <img
+                    src={youtubeThumb}
+                    alt=""
+                    className="absolute inset-0 h-full w-full object-cover opacity-60"
+                  />
+                ) : null}
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/55 px-6 text-center">
+                  <p className="text-sm font-medium text-white">Hosted on YouTube (Unlisted)</p>
+                  <p className="max-w-md text-xs text-slate-300">
+                    Playback opens on YouTube in a new tab. Study time on this page still counts toward your
+                    tracker.
+                  </p>
+                  <a
+                    href={buildYoutubeWatchUrl(rawSrc, currentTime)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-lg bg-red-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:bg-red-500"
+                  >
+                    Watch on YouTube
+                  </a>
+                  {currentTime > 0 ? (
+                    <p className="text-xs text-slate-400">
+                      Last jump position: {formatTime(currentTime)} (included in the link above)
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            ) : showNativePlayer ? (
+              <div ref={playerRef} className="cds-plyr-shell group relative aspect-video w-full overflow-hidden bg-black">
+                <CdsPlyrPlayer
+                  key={`${id}-${playerGeneration}`}
                   contentId={id}
-                  eligible={canCachePlayback}
-                  isDark={isDark}
-                  onPlayUrlChange={setCachedPlayUrl}
-                  onUsingLocalLibraryChange={(value) => {
-                    usingLocalLibraryRef.current = value;
-                    usingCacheRef.current = value;
-                  }}
-                  onPrepareDownload={async () => {
-                    const video = videoRef.current;
-                    if (video && !video.paused) {
-                      video.pause();
-                      setIsPlaying(false);
-                      await new Promise((resolve) => setTimeout(resolve, 600));
-                    }
-                  }}
+                  src={playbackSrc}
+                  ready={playbackSourceReady && (!isTelegramStream || telegramStatus.live || cachedPlayUrl)}
+                  videoRef={videoRef}
+                  onScreenshot={handleCaptureScreenshot}
+                  onLoadStart={handleVideoLoadStart}
+                  onLoadedMetadata={handleVideoLoadedMetadata}
+                  onDurationChange={handleVideoDurationChange}
+                  onProgress={handleVideoProgress}
+                  onError={handleVideoError}
+                  onTimeUpdate={handleVideoTimeUpdate}
+                  onPlay={handleVideoPlay}
+                  onPause={handleVideoPause}
+                  onEnded={handleVideoEnded}
+                  onStalled={handleVideoStalled}
                 />
-              ) : (
-                <VideoPlaybackCachePanel
-                  contentId={id}
-                  eligible={canCachePlayback}
-                  isDark={isDark}
-                  onPlayUrlChange={setCachedPlayUrl}
-                  onUsingCacheChange={(value) => {
-                    usingCacheRef.current = value;
-                  }}
-                />
-              )}
-              {isTelegramStream ? (
-                <TelegramConnectionStatus
-                  checking={telegramStatus.checking}
-                  connected={telegramStatus.connected}
-                  live={telegramStatus.live}
-                  error={telegramStatus.error}
-                  phone={telegramStatus.phone}
-                  isDark={isDark}
-                  onRefresh={refreshTelegramStatus}
-                  onResetSession={handleResetTelegramSession}
-                  resetting={telegramStatusResetting}
-                />
-              ) : null}
-              <div className="mt-4">
-                <div className="rounded-xl bg-black overflow-visible">
-                {isTelegramLink ? (
-                  <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black">
-                    {item?.thumbnail ? (
-                      <img
-                        src={item.thumbnail}
-                        alt=""
-                        className="absolute inset-0 h-full w-full object-cover opacity-60"
-                      />
-                    ) : null}
-                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/55 px-6 text-center">
-                      <p className="text-sm font-medium text-white">Video on Telegram</p>
-                      <p className="max-w-md text-xs text-slate-300">
-                        Playback opens in Telegram (or your browser). Study time on this page still counts toward your
-                        tracker.
-                      </p>
-                      <a
-                        href={telegramLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:bg-sky-500"
-                      >
-                        Open in Telegram
-                      </a>
-                    </div>
+
+                {showLibraryCheckOverlay && (
+                  <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/90 text-center">
+                    <FiLoader className="animate-spin text-white" size={28} />
+                    <p className="text-sm text-slate-300">Checking PC library…</p>
                   </div>
-                ) : isYoutube ? (
-                  <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black">
-                    {youtubeThumb ? (
-                      <img
-                        src={youtubeThumb}
-                        alt=""
-                        className="absolute inset-0 h-full w-full object-cover opacity-60"
-                      />
-                    ) : null}
-                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/55 px-6 text-center">
-                      <p className="text-sm font-medium text-white">Hosted on YouTube (Unlisted)</p>
-                      <p className="max-w-md text-xs text-slate-300">
-                        Playback opens on YouTube in a new tab. Study time on this page still counts toward your
-                        tracker.
+                )}
+
+                {telegramBlocksStream && (
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black px-6 text-center">
+                    <p className="text-sm font-medium text-white">Telegram stream unavailable</p>
+                    <p className="max-w-sm text-xs text-slate-400">
+                      Connect Telegram using the banner below, then click Recheck or Retry playback.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn-secondary inline-flex text-xs"
+                      onClick={() => void refreshTelegramStatus()}
+                    >
+                      <FiRefreshCw size={14} /> Recheck connection
+                    </button>
+                  </div>
+                )}
+
+                {showStreamLoadingOverlay && (
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-black/85 px-6 text-center">
+                    <FiLoader className="animate-spin text-3xl text-teal-400" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-white">
+                        {playbackStalled ? "Playback stalled" : "Loading video…"}
                       </p>
-                      <a
-                        href={buildYoutubeWatchUrl(rawSrc, currentTime)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="rounded-lg bg-red-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:bg-red-500"
-                      >
-                        Watch on YouTube
-                      </a>
-                      {currentTime > 0 ? (
-                        <p className="text-xs text-slate-400">
-                          Last jump position: {formatTime(currentTime)} (included in the link above)
+                      <p className="text-xs tabular-nums text-slate-300">
+                        {playbackStalled
+                          ? "Telegram stream did not start. Check connection below."
+                          : `Waiting for stream · ${formatTime(loadElapsedSec)} elapsed`}
+                      </p>
+                      {hintedDuration > 0 ? (
+                        <p className="text-[11px] text-slate-500">
+                          Expected ~ {formatTime(hintedDuration)}
                         </p>
                       ) : null}
                     </div>
-                  </div>
-                ) : showNativePlayer ? (
-                  <div
-                    ref={playerRef}
-                    className="cds-plyr-shell group relative overflow-visible"
-                  >
-                    <CdsPlyrPlayer
-                      key={`${id}-${playerGeneration}`}
-                      contentId={id}
-                      src={playbackSrc}
-                      ready={playbackSourceReady && (!isTelegramStream || telegramStatus.live || cachedPlayUrl)}
-                      videoRef={videoRef}
-                      onScreenshot={handleCaptureScreenshot}
-                      onLoadStart={handleVideoLoadStart}
-                      onLoadedMetadata={handleVideoLoadedMetadata}
-                      onDurationChange={handleVideoDurationChange}
-                      onProgress={handleVideoProgress}
-                      onError={handleVideoError}
-                      onTimeUpdate={handleVideoTimeUpdate}
-                      onPlay={handleVideoPlay}
-                      onPause={handleVideoPause}
-                      onEnded={handleVideoEnded}
-                      onStalled={handleVideoStalled}
-                    />
-
-                    {showLibraryCheckOverlay && (
-                      <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 rounded-xl bg-black/90 text-center">
-                        <FiLoader className="animate-spin text-white" size={28} />
-                        <p className="text-sm text-slate-300">Checking PC library…</p>
+                    <div className="w-full max-w-xs space-y-2">
+                      <div className="h-1.5 overflow-hidden rounded-full bg-white/15">
+                        <div
+                          className="h-full rounded-full bg-teal-500 transition-[width] duration-300 ease-out"
+                          style={{ width: `${Math.max(bufferPercent, 6)}%` }}
+                        />
                       </div>
-                    )}
-
-                    {telegramBlocksStream && (
-                      <div className="absolute inset-0 z-20 flex aspect-video flex-col items-center justify-center gap-3 rounded-xl bg-black px-6 text-center">
-                        <p className="text-sm font-medium text-white">Telegram stream unavailable</p>
-                        <p className="max-w-sm text-xs text-slate-400">
-                          Connect Telegram using the banner above, then click Recheck or Retry playback.
-                        </p>
-                        <button
-                          type="button"
-                          className="btn-secondary inline-flex text-xs"
-                          onClick={() => void refreshTelegramStatus()}
-                        >
-                          <FiRefreshCw size={14} /> Recheck connection
-                        </button>
-                      </div>
-                    )}
-
-                    {showStreamLoadingOverlay && (
-                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 rounded-xl bg-black/85 px-6 text-center">
-                        <FiLoader className="animate-spin text-3xl text-teal-400" />
-                        <div className="space-y-1">
-                          <p className="text-sm font-semibold text-white">
-                            {playbackStalled ? "Playback stalled" : "Loading video…"}
-                          </p>
-                          <p className="text-xs tabular-nums text-slate-300">
-                            {playbackStalled
-                              ? "Telegram stream did not start. Check connection above."
-                              : `Waiting for stream · ${formatTime(loadElapsedSec)} elapsed`}
-                          </p>
-                          {hintedDuration > 0 ? (
-                            <p className="text-[11px] text-slate-500">
-                              Expected ~ {formatTime(hintedDuration)}
-                            </p>
-                          ) : null}
-                        </div>
-                        <div className="w-full max-w-xs space-y-2">
-                          <div className="h-1.5 overflow-hidden rounded-full bg-white/15">
-                            <div
-                              className="h-full rounded-full bg-teal-500 transition-[width] duration-300 ease-out"
-                              style={{ width: `${Math.max(bufferPercent, 6)}%` }}
-                            />
-                          </div>
-                          <p className="text-[11px] tabular-nums text-slate-400">
-                            {bufferPercent > 0 ? `${bufferPercent}% buffered` : "Connecting to stream…"}
-                          </p>
-                        </div>
-                        {(playbackStalled || loadElapsedSec >= 30) && (
-                          <button
-                            type="button"
-                            className="btn-secondary inline-flex text-xs"
-                            onClick={() => void handleRetryPlayback()}
-                          >
-                            <FiRefreshCw size={14} /> Retry playback
-                          </button>
-                        )}
-                      </div>
+                      <p className="text-[11px] tabular-nums text-slate-400">
+                        {bufferPercent > 0 ? `${bufferPercent}% buffered` : "Connecting to stream…"}
+                      </p>
+                    </div>
+                    {(playbackStalled || loadElapsedSec >= 30) && (
+                      <button
+                        type="button"
+                        className="btn-secondary inline-flex text-xs"
+                        onClick={() => void handleRetryPlayback()}
+                      >
+                        <FiRefreshCw size={14} /> Retry playback
+                      </button>
                     )}
                   </div>
-                ) : null}
-                </div>
+                )}
               </div>
-            </>
-          )}
+            ) : null}
+          </div>
 
-          <div
-            className={`mt-4 rounded-xl border p-3 ${
-              isDark
-                ? "border-neutral-800 bg-black"
-                : "border-slate-200 bg-slate-50"
-            }`}
-          >
+          <div className="watch-body">
+            <div>
+              <h1 className="text-base font-semibold leading-snug sm:text-2xl">{item.title}</h1>
+              <p className={`mt-1 text-xs sm:text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+                {item.subjectId?.name} / {item.chapterId?.chapterName}
+              </p>
+            </div>
+
+            {isLocalFrontend() ? (
+              <SmoothPlaybackPanel
+                contentId={id}
+                eligible={canCachePlayback}
+                isDark={isDark}
+                onPlayUrlChange={setCachedPlayUrl}
+                onUsingLocalLibraryChange={(value) => {
+                  usingLocalLibraryRef.current = value;
+                  usingCacheRef.current = value;
+                }}
+                onPrepareDownload={async () => {
+                  const video = videoRef.current;
+                  if (video && !video.paused) {
+                    video.pause();
+                    setIsPlaying(false);
+                    await new Promise((resolve) => setTimeout(resolve, 600));
+                  }
+                }}
+              />
+            ) : (
+              <VideoPlaybackCachePanel
+                contentId={id}
+                eligible={canCachePlayback}
+                isDark={isDark}
+                onPlayUrlChange={setCachedPlayUrl}
+                onUsingCacheChange={(value) => {
+                  usingCacheRef.current = value;
+                }}
+              />
+            )}
+
+            {isTelegramStream ? (
+              <TelegramConnectionStatus
+                checking={telegramStatus.checking}
+                connected={telegramStatus.connected}
+                live={telegramStatus.live}
+                error={telegramStatus.error}
+                phone={telegramStatus.phone}
+                isDark={isDark}
+                onRefresh={refreshTelegramStatus}
+                onResetSession={handleResetTelegramSession}
+                resetting={telegramStatusResetting}
+              />
+            ) : null}
+
+            <div
+              className={`rounded-xl border p-3 sm:rounded-2xl sm:p-4 ${
+                isDark ? "border-neutral-800 bg-neutral-950" : "border-slate-200 bg-white"
+              }`}
+            >
             <h2 className="text-sm font-semibold">Chapter PDFs</h2>
             <p className={`text-xs ${isDark ? "text-slate-400" : "text-slate-500"}`}>
               Quick notes for this video chapter.
@@ -1033,10 +1040,8 @@ const VideoPlayerPage = () => {
           </div>
 
           <div
-            className={`mt-4 rounded-xl border p-3 ${
-              isDark
-                ? "border-neutral-800 bg-black"
-                : "border-slate-200 bg-slate-50"
+            className={`rounded-xl border p-3 sm:rounded-2xl sm:p-4 ${
+              isDark ? "border-neutral-800 bg-neutral-950" : "border-slate-200 bg-white"
             }`}
           >
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -1161,8 +1166,9 @@ const VideoPlayerPage = () => {
               ))}
             </div>
           </div>
-        </div>
-      </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };
