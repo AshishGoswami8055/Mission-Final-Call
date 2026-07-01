@@ -17,7 +17,12 @@ export const isLocalFrontend = () => {
 export const toAbsoluteMediaUrl = (url) => {
   if (!url) return "";
   if (/^https?:\/\//i.test(url)) return url;
-  if (url.startsWith("/")) return url;
+  if (url.startsWith("/")) {
+    if (typeof window !== "undefined" && serverBaseUrl && serverBaseUrl !== window.location.origin) {
+      return `${serverBaseUrl}${url}`;
+    }
+    return url;
+  }
   return `${serverBaseUrl}${url}`;
 };
 

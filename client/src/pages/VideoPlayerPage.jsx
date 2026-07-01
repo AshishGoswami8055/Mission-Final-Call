@@ -34,6 +34,7 @@ import VideoPlaybackCachePanel from "../components/VideoPlaybackCachePanel";
 import { useStudy } from "../context/StudyContext";
 import { useTheme } from "../context/ThemeContext";
 import { getTelegramVideoUrl, isLocalFrontend, isTelegramLinkVideo, isTelegramStreamContent, isYouTubeUrl, resolveContentSrc, toAbsoluteMediaUrl } from "../utils/media";
+import { fetchLocalLibraryStatus } from "../utils/localLibraryApi";
 import { downloadDataUrl, loadScreenshotNotes, saveScreenshotNotes } from "../utils/screenshotNotes";
 import { getYouTubeThumbnailDataUrl } from "../utils/youtubeThumbnail";
 
@@ -291,7 +292,7 @@ const VideoPlayerPage = () => {
     const resolvePlaybackSource = async () => {
       if (isLocalFrontend() && id && canCachePlayback) {
         try {
-          const { data } = await api.get(`/contents/${id}/local-library`);
+          const { data } = await fetchLocalLibraryStatus(id);
           if (!cancelled && data.cached && data.ready && data.playUrl) {
             setCachedPlayUrl(data.playUrl);
             usingLocalLibraryRef.current = true;
@@ -1017,6 +1018,14 @@ const VideoPlayerPage = () => {
                     usingLocalLibraryRef.current = value;
                     usingCacheRef.current = value;
                   }}
+                  onPrepareDownload={async () => {
+                    const video = videoRef.current;
+                    if (video && !video.paused) {
+                      video.pause();
+                      setIsPlaying(false);
+                      await new Promise((resolve) => setTimeout(resolve, 600));
+                    }
+                  }}
                 />
               ) : (
                 <VideoPlaybackCachePanel
@@ -1159,7 +1168,7 @@ const VideoPlayerPage = () => {
                             return;
                           }
                           try {
-                            const { data } = await api.get(`/contents/${id}/local-library`);
+                            const { data } = await fetchLocalLibraryStatus(id);
                             if (data.cached && data.ready && data.playUrl) {
                               setCachedPlayUrl(data.playUrl);
                               usingLocalLibraryRef.current = true;

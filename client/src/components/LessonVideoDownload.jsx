@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import { FiCheck, FiDownload, FiLoader } from "react-icons/fi";
 import api from "../api/client";
+import { fetchLocalLibraryStatus, startLocalLibraryDownload } from "../utils/localLibraryApi";
 
 const LessonVideoDownload = ({ contentId, onCached, initiallyCached = false }) => {
   const [status, setStatus] = useState(null);
@@ -10,7 +11,7 @@ const LessonVideoDownload = ({ contentId, onCached, initiallyCached = false }) =
   const loadStatus = useCallback(async () => {
     if (!contentId) return;
     try {
-      const { data } = await api.get(`/contents/${contentId}/local-library`);
+      const { data } = await fetchLocalLibraryStatus(contentId);
       setStatus(data);
       if (data.cached && data.ready) onCached?.(contentId);
     } catch {
@@ -29,7 +30,7 @@ const LessonVideoDownload = ({ contentId, onCached, initiallyCached = false }) =
   useEffect(() => {
     const downloading = status?.job?.status === "downloading";
     if (!downloading && status?.cached && status?.ready) return undefined;
-    const interval = setInterval(loadStatus, downloading ? 3000 : 12000);
+    const interval = setInterval(loadStatus, downloading ? 1000 : 12000);
     return () => clearInterval(interval);
   }, [status?.job?.status, status?.cached, status?.ready, loadStatus]);
 
@@ -42,7 +43,7 @@ const LessonVideoDownload = ({ contentId, onCached, initiallyCached = false }) =
     if (cached || downloading || busy) return;
     setBusy(true);
     try {
-      const { data } = await api.post(`/contents/${contentId}/local-library`);
+      const { data } = await startLocalLibraryDownload(contentId);
       setStatus(data);
       if (data.cached && data.ready) {
         onCached?.(contentId);

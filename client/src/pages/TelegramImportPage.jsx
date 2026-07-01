@@ -18,7 +18,7 @@ import api from "../api/client";
 import Layout from "../components/Layout";
 import OperationProgressOverlay from "../components/OperationProgressOverlay";
 import { buildTelegramPreviewStreamUrl, formatTelegramMediaMeta } from "../utils/media";
-import { createUploadId, pollUploadProgress } from "../utils/uploadProgress";
+import { createUploadId, waitForUploadProgress } from "../utils/uploadProgress";
 
 const mediaDisplayName = (item) => item?.displayName || item?.fileName || "Untitled";
 
@@ -49,6 +49,7 @@ const TelegramImportPage = () => {
 
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [topicMediaLoading, setTopicMediaLoading] = useState(false);
   const [selectedTopicId, setSelectedTopicId] = useState(null);
   const [selectedToAddIds, setSelectedToAddIds] = useState(new Set());
   const [topicSearch, setTopicSearch] = useState("");
@@ -86,6 +87,7 @@ const TelegramImportPage = () => {
           channelId: selectedChannel.id,
           ...(programmeId ? { programmeId } : {}),
         },
+        timeout: 120000,
       });
       setPreview(data);
       const topics = data.topics || [];
@@ -95,11 +97,64 @@ const TelegramImportPage = () => {
       setPreviewFile(null);
       setMediaFilter("all");
     } catch (error) {
-      toast.error(error.response?.data?.message || "Could not load subjects");
+      const status = error.response?.status;
+      if (status === 524 || status === 504) {
+        toast.error(
+          "Telegram preview timed out (Cloudflare). Retry, or open this page on localhost:5173 for large channels."
+        );
+      } else {
+        toast.error(error.response?.data?.message || "Could not load subjects");
+      }
     } finally {
       setPreviewLoading(false);
     }
   }, [selectedChannel?.id, programmeId]);
+
+  const loadTopicMedia = useCallback(
+    async (topicId) => {
+      if (!selectedChannel?.id || !topicId) return;
+      const topic = preview?.topics?.find((row) => row.id === topicId);
+      if (!topic || topic.mediaLoaded) return;
+
+      setTopicMediaLoading(true);
+      try {
+        const { data } = await api.get("/telegram/topic-media", {
+          params: {
+            channelId: selectedChannel.id,
+            topicId,
+          },
+          timeout: 120000,
+        });
+        setPreview((prev) => {
+          if (!prev?.topics) return prev;
+          const topics = prev.topics.map((row) =>
+            row.id === topicId
+              ? {
+                  ...row,
+                  media: data.media || [],
+                  mediaCount: data.mediaCount ?? row.mediaCount,
+                  importedCount: data.importedCount ?? row.importedCount,
+                  newCount: data.newCount ?? row.newCount,
+                  mediaLoaded: true,
+                }
+              : row
+          );
+          const totalNew = topics.reduce((sum, row) => sum + (row.newCount || 0), 0);
+          return { ...prev, topics, totalNew };
+        });
+      } catch (error) {
+        const status = error.response?.status;
+        if (status === 524 || status === 504) {
+          toast.error("Loading lessons timed out. Try again or use localhost.");
+        } else {
+          toast.error(error.response?.data?.message || "Could not load lessons for this subject");
+        }
+      } finally {
+        setTopicMediaLoading(false);
+      }
+    },
+    [preview?.topics, selectedChannel?.id]
+  );
 
   useEffect(() => {
     loadSession().catch(() => {});
@@ -112,6 +167,10 @@ const TelegramImportPage = () => {
   useEffect(() => {
     if (selectedChannel) loadPreview();
   }, [selectedChannel, loadPreview]);
+
+  useEffect(() => {
+    if (selectedTopicId) loadTopicMedia(selectedTopicId);
+  }, [selectedTopicId, loadTopicMedia]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -315,9 +374,9 @@ const TelegramImportPage = () => {
       message: `Adding ${topicIds.length} subject(s) to your course…`,
     });
 
-    let stopPoll = null;
+    let progressWait = null;
     try {
-      stopPoll = pollUploadProgress(uploadId, (data) => {
+      const applyProgress = (data) => {
         setProgress({
           active: true,
           phase: data.phase || "importing",
@@ -325,9 +384,11 @@ const TelegramImportPage = () => {
           message: data.message || "Adding subjects…",
           currentFile: data.currentFile,
         });
-      });
+      };
 
-      const { data } = await api.post("/telegram/import-batch", {
+      progressWait = waitForUploadProgress(uploadId, applyProgress);
+
+      const response = await api.post("/telegram/import-batch", {
         channelId: selectedChannel.id,
         channelTitle: selectedChannel.title,
         programmeId,
@@ -339,12 +400,21 @@ const TelegramImportPage = () => {
         pruneUnselectedTopics: false,
       });
 
-      stopPoll();
-      await finishAndRefresh(
-        `Added ${data.imported || 0} lesson(s) from ${topicIds.length} subject(s)`
-      );
+      if (response.status === 202) {
+        const result = await progressWait;
+        await finishAndRefresh(
+          result.message ||
+            `Added ${topicIds.length} subject(s) to your course`
+        );
+      } else {
+        progressWait.cancel();
+        const { data } = response;
+        await finishAndRefresh(
+          `Added ${data.imported || 0} lesson(s) from ${topicIds.length} subject(s)`
+        );
+      }
     } catch (error) {
-      if (stopPoll) stopPoll();
+      if (progressWait) progressWait.cancel();
       setProgress({
         active: true,
         phase: "error",
@@ -794,6 +864,12 @@ const TelegramImportPage = () => {
                           )}
 
                           <div className="mt-4 space-y-2">
+                            {topicMediaLoading && !activeTopic?.mediaLoaded && (
+                              <div className="flex items-center justify-center gap-2 py-8 text-sm text-slate-400">
+                                <FiLoader className="animate-spin" size={16} />
+                                Loading lessons from Telegram…
+                              </div>
+                            )}
                             {filteredMedia.map((item) => (
                               <div
                                 key={item.messageId}
@@ -827,7 +903,7 @@ const TelegramImportPage = () => {
                                 )}
                               </div>
                             ))}
-                            {!filteredMedia.length && (
+                            {!filteredMedia.length && !topicMediaLoading && (
                               <p className="text-sm text-slate-400">No lessons in this subject yet.</p>
                             )}
                           </div>

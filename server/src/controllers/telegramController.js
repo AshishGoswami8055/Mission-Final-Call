@@ -6,6 +6,8 @@ import {
   cleanupChannelImport,
   fetchChannelMapping,
   fetchForumTopicsPreview,
+  fetchForumTopicsPreviewSummary,
+  fetchTopicMediaPreview,
   getImportedContentMap,
   getProgrammeSubjectUpdates,
   importBatchByForumTopics,
@@ -15,6 +17,7 @@ import {
   updateProgrammeSubjects,
   upsertChannelMapping,
 } from "../services/telegramMappingService.js";
+import { unblockTelegramSubjectsForImport } from "../services/telegramSubjectBlocklist.js";
 import {
   fetchAllChannelMedia,
   fetchForumTopicsForChannel,
@@ -33,6 +36,21 @@ import {
   verifyTelegramPassword,
 } from "../services/telegramService.js";
 import { syncAllAutoChannels, syncChannelMapping } from "../services/telegramSyncService.js";
+import { failProgress, initProgress } from "../services/uploadProgressBus.js";
+
+const startAsyncImport = (res, uploadId, work) => {
+  initProgress(uploadId, {
+    phase: "pending",
+    percent: 2,
+    message: "Starting Telegram import…",
+  });
+  setImmediate(() => {
+    work().catch((error) => {
+      failProgress(uploadId, error.message || "Batch import failed");
+    });
+  });
+  return res.status(202).json({ uploadId, async: true });
+};
 
 export const telegramLogin = async (req, res) => {
   try {
@@ -250,15 +268,26 @@ export const telegramImportBatch = async (req, res) => {
       return res.status(400).json({ message: "Invalid programmeId." });
     }
 
+    if (hasTopicFilter) {
+      await unblockTelegramSubjectsForImport({ programmeId, topicIds });
+    }
+
     if (hasSelectedItems && useForumTopics) {
-      const result = await importSelectedForumMessages({
-        channelId,
-        channelTitle,
-        programmeId,
-        selectedItems,
-        autoSync,
-        uploadId,
-      });
+      const runSelectedImport = () =>
+        importSelectedForumMessages({
+          channelId,
+          channelTitle,
+          programmeId,
+          selectedItems,
+          autoSync,
+          uploadId,
+        });
+
+      if (uploadId) {
+        return startAsyncImport(res, uploadId, runSelectedImport);
+      }
+
+      const result = await runSelectedImport();
       return res.status(201).json({
         imported: result.created.length,
         skipped: result.skipped.length,
@@ -271,59 +300,65 @@ export const telegramImportBatch = async (req, res) => {
     }
 
     if (useForumTopics && (importAll || hasTopicFilter)) {
-      let topics = [];
-      try {
-        topics = await fetchForumTopicsForChannel(channelId);
-      } catch {
-        topics = [];
-      }
+      const runForumPathImport = async () => {
+        let topics = [];
+        try {
+          topics = await fetchForumTopicsForChannel(channelId);
+        } catch {
+          topics = [];
+        }
 
-      const flatVirtualTopicIds =
-        hasTopicFilter && topicIds.every((id) => Number(id) >= 900_000_000);
-      const useForumImport = topics.length > 0 && !flatVirtualTopicIds;
+        const flatVirtualTopicIds =
+          hasTopicFilter && topicIds.every((id) => Number(id) >= 900_000_000);
+        const useForumImport = topics.length > 0 && !flatVirtualTopicIds;
 
-      if (useForumImport) {
-        const result = await importBatchByForumTopics({
+        if (useForumImport) {
+          const result = await importBatchByForumTopics({
+            channelId,
+            channelTitle,
+            programmeId,
+            autoSync,
+            cleanSync: importAll ? cleanSync : false,
+            topicIds: hasTopicFilter ? topicIds : null,
+            uploadId,
+            pruneUnselectedTopics:
+              hasTopicFilter && !importAll && pruneUnselectedTopics !== false,
+            allowBlockedRecreate: true,
+          });
+          return { mode: "forum_topics", result };
+        }
+
+        const { importBatchByFlatSubjects } = await import(
+          "../services/telegramFlatChannelService.js"
+        );
+        const result = await importBatchByFlatSubjects({
           channelId,
           channelTitle,
           programmeId,
           autoSync,
-          cleanSync: importAll ? cleanSync : false,
           topicIds: hasTopicFilter ? topicIds : null,
           uploadId,
-          pruneUnselectedTopics: hasTopicFilter && !importAll && pruneUnselectedTopics !== false,
+          allowBlockedRecreate: true,
         });
-        return res.status(201).json({
-          imported: result.created.length,
-          skipped: result.skipped.length,
-          topicsProcessed: result.topicsProcessed,
-          mode: "forum_topics",
-          items: result.created,
-          skippedItems: result.skipped,
-          mapping: result.mapping,
-          pruned: result.pruned,
+        return { mode: "flat_subjects", result };
+      };
+
+      if (uploadId) {
+        return startAsyncImport(res, uploadId, async () => {
+          await runForumPathImport();
         });
       }
 
-      const { importBatchByFlatSubjects } = await import(
-        "../services/telegramFlatChannelService.js"
-      );
-      const result = await importBatchByFlatSubjects({
-        channelId,
-        channelTitle,
-        programmeId,
-        autoSync,
-        topicIds: hasTopicFilter ? topicIds : null,
-        uploadId,
-      });
+      const { mode, result } = await runForumPathImport();
       return res.status(201).json({
         imported: result.created.length,
         skipped: result.skipped.length,
         topicsProcessed: result.topicsProcessed,
-        mode: "flat_subjects",
+        mode,
         items: result.created,
         skippedItems: result.skipped,
         mapping: result.mapping,
+        pruned: result.pruned,
       });
     }
 
@@ -480,11 +515,14 @@ export const telegramUpdateBatch = async (req, res) => {
 
 export const telegramForumPreview = async (req, res) => {
   try {
-    const { channelId, programmeId } = req.query;
+    const { channelId, programmeId, full } = req.query;
     if (!channelId) {
       return res.status(400).json({ message: "channelId is required." });
     }
-    const preview = await fetchForumTopicsPreview({ channelId });
+    const useFull = String(full || "").toLowerCase() === "true";
+    const preview = useFull
+      ? await fetchForumTopicsPreview({ channelId })
+      : await fetchForumTopicsPreviewSummary({ channelId });
     let mapping = null;
     if (programmeId && mongoose.Types.ObjectId.isValid(programmeId)) {
       mapping = await fetchChannelMapping({ channelId, programmeId });
@@ -498,6 +536,30 @@ export const telegramForumPreview = async (req, res) => {
     });
   } catch (error) {
     res.status(400).json({ message: error.message || "Preview failed" });
+  }
+};
+
+export const telegramTopicMedia = async (req, res) => {
+  try {
+    const { channelId, topicId } = req.query;
+    if (!channelId || !topicId) {
+      return res.status(400).json({ message: "channelId and topicId are required." });
+    }
+
+    const { isVirtualFlatTopicId } = await import("../utils/telegramFlatChannel.js");
+    let detail;
+    if (isVirtualFlatTopicId(topicId)) {
+      const { fetchFlatChannelTopicMediaPreview } = await import(
+        "../services/telegramFlatChannelService.js"
+      );
+      detail = await fetchFlatChannelTopicMediaPreview({ channelId, topicId });
+    } else {
+      detail = await fetchTopicMediaPreview({ channelId, topicId });
+    }
+
+    res.json(detail);
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Could not load subject lessons" });
   }
 };
 

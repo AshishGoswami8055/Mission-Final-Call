@@ -19,6 +19,8 @@ export const subjectKeyToVirtualTopicId = (subjectKey = "") => {
   return 900_000_000 + (Math.abs(hash) % 99_999_999);
 };
 
+export const isVirtualFlatTopicId = (topicId) => Number(topicId) >= 900_000_000;
+
 export const inferFlatChannelSubjectKey = (meta = {}) => {
   const fields = parseTelegramCaptionMetadata(meta.caption);
 

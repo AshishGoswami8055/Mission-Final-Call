@@ -6,6 +6,7 @@ import {
   telegramChannels,
   telegramCleanupImport,
   telegramForumPreview,
+  telegramTopicMedia,
   telegramImport,
   telegramImportBatch,
   telegramLogin,
@@ -35,6 +36,7 @@ router.post("/reset-session", protect, telegramResetSession);
 router.get("/channels", protect, telegramChannels);
 router.get("/messages/:channelId", protect, telegramMessages);
 router.get("/forum-preview", protect, telegramForumPreview);
+router.get("/topic-media", protect, telegramTopicMedia);
 router.post("/cleanup-import", protect, telegramCleanupImport);
 router.get("/preview-batch", protect, telegramPreviewBatch);
 router.get("/mappings", protect, telegramChannelMappings);

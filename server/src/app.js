@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -27,6 +28,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const uploadsPath = path.resolve(__dirname, "..", "..", "uploads");
 
+if (process.env.TRUST_PROXY === "true" || process.env.TRUST_PROXY === "1") {
+  app.set("trust proxy", 1);
+}
+
 app.use(cors(createCorsOptions()));
 app.use(
   helmet({
@@ -34,7 +39,9 @@ app.use(
     crossOriginResourcePolicy: false,
   })
 );
-app.use(morgan("dev"));
+app.use(
+  morgan(":remote-addr :method :url :status :res[content-length] - :response-time ms")
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -53,6 +60,26 @@ app.use("/api/vocabulary", vocabularyRoutes);
 app.use("/api/cloud-mappings", cloudMappingRoutes);
 app.use("/api/telegram", telegramRoutes);
 app.use("/api/mission", missionRoutes);
+
+const clientDistPath = path.resolve(__dirname, "..", "..", "client", "dist");
+const clientIndexPath = path.join(clientDistPath, "index.html");
+const serveClient =
+  process.env.SERVE_CLIENT === "true" ||
+  (process.env.SERVE_CLIENT !== "false" && fs.existsSync(clientIndexPath));
+
+if (serveClient) {
+  app.use(express.static(clientDistPath));
+  app.use((req, res, next) => {
+    if (req.path.startsWith("/api") || req.path.startsWith("/uploads")) {
+      return next();
+    }
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      return next();
+    }
+    res.sendFile(clientIndexPath, (err) => (err ? next(err) : undefined));
+  });
+  console.log(`[server] Serving frontend from ${clientDistPath}`);
+}
 
 app.use(notFound);
 app.use(errorHandler);

@@ -51,6 +51,15 @@ const telegramChannelMappingSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    /** User-deleted Telegram topics — never auto-recreated until re-imported from Telegram UI */
+    blockedTopicIds: {
+      type: [Number],
+      default: [],
+    },
+    blockedSubjectKeys: {
+      type: [String],
+      default: [],
+    },
   },
   { timestamps: true }
 );

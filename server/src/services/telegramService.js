@@ -18,11 +18,14 @@ let clientConnectPromise = null;
 
 export const getActiveStreamCount = () => activeStreamCount;
 
-export const waitForPlaybackIdle = async (maxWaitMs = 30 * 60 * 1000) => {
+export const waitForPlaybackIdle = async (maxWaitMs = 30 * 60 * 1000, options = {}) => {
+  const forceAfterMs = options.forceAfterMs ?? null;
   const started = Date.now();
   while (activeStreamCount > 0) {
-    if (Date.now() - started > maxWaitMs) break;
-    await sleep(1500);
+    const elapsed = Date.now() - started;
+    if (elapsed > maxWaitMs) break;
+    if (forceAfterMs != null && elapsed >= forceAfterMs) break;
+    await sleep(400);
   }
 };
 
@@ -764,11 +767,25 @@ const downloadTelegramMediaToFileOnce = async ({
   destPath,
   onProgress,
 }) => {
+  onProgress?.({
+    bytesLoaded: 0,
+    bytesTotal: 0,
+    percent: 0,
+    message: "Connecting to Telegram…",
+  });
+
   const { client, message, meta } = await getTelegramMessageMedia({ channelId, messageId });
   const totalSize = meta.size || 0;
   if (!totalSize) {
     throw new Error("Unknown Telegram file size.");
   }
+
+  onProgress?.({
+    bytesLoaded: 0,
+    bytesTotal: totalSize,
+    percent: 0,
+    message: "Downloading from Telegram…",
+  });
 
   fs.mkdirSync(path.dirname(destPath), { recursive: true });
   const writeStream = fs.createWriteStream(destPath);

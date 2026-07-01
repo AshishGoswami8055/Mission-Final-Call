@@ -849,13 +849,21 @@ export const getLocalLibraryStorage = async (_req, res) => {
   }
 };
 
+const sendNoCacheJson = (res, payload) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("Surrogate-Control", "no-store");
+  return res.json(payload);
+};
+
 export const getContentLocalLibrary = async (req, res) => {
   try {
     const content = await Content.findById(req.params.id);
     if (!content) return res.status(404).json({ message: "Content not found" });
 
     const status = getLocalLibraryStatus(content._id);
-    res.json({
+    sendNoCacheJson(res, {
       ...status,
       eligible: isLocalLibraryEligibleContent(content),
       sizeLabel: status.sizeBytes ? formatBytesLabel(status.sizeBytes) : null,
@@ -883,7 +891,7 @@ export const startContentLocalLibrary = async (req, res) => {
     }
 
     const status = await startLocalLibraryDownload(content._id);
-    res.json({
+    sendNoCacheJson(res, {
       ...status,
       eligible: true,
       sizeLabel: status.sizeBytes ? formatBytesLabel(status.sizeBytes) : null,

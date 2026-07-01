@@ -31,6 +31,60 @@ export const pollUploadProgress = (uploadId, onUpdate, intervalMs = 450) => {
   };
 };
 
+/** Poll until phase is done or error; resolves with final progress payload. */
+export const waitForUploadProgress = (uploadId, onUpdate, intervalMs = 450) => {
+  if (!uploadId) {
+    return Promise.reject(new Error("Missing uploadId"));
+  }
+
+  let active = true;
+  let settled = false;
+  let settle = null;
+
+  const promise = new Promise((resolve, reject) => {
+    settle = { resolve, reject };
+  });
+
+  const finish = (fn, value) => {
+    if (settled) return;
+    settled = true;
+    active = false;
+    fn(value);
+  };
+
+  const run = async () => {
+    while (active) {
+      try {
+        const { data } = await api.get(`/contents/upload-progress/${uploadId}`);
+        if (!active) break;
+        if (data?.phase && data.phase !== "idle") {
+          onUpdate?.(data);
+          if (data.phase === "done") {
+            finish(settle.resolve, data);
+            break;
+          }
+          if (data.phase === "error") {
+            finish(settle.reject, new Error(data.error || "Import failed"));
+            break;
+          }
+        }
+      } catch {
+        // keep polling through transient errors
+      }
+      if (!active) break;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  };
+
+  run();
+
+  promise.cancel = () => {
+    active = false;
+  };
+
+  return promise;
+};
+
 export const formatBytes = (n) => {
   if (n == null || Number.isNaN(n)) return "";
   const v = Number(n);

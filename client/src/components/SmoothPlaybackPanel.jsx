@@ -9,6 +9,7 @@ import {
   FiZap,
 } from "react-icons/fi";
 import api from "../api/client";
+import { fetchLocalLibraryStatus, startLocalLibraryDownload } from "../utils/localLibraryApi";
 import { formatFileSize } from "../utils/media";
 
 const SmoothPlaybackPanel = ({
@@ -17,6 +18,7 @@ const SmoothPlaybackPanel = ({
   isDark = false,
   onPlayUrlChange,
   onUsingLocalLibraryChange,
+  onPrepareDownload,
 }) => {
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -24,7 +26,7 @@ const SmoothPlaybackPanel = ({
   const loadStatus = useCallback(async () => {
     if (!contentId || !eligible) return;
     try {
-      const { data } = await api.get(`/contents/${contentId}/local-library`);
+      const { data } = await fetchLocalLibraryStatus(contentId);
       setStatus(data);
       if (data.cached && data.ready && data.playUrl) {
         onPlayUrlChange?.(data.playUrl);
@@ -45,15 +47,19 @@ const SmoothPlaybackPanel = ({
   useEffect(() => {
     if (!eligible || !contentId) return undefined;
     const downloading = status?.job?.status === "downloading";
-    if (!downloading && status?.cached) return undefined;
-    const interval = setInterval(loadStatus, downloading ? 4000 : 12000);
+    const errored = status?.job?.status === "error";
+    if (!downloading && !errored && status?.cached) return undefined;
+    const interval = setInterval(loadStatus, downloading ? 1000 : 12000);
     return () => clearInterval(interval);
   }, [contentId, eligible, status?.job?.status, status?.cached, loadStatus]);
 
   const handleDownload = async () => {
     setBusy(true);
     try {
-      const { data } = await api.post(`/contents/${contentId}/local-library`);
+      if (onPrepareDownload) {
+        await onPrepareDownload();
+      }
+      const { data } = await startLocalLibraryDownload(contentId);
       setStatus(data);
       if (data.cached && data.ready && data.playUrl) {
         onPlayUrlChange?.(data.playUrl);
@@ -88,12 +94,16 @@ const SmoothPlaybackPanel = ({
 
   const storage = status?.storage;
   const downloading = status?.job?.status === "downloading";
+  const failed = status?.job?.status === "error";
   const cached = status?.cached && status?.ready;
   const level = storage?.level || "ok";
   const progressPercent = Math.min(
     100,
     Math.max(0, Math.round(Number(status?.job?.percent) || 0))
   );
+  const statusMessage =
+    status?.job?.message ||
+    (downloading ? "Saving to PC…" : failed ? status?.job?.error : null);
   const shell = isDark
     ? "border-neutral-800 bg-neutral-950/80"
     : "border-slate-200/90 bg-slate-50/80";
@@ -109,9 +119,11 @@ const SmoothPlaybackPanel = ({
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
             {cached
               ? "Playing from your PC library — no buffering."
-              : downloading
-                ? `Saving to PC… ${progressPercent}%`
-                : "Download this lecture to your PC for fast, smooth playback."}
+              : failed
+                ? status?.job?.error || "Download failed. Try again."
+                : downloading
+                  ? `${statusMessage}${progressPercent > 0 ? ` ${progressPercent}%` : ""}`
+                  : "Download this lecture to your PC for fast, smooth playback."}
           </p>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-500">
             Study time still syncs to your account — visible on production too.
@@ -129,6 +141,10 @@ const SmoothPlaybackPanel = ({
               {downloading || busy ? (
                 <>
                   <FiLoader className="animate-spin" size={14} /> Downloading
+                </>
+              ) : failed ? (
+                <>
+                  <FiZap size={14} /> Retry download
                 </>
               ) : (
                 <>
@@ -195,11 +211,15 @@ const SmoothPlaybackPanel = ({
         </p>
       )}
 
-      {downloading && status?.job?.percent != null && (
+      {(downloading || failed) && (
         <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-white/10">
           <div
-            className="h-full rounded-full bg-sky-500 transition-all"
-            style={{ width: `${progressPercent}%` }}
+            className={`h-full rounded-full transition-all ${
+              failed ? "bg-rose-500" : "bg-sky-500"
+            } ${downloading && progressPercent === 0 ? "animate-pulse w-1/3" : ""}`}
+            style={{
+              width: failed ? "100%" : `${Math.max(progressPercent, downloading ? 3 : 0)}%`,
+            }}
           />
         </div>
       )}

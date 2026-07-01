@@ -3,14 +3,21 @@ import Content from "../models/Content.js";
 import Progress from "../models/Progress.js";
 import Subject from "../models/Subject.js";
 import SubjectCloudMapping from "../models/SubjectCloudMapping.js";
+import { blockSubjectFromTelegramSync } from "./telegramSubjectBlocklist.js";
 import {
-  deleteContentsWithAssets,
   destroyContentsAssets,
 } from "./contentCleanupService.js";
+
+/** Stop background Telegram sync from re-importing a subject the user removed. */
+export const unlinkSubjectFromTelegramSync = async (subject) => {
+  await blockSubjectFromTelegramSync(subject);
+};
 
 export const deleteSubjectTree = async (subjectId) => {
   const subject = await Subject.findById(subjectId);
   if (!subject) return { deleted: false };
+
+  await unlinkSubjectFromTelegramSync(subject);
 
   const chapters = await Chapter.find({ subjectId }).select("_id");
   const chapterIds = chapters.map((chapter) => chapter._id);

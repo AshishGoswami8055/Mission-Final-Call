@@ -125,7 +125,14 @@ export const getLocalLibraryStatus = (contentId) => {
         downloadedAt: meta.downloadedAt,
         title: meta.title,
         storage,
-        job: job ? { status: job.status, percent: job.percent } : null,
+        job: job
+          ? {
+              status: job.status,
+              percent: job.percent,
+              message: job.message || null,
+              error: job.error || null,
+            }
+          : null,
       };
     }
     deleteMeta(contentId);
@@ -145,6 +152,7 @@ export const getLocalLibraryStatus = (contentId) => {
           percent: job.percent,
           bytesLoaded: job.bytesLoaded,
           bytesTotal: job.bytesTotal,
+          message: job.message || null,
           error: job.error || null,
         }
       : null,
@@ -213,21 +221,26 @@ const runDownloadJob = async (content) => {
     percent: 0,
     bytesLoaded: 0,
     bytesTotal: Number(content.telegramFileSize || content.size || 0),
+    message: "Preparing download…",
     error: null,
   };
   activeJobs.set(contentId, job);
 
-  const onProgress = ({ bytesLoaded, bytesTotal, percent }) => {
+  const onProgress = ({ bytesLoaded, bytesTotal, percent, message }) => {
     job.bytesLoaded = bytesLoaded;
-    job.bytesTotal = bytesTotal;
-    job.percent = percent;
+    if (bytesTotal) job.bytesTotal = bytesTotal;
+    if (percent != null) job.percent = percent;
+    if (message) job.message = message;
   };
 
   try {
     if (content.sourceType === "cloudinary" && content.videoUrl) {
+      job.message = "Downloading from cloud…";
       await downloadRemoteUrlToFile(content.videoUrl, destPath, onProgress);
     } else if (isTelegramStreamContent(content)) {
-      await waitForPlaybackIdle();
+      job.message = "Waiting for stream to finish…";
+      await waitForPlaybackIdle(30_000, { forceAfterMs: 2500 });
+      job.message = "Connecting to Telegram…";
       await downloadTelegramMediaToFile({
         channelId: content.telegramChannelId,
         messageId: content.telegramMessageId,
@@ -262,17 +275,21 @@ const runDownloadJob = async (content) => {
 
     job.status = "ready";
     job.percent = 100;
+    job.message = "Saved to PC library";
     return getLocalLibraryStatus(contentId);
   } catch (error) {
     job.status = "error";
     job.error = error.message || "Download failed";
+    job.message = job.error;
+    console.error(`[local-library] download failed for ${contentId}:`, job.error);
     throw error;
   } finally {
     setTimeout(() => {
-      if (activeJobs.get(contentId)?.status !== "downloading") {
+      const current = activeJobs.get(contentId);
+      if (current && current.status !== "downloading") {
         activeJobs.delete(contentId);
       }
-    }, 30000);
+    }, 120_000);
   }
 };
 

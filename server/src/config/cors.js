@@ -4,20 +4,41 @@ const DEFAULT_ORIGINS = [
   "https://mission-final-call.vercel.app",
 ];
 
-/** Comma-separated extra origins via CLIENT_URLS, plus CLIENT_URL. */
+const IP_ORIGIN = /^https?:\/\/(\d{1,3}\.){3}\d{1,3}(:\d+)?$/i;
+
+const TRYCLOUDFLARE_ORIGIN =
+  /^https:\/\/[a-z0-9-]+(-[a-z0-9-]+)*\.trycloudflare\.com$/i;
+
 export const getAllowedOrigins = () => {
   const fromEnv = (process.env.CLIENT_URLS || "")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
   const primary = String(process.env.CLIENT_URL || "").trim();
-  return [...new Set([...(primary ? [primary] : []), ...fromEnv, ...DEFAULT_ORIGINS])];
+  const publicClient = String(process.env.PUBLIC_CLIENT_URL || "").trim();
+  return [
+    ...new Set([
+      ...(primary ? [primary] : []),
+      ...(publicClient ? [publicClient] : []),
+      ...fromEnv,
+      ...DEFAULT_ORIGINS,
+    ]),
+  ];
 };
 
 export const isOriginAllowed = (origin) => {
   if (!origin) return true;
   if (getAllowedOrigins().includes(origin)) return true;
-  // Vercel production + preview deployments
+  if (process.env.CORS_ALLOW_IP_ORIGINS === "true" && IP_ORIGIN.test(origin)) return true;
+  if (process.env.CORS_ALLOW_CLOUDFLARE_TUNNEL === "true") {
+    if (TRYCLOUDFLARE_ORIGIN.test(origin)) return true;
+    const tunnelBase = String(
+      process.env.CLOUDFLARE_TUNNEL_URL || process.env.PUBLIC_API_URL || ""
+    )
+      .trim()
+      .replace(/\/$/, "");
+    if (tunnelBase && origin === tunnelBase) return true;
+  }
   if (/^https:\/\/([a-z0-9-]+\.)*vercel\.app$/i.test(origin)) return true;
   return false;
 };
@@ -33,7 +54,6 @@ export const createCorsOptions = () => ({
   credentials: false,
 });
 
-/** Reflect allowed request origin on streaming/media responses. */
 export const applyCorsHeaders = (req, res) => {
   const origin = req.headers.origin;
   if (origin && isOriginAllowed(origin)) {

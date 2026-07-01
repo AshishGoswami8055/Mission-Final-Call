@@ -217,6 +217,8 @@ const DashboardPage = () => {
       setUpdatesAvailable(data);
       return data;
     } catch (error) {
+      setSubjectUpdates({});
+      setUpdatesAvailable(null);
       if (!silent) {
         toast.error(error.response?.data?.message || "Could not check for updates");
       }

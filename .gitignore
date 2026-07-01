@@ -4,4 +4,7 @@ node_modules/
 !.env.example
 client/.env
 server/.env
+server/cloudflare/config.yml
+server/cloudflare/logs/*
+!server/cloudflare/logs/.gitkeep
 *.mp4
