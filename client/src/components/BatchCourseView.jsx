@@ -33,9 +33,11 @@ const BatchCourseView = ({
   updatesLoading = false,
   updatesAvailable = null,
   onUpdateBatch,
+  onCheckForUpdates,
   onUpdateSubject,
   updatingSubjectId = null,
   batchUpdating = false,
+  checkingUpdates = false,
   renamingSubjectId = null,
   deletingSubjectId = null,
   deletingContentId = null,
@@ -312,6 +314,22 @@ const BatchCourseView = ({
                 Clear course
               </button>
             )}
+            {onCheckForUpdates && hasTelegramSubjects && (
+              <button
+                type="button"
+                className="btn-secondary text-sm"
+                disabled={checkingUpdates || batchUpdating || updatesLoading || clearingCourse}
+                onClick={onCheckForUpdates}
+                title="Scan Telegram and show whether new lessons are available"
+              >
+                {checkingUpdates || updatesLoading ? (
+                  <FiLoader size={14} className="animate-spin" />
+                ) : (
+                  <FiSearch size={14} />
+                )}
+                Check for updates
+              </button>
+            )}
             {onUpdateBatch && hasTelegramSubjects && (
               <button
                 type="button"
@@ -320,11 +338,11 @@ const BatchCourseView = ({
                     ? "btn-primary"
                     : "btn-secondary"
                 }`}
-                disabled={batchUpdating || updatesLoading || clearingCourse}
+                disabled={batchUpdating || checkingUpdates || updatesLoading || clearingCourse}
                 onClick={onUpdateBatch}
                 title="Download new lessons for all subjects from Telegram"
               >
-                {batchUpdating || updatesLoading ? (
+                {batchUpdating ? (
                   <FiLoader size={14} className="animate-spin" />
                 ) : (
                   <FiRefreshCw size={14} />
@@ -357,6 +375,22 @@ const BatchCourseView = ({
               />
             </div>
           </div>
+        )}
+
+        {hasTelegramSubjects && updatesAvailable?.available && (
+          <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+            {updatesAvailable.subjectsWithUpdates > 0 ? (
+              <span className="font-medium text-teal-700 dark:text-teal-400">
+                {updatesAvailable.subjectsWithUpdates} subject
+                {updatesAvailable.subjectsWithUpdates === 1 ? "" : "s"} have updates (
+                {updatesAvailable.totalNew || 0} new lesson
+                {(updatesAvailable.totalNew || 0) === 1 ? "" : "s"}) — use{" "}
+                <span className="font-semibold">Update all subjects</span> to import.
+              </span>
+            ) : (
+              <span>Last check: all Telegram subjects are up to date.</span>
+            )}
+          </p>
         )}
       </div>
 

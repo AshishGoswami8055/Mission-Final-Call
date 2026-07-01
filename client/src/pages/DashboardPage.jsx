@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import api from "../api/client";
+import {
+  cancelTelegramProgress,
+  createUploadId,
+  mapTelegramPollToOverlay,
+  waitForUploadProgress,
+} from "../utils/uploadProgress";
 import { useAuth } from "../context/AuthContext";
 import {
   FiBookOpen,
@@ -131,6 +137,7 @@ const DashboardPage = () => {
   const [updatesLoading, setUpdatesLoading] = useState(false);
   const [updatingSubjectId, setUpdatingSubjectId] = useState("");
   const [batchUpdating, setBatchUpdating] = useState(false);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [renamingSubjectId, setRenamingSubjectId] = useState("");
   const [deletingSubjectId, setDeletingSubjectId] = useState("");
   const [deletingContentId, setDeletingContentId] = useState("");
@@ -138,6 +145,7 @@ const DashboardPage = () => {
   const [updateProgress, setUpdateProgress] = useState(null);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const mobileActionsRef = useRef(null);
+  const telegramOpRef = useRef({ uploadId: null, progressWait: null });
 
   useEffect(() => {
     if (!mobileActionsOpen) return undefined;
@@ -320,70 +328,257 @@ const DashboardPage = () => {
     return () => clearInterval(interval);
   }, [selectedProgrammeId, showLibraryView]);
 
+  const clearTelegramOperation = () => {
+    telegramOpRef.current.progressWait?.cancel?.();
+    telegramOpRef.current = { uploadId: null, progressWait: null };
+  };
+
+  const handleCancelTelegramOperation = async () => {
+    const { uploadId, progressWait } = telegramOpRef.current;
+    if (!uploadId) {
+      setCheckingUpdates(false);
+      setBatchUpdating(false);
+      setUpdatingSubjectId("");
+      setUpdateProgress(null);
+      return;
+    }
+    if (uploadId) await cancelTelegramProgress(uploadId);
+    progressWait?.cancel?.();
+    clearTelegramOperation();
+    setBatchUpdating(false);
+    setUpdatingSubjectId("");
+    setCheckingUpdates(false);
+    setUpdateProgress({
+      active: true,
+      phase: "cancelled",
+      percent: 0,
+      message: "Update cancelled",
+      errorDetail: "Stopped on your request. Any file already imported is kept.",
+    });
+    toast("Update cancelled", { icon: "ℹ️" });
+  };
+
+  const runTelegramUpdateWithProgress = async ({
+    endpoint,
+    body,
+    startMessage,
+    onSuccessRefresh,
+    setBusy,
+  }) => {
+    const uploadId = createUploadId();
+    telegramOpRef.current = { uploadId, progressWait: null };
+
+    setUpdateProgress({
+      active: true,
+      phase: "syncing",
+      percent: 3,
+      message: startMessage,
+    });
+
+    const applyProgress = (data) => {
+      setUpdateProgress(mapTelegramPollToOverlay(data, { message: startMessage }));
+    };
+
+    const progressWait = waitForUploadProgress(uploadId, applyProgress);
+    telegramOpRef.current.progressWait = progressWait;
+
+    try {
+      const response = await api.post(endpoint, { ...body, uploadId });
+
+      if (response.status === 202) {
+        const result = await progressWait;
+        const finalMsg = result?.message || "Update complete";
+        setUpdateProgress({
+          active: true,
+          phase: "done",
+          percent: 100,
+          message: finalMsg,
+        });
+        toast.success(finalMsg);
+      } else {
+        progressWait.cancel();
+        const { data } = response;
+        const msg = data?.message || "Update complete";
+        setUpdateProgress({
+          active: true,
+          phase: "done",
+          percent: 100,
+          message: msg,
+        });
+        if (data?.imported > 0) {
+          toast.success(msg);
+        } else {
+          toast(msg, { icon: "ℹ️" });
+        }
+      }
+
+      await onSuccessRefresh?.();
+      setTimeout(() => {
+        clearTelegramOperation();
+        setUpdateProgress(null);
+      }, 1400);
+    } catch (error) {
+      progressWait.cancel();
+      clearTelegramOperation();
+      const msg =
+        error.response?.data?.message ||
+        error.message ||
+        "Update failed";
+      const cancelled = /cancel/i.test(msg);
+      setUpdateProgress({
+        active: true,
+        phase: cancelled ? "cancelled" : "error",
+        percent: 0,
+        message: cancelled ? "Update cancelled" : msg,
+        errorDetail: cancelled ? msg : null,
+      });
+      if (!cancelled) toast.error(msg);
+    } finally {
+      setBusy?.(false);
+    }
+  };
+
+  const handleCheckForUpdates = async () => {
+    if (!selectedProgrammeId) return;
+    setCheckingUpdates(true);
+    setUpdateProgress({
+      active: true,
+      phase: "checking",
+      percent: 5,
+      message: "Checking Telegram for new lessons…",
+    });
+    try {
+      const data = await fetchSubjectUpdates();
+      if (!data?.available) {
+        const reason = data?.reason || "Cannot check for updates. Connect Telegram first.";
+        setUpdateProgress({
+          active: true,
+          phase: "error",
+          percent: 0,
+          message: reason,
+        });
+        toast.error(reason);
+        return;
+      }
+
+      const count = data.subjectsWithUpdates || 0;
+      const totalNew = data.totalNew || 0;
+
+      if (count === 0) {
+        setUpdateProgress({
+          active: true,
+          phase: "done",
+          percent: 100,
+          message: "All subjects are up to date — no new lessons on Telegram.",
+        });
+        toast.success("All subjects are up to date");
+        return;
+      }
+
+      const names = (data.subjects || [])
+        .filter((s) => s.hasUpdate)
+        .map((s) => s.subjectName)
+        .slice(0, 6);
+      const namePreview =
+        names.length > 0
+          ? names.join(", ") + (count > names.length ? ` +${count - names.length} more` : "")
+          : "";
+
+      setUpdateProgress({
+        active: true,
+        phase: "done",
+        percent: 100,
+        message: `Updates available — ${count} subject${count === 1 ? "" : "s"}, ${totalNew} new lesson${totalNew === 1 ? "" : "s"}`,
+        detail: namePreview,
+      });
+      toast.success(
+        `${count} subject${count === 1 ? "" : "s"} have updates (${totalNew} new lesson${totalNew === 1 ? "" : "s"})`
+      );
+    } catch (error) {
+      const msg = error.response?.data?.message || "Could not check for updates";
+      setUpdateProgress({
+        active: true,
+        phase: "error",
+        percent: 0,
+        message: msg,
+      });
+      toast.error(msg);
+    } finally {
+      setCheckingUpdates(false);
+    }
+  };
+
   const handleUpdateSubject = async (subject) => {
     if (!selectedProgrammeId || !subject?._id) return;
     if (subject.telegramTopicId == null) {
       toast.error("This subject is not linked to Telegram. Re-add it from Add from Telegram.");
       return;
     }
-    setUpdatingSubjectId(subject._id);
-    setUpdateProgress({
-      active: true,
-      phase: "syncing",
-      percent: 15,
-      message: `Updating ${subject.name}…`,
-    });
-    try {
-      const { data } = await api.post("/telegram/update-subject", {
-        programmeId: selectedProgrammeId,
-        subjectId: subject._id,
-      });
-      setUpdateProgress({
-        active: true,
-        phase: "done",
-        percent: 100,
-        message: data.message || "Subject updated",
-      });
-      if (data.imported > 0) {
-        toast.success(data.message || `Updated — ${data.imported} new lesson(s)`);
-      } else {
-        toast(data.message || "No new lessons found for this subject", { icon: "ℹ️" });
-      }
-      await Promise.all([fetchCourseContents(), fetchSubjects(), fetchSubjectUpdates({ silent: true })]);
-      setTimeout(() => setUpdateProgress(null), 900);
-    } catch (error) {
-      setUpdateProgress({
-        active: true,
-        phase: "error",
-        percent: 0,
-        message: error.response?.data?.message || "Update failed",
-      });
-      toast.error(error.response?.data?.message || "Update failed");
-    } finally {
-      setUpdatingSubjectId("");
+
+    let status = updatesAvailable;
+    if (!status?.available) {
+      status = await fetchSubjectUpdates({ silent: true });
     }
+    const row = status?.subjects?.find((s) => String(s.subjectId) === String(subject._id));
+    if (row && !row.hasUpdate) {
+      toast("This subject is already up to date", { icon: "ℹ️" });
+      return;
+    }
+
+    setUpdatingSubjectId(subject._id);
+    await runTelegramUpdateWithProgress({
+      endpoint: "/telegram/update-subject",
+      body: { programmeId: selectedProgrammeId, subjectId: subject._id },
+      startMessage: `Updating ${subject.name} from Telegram…`,
+      setBusy: () => setUpdatingSubjectId(""),
+      onSuccessRefresh: async () => {
+        await Promise.all([
+          fetchCourseContents(),
+          fetchSubjects(),
+          fetchSubjectUpdates({ silent: true }),
+        ]);
+      },
+    });
   };
 
   const handleUpdateBatch = async () => {
     if (!selectedProgrammeId) return;
 
     let status = updatesAvailable;
-    if (!status || updatesLoading) {
-      status = await fetchSubjectUpdates();
-    } else if (!status.available) {
+    if (!status?.available || updatesLoading) {
+      setUpdateProgress({
+        active: true,
+        phase: "checking",
+        percent: 5,
+        message: "Checking which subjects have updates…",
+      });
       status = await fetchSubjectUpdates();
     }
 
     if (!status?.available) {
+      setUpdateProgress({
+        active: true,
+        phase: "error",
+        percent: 0,
+        message: status?.reason || "Cannot check updates",
+      });
       toast(status?.reason || "Cannot check updates", { icon: "ℹ️" });
       return;
     }
 
     const count = status.subjectsWithUpdates || 0;
     if (!count) {
+      setUpdateProgress({
+        active: true,
+        phase: "done",
+        percent: 100,
+        message: "All subjects are up to date.",
+      });
       toast.success("All lessons are up to date");
+      setTimeout(() => setUpdateProgress(null), 1200);
       return;
     }
+
     if (
       !window.confirm(
         `Update all ${count} subject${count === 1 ? "" : "s"} with new lessons from Telegram? This may take a few minutes.`
@@ -391,42 +586,22 @@ const DashboardPage = () => {
     ) {
       return;
     }
+
     setBatchUpdating(true);
-    setUpdateProgress({
-      active: true,
-      phase: "syncing",
-      percent: 10,
-      message: `Updating ${count} subject${count === 1 ? "" : "s"}…`,
+    await runTelegramUpdateWithProgress({
+      endpoint: "/telegram/update-batch",
+      body: { programmeId: selectedProgrammeId },
+      startMessage: `Updating ${count} subject${count === 1 ? "" : "s"} from Telegram…`,
+      setBusy: () => setBatchUpdating(false),
+      onSuccessRefresh: async () => {
+        await Promise.all([
+          fetchCourseContents(),
+          fetchSubjects(),
+          fetchChapterStats(),
+          fetchSubjectUpdates({ silent: true }),
+        ]);
+      },
     });
-    try {
-      const { data } = await api.post("/telegram/update-batch", {
-        programmeId: selectedProgrammeId,
-      });
-      setUpdateProgress({
-        active: true,
-        phase: "done",
-        percent: 100,
-        message: data.message || "Batch updated",
-      });
-      toast.success(data.message || "Batch updated");
-      await Promise.all([
-        fetchCourseContents(),
-        fetchSubjects(),
-        fetchChapterStats(),
-        fetchSubjectUpdates({ silent: true }),
-      ]);
-      setTimeout(() => setUpdateProgress(null), 1200);
-    } catch (error) {
-      setUpdateProgress({
-        active: true,
-        phase: "error",
-        percent: 0,
-        message: error.response?.data?.message || "Batch update failed",
-      });
-      toast.error(error.response?.data?.message || "Batch update failed");
-    } finally {
-      setBatchUpdating(false);
-    }
   };
 
   useEffect(() => {
@@ -1282,9 +1457,11 @@ const DashboardPage = () => {
             updatesLoading={updatesLoading}
             updatesAvailable={updatesAvailable}
             onUpdateBatch={handleUpdateBatch}
+            onCheckForUpdates={handleCheckForUpdates}
             onUpdateSubject={handleUpdateSubject}
             updatingSubjectId={updatingSubjectId}
             batchUpdating={batchUpdating}
+            checkingUpdates={checkingUpdates}
             renamingSubjectId={renamingSubjectId}
             deletingSubjectId={deletingSubjectId}
             deletingContentId={deletingContentId}
@@ -1519,6 +1696,12 @@ const DashboardPage = () => {
       <OperationProgressOverlay
         progress={updateProgress}
         onDismiss={() => setUpdateProgress(null)}
+        onCancel={
+          updateProgress?.active &&
+          !["done", "error", "cancelled"].includes(updateProgress?.phase)
+            ? handleCancelTelegramOperation
+            : undefined
+        }
       />
     </Layout>
   );

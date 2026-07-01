@@ -36,7 +36,7 @@ import {
   verifyTelegramPassword,
 } from "../services/telegramService.js";
 import { syncAllAutoChannels, syncChannelMapping } from "../services/telegramSyncService.js";
-import { failProgress, initProgress } from "../services/uploadProgressBus.js";
+import { failProgress, initProgress, requestCancel } from "../services/uploadProgressBus.js";
 
 const startAsyncImport = (res, uploadId, work) => {
   initProgress(uploadId, {
@@ -486,14 +486,18 @@ export const telegramBatchUpdates = async (req, res) => {
 
 export const telegramUpdateSubject = async (req, res) => {
   try {
-    const { programmeId, subjectId } = req.body;
+    const { programmeId, subjectId, uploadId } = req.body;
     if (!programmeId || !mongoose.Types.ObjectId.isValid(programmeId)) {
       return res.status(400).json({ message: "programmeId is required." });
     }
     if (!subjectId || !mongoose.Types.ObjectId.isValid(subjectId)) {
       return res.status(400).json({ message: "subjectId is required." });
     }
-    const result = await updateProgrammeSubjects({ programmeId, subjectId });
+    const run = () => updateProgrammeSubjects({ programmeId, subjectId, uploadId });
+    if (uploadId) {
+      return startAsyncImport(res, uploadId, run);
+    }
+    const result = await run();
     res.json(result);
   } catch (error) {
     res.status(400).json({ message: error.message || "Subject update failed" });
@@ -502,15 +506,28 @@ export const telegramUpdateSubject = async (req, res) => {
 
 export const telegramUpdateBatch = async (req, res) => {
   try {
-    const { programmeId } = req.body;
+    const { programmeId, uploadId } = req.body;
     if (!programmeId || !mongoose.Types.ObjectId.isValid(programmeId)) {
       return res.status(400).json({ message: "programmeId is required." });
     }
-    const result = await updateProgrammeSubjects({ programmeId, allWithUpdates: true });
+    const run = () => updateProgrammeSubjects({ programmeId, allWithUpdates: true, uploadId });
+    if (uploadId) {
+      return startAsyncImport(res, uploadId, run);
+    }
+    const result = await run();
     res.json(result);
   } catch (error) {
     res.status(400).json({ message: error.message || "Batch update failed" });
   }
+};
+
+export const telegramCancelProgress = async (req, res) => {
+  const { uploadId } = req.params;
+  if (!uploadId) {
+    return res.status(400).json({ message: "uploadId is required." });
+  }
+  requestCancel(uploadId);
+  res.json({ message: "Cancel requested" });
 };
 
 export const telegramForumPreview = async (req, res) => {

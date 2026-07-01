@@ -85,6 +85,39 @@ export const waitForUploadProgress = (uploadId, onUpdate, intervalMs = 450) => {
   return promise;
 };
 
+export const cancelTelegramProgress = async (uploadId) => {
+  if (!uploadId) return;
+  try {
+    await api.post(`/telegram/progress/${encodeURIComponent(uploadId)}/cancel`);
+  } catch {
+    // ignore — server may already be done
+  }
+};
+
+/** Map polled upload-progress payload to OperationProgressOverlay shape. */
+export const mapTelegramPollToOverlay = (data, base = {}) => {
+  const phase =
+    data?.phase === "done"
+      ? "done"
+      : data?.phase === "error"
+        ? data?.error?.toLowerCase().includes("cancel")
+          ? "cancelled"
+          : "error"
+        : "syncing";
+  return {
+    active: true,
+    phase,
+    percent: Math.min(99, Number(data?.percent) || base.percent || 5),
+    message: data?.message || base.message || "Updating from Telegram…",
+    currentFile: data?.currentFile,
+    currentLabel: data?.currentFile,
+    total: data?.filesTotal || 0,
+    current: data?.fileIndex || 0,
+    errorDetail: data?.error || null,
+    ...base,
+  };
+};
+
 export const formatBytes = (n) => {
   if (n == null || Number.isNaN(n)) return "";
   const v = Number(n);

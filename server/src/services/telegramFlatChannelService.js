@@ -11,7 +11,7 @@ import {
   upsertChannelMapping,
 } from "./telegramMappingService.js";
 import { fetchAllChannelMediaEnriched } from "./telegramService.js";
-import { completeProgress, initProgress, setProgress } from "./uploadProgressBus.js";
+import { completeProgress, initProgress, setProgress, throwIfCancelled } from "./uploadProgressBus.js";
 import {
   isSubjectKeyBlocked,
   unblockTelegramSubjectsForImport,
@@ -227,6 +227,7 @@ export const importBatchByFlatSubjects = async ({
   let mediaIndex = 0;
 
   for (const topic of topics) {
+    throwIfCancelled(uploadId);
     let subject;
     if (existingSubjectsOnly) {
       subject = await Subject.findOne({
@@ -247,6 +248,7 @@ export const importBatchByFlatSubjects = async ({
     const chapter = await getOrCreateChapterForSubject(subject._id, LESSONS_CHAPTER);
 
     for (const meta of topic.media) {
+      throwIfCancelled(uploadId);
       const messageId = Number(meta.messageId);
       if (!messageId) continue;
       maxMessageId = Math.max(maxMessageId, messageId);
@@ -263,9 +265,15 @@ export const importBatchByFlatSubjects = async ({
       const title = resolveFlatChannelLessonTitle(meta) || `Lesson ${messageId}`;
 
       if (uploadId) {
+        const pct =
+          mediaTotal > 0 ? Math.min(99, Math.round((mediaIndex / mediaTotal) * 100)) : 5;
         setProgress(uploadId, {
-          message: `Processing ${topic.title}`,
+          phase: "syncing",
+          message: `Importing — ${topic.title}`,
           currentFile: meta.displayName || meta.fileName,
+          fileIndex: mediaIndex + 1,
+          filesTotal: mediaTotal,
+          percent: pct,
         });
       }
 

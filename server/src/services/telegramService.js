@@ -85,11 +85,40 @@ const getApiCredentials = () => {
 
 const normalizePhone = (phone = "") => String(phone || "").replace(/\s+/g, "").trim();
 
+const isBenignGramJsError = (error) => {
+  const message = telegramErrorText(error);
+  return /timeout/i.test(message);
+};
+
+/** GramJS logs update-loop ping TIMEOUTs via console.error — noisy during batch sync. */
+const configureGramJsClient = (client) => {
+  const logLevel = String(process.env.TELEGRAM_GRAMJS_LOG_LEVEL || "none").trim().toLowerCase();
+  if (logLevel && logLevel !== "default") {
+    try {
+      client.setLogLevel(logLevel);
+    } catch {
+      // ignore invalid level
+    }
+  }
+
+  client.onError = async (error) => {
+    if (isBenignGramJsError(error)) return;
+    console.warn("[telegram] client error:", telegramErrorText(error));
+  };
+
+  return client;
+};
+
 const createClient = (stringSession = "") => {
   const { apiId, apiHash } = getApiCredentials();
-  return new TelegramClient(new StringSession(stringSession), apiId, apiHash, {
-    connectionRetries: 5,
+  const timeoutSec = Math.max(10, Number(process.env.TELEGRAM_CLIENT_TIMEOUT_SEC || 30));
+  const client = new TelegramClient(new StringSession(stringSession), apiId, apiHash, {
+    connectionRetries: 10,
+    timeout: timeoutSec,
+    retryDelay: 1500,
+    autoReconnect: true,
   });
+  return configureGramJsClient(client);
 };
 
 const disconnectClient = async (client) => {

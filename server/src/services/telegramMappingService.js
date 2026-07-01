@@ -15,7 +15,13 @@ import {
 import { deleteContentsWithAssets } from "./contentCleanupService.js";
 import { deleteSubjectTree } from "./subjectCleanupService.js";
 import { buildTelegramPdfContentFields } from "./telegramPdfImportService.js";
-import { completeProgress, initProgress, setProgress } from "./uploadProgressBus.js";
+import {
+  completeProgress,
+  failProgress,
+  initProgress,
+  setProgress,
+  throwIfCancelled,
+} from "./uploadProgressBus.js";
 import {
   filterSubjectKeysForSyncWrite,
   filterTopicIdsForSyncWrite,
@@ -735,6 +741,7 @@ export const importBatchByForumTopics = async ({
   let mediaIndex = 0;
 
   for (const topic of topics) {
+    throwIfCancelled(uploadId);
     let subject;
     if (existingSubjectsOnly) {
       subject = await Subject.findOne({
@@ -758,6 +765,7 @@ export const importBatchByForumTopics = async ({
     const mediaItems = mediaByTopicId.get(topic.id) || [];
 
     for (const meta of mediaItems) {
+      throwIfCancelled(uploadId);
       const messageId = Number(meta.messageId);
       if (!messageId) continue;
       maxMessageId = Math.max(maxMessageId, messageId);
@@ -775,9 +783,15 @@ export const importBatchByForumTopics = async ({
       const title = resolveTelegramMediaTitle(meta) || `Lesson ${messageId}`;
 
       if (uploadId) {
+        const pct =
+          mediaTotal > 0 ? Math.min(99, Math.round((mediaIndex / mediaTotal) * 100)) : 5;
         setProgress(uploadId, {
-          message: `Processing ${topic.title}`,
+          phase: "syncing",
+          message: `Importing — ${topic.title}`,
           currentFile: meta.displayName || meta.fileName,
+          fileIndex: mediaIndex + 1,
+          filesTotal: mediaTotal,
+          percent: pct,
         });
       }
 
@@ -1197,83 +1211,133 @@ export const updateProgrammeSubjects = async ({
   subjectId = null,
   subjectIds = null,
   allWithUpdates = false,
+  uploadId = null,
 }) => {
   const session = await getActiveSession();
   if (!session?.isActive) {
     throw new Error("Telegram is not connected. Connect in Add from Telegram.");
   }
 
-  await repairSubjectTelegramLinks({ programmeId });
-  const status = await getProgrammeSubjectUpdates({ programmeId });
-  if (!status.available) {
-    throw new Error(status.reason || "Cannot check for updates.");
+  if (uploadId) {
+    initProgress(uploadId, {
+      phase: "syncing",
+      percent: 3,
+      message: "Checking which subjects have new lessons…",
+    });
   }
 
-  let topicIds = [];
-  let channelId = null;
-  let channelTitle = "";
-
-  if (allWithUpdates) {
-    const withUpdates = status.subjects.filter((s) => s.hasUpdate);
-    topicIds = withUpdates.map((s) => s.topicId).filter(Boolean);
-    channelId = withUpdates[0]?.channelId || status.channelId;
-    if (!topicIds.length) {
-      return { created: [], skipped: [], imported: 0, message: "All subjects are up to date." };
-    }
-  } else {
-    const ids = subjectIds?.length ? subjectIds : subjectId ? [subjectId] : [];
-    if (!ids.length) {
-      throw new Error("subjectId or subjectIds is required.");
+  try {
+    await repairSubjectTelegramLinks({ programmeId });
+    throwIfCancelled(uploadId);
+    const status = await getProgrammeSubjectUpdates({ programmeId });
+    if (!status.available) {
+      throw new Error(status.reason || "Cannot check for updates.");
     }
 
-    const selected = status.subjects.filter((row) => ids.map(String).includes(String(row.subjectId)));
-    if (!selected.length) {
-      throw new Error("Subject is not linked to a Telegram topic. Re-add it from Telegram.");
+    let topicIds = [];
+    let channelId = null;
+    let channelTitle = "";
+
+    if (allWithUpdates) {
+      const withUpdates = status.subjects.filter((s) => s.hasUpdate);
+      topicIds = withUpdates.map((s) => s.topicId).filter(Boolean);
+      channelId = withUpdates[0]?.channelId || status.channelId;
+      if (!topicIds.length) {
+        if (uploadId) {
+          completeProgress(uploadId, { message: "All subjects are up to date." });
+        }
+        return { created: [], skipped: [], imported: 0, message: "All subjects are up to date." };
+      }
+    } else {
+      const ids = subjectIds?.length ? subjectIds : subjectId ? [subjectId] : [];
+      if (!ids.length) {
+        throw new Error("subjectId or subjectIds is required.");
+      }
+
+      const selected = status.subjects.filter((row) => ids.map(String).includes(String(row.subjectId)));
+      if (!selected.length) {
+        throw new Error("Subject is not linked to a Telegram topic. Re-add it from Telegram.");
+      }
+
+      const withUpdates = selected.filter((row) => row.hasUpdate);
+      if (!withUpdates.length) {
+        if (uploadId) {
+          completeProgress(uploadId, { message: "Already up to date." });
+        }
+        return {
+          created: [],
+          skipped: [],
+          imported: 0,
+          message: "Already up to date.",
+        };
+      }
+
+      topicIds = withUpdates.map((s) => s.topicId).filter(Boolean);
+      channelId = withUpdates[0]?.channelId;
     }
 
-    const withUpdates = selected.filter((row) => row.hasUpdate);
-    if (!withUpdates.length) {
+    if (!channelId) {
+      throw new Error("No Telegram channel linked to this batch. Import from Telegram first.");
+    }
+
+    let mapping = await TelegramChannelMapping.findOne({
+      programmeId,
+      channelId: String(channelId),
+    });
+    channelTitle = mapping?.channelTitle || "";
+
+    let isFlatChannel = mapping?.channelMode === "flat";
+    if (!isFlatChannel && mapping?.channelMode !== "forum") {
+      try {
+        isFlatChannel = !(await fetchForumTopicsForChannel(channelId)).length;
+      } catch {
+        isFlatChannel = true;
+      }
+    }
+
+    if (uploadId) {
+      setProgress(uploadId, {
+        phase: "syncing",
+        percent: 8,
+        message: `Downloading new lessons for ${topicIds.length} subject(s)…`,
+      });
+    }
+
+    if (isFlatChannel) {
+      const { importBatchByFlatSubjects } = await import("./telegramFlatChannelService.js");
+      const result = await importBatchByFlatSubjects({
+        channelId,
+        channelTitle,
+        programmeId,
+        autoSync: mapping?.autoSync ?? true,
+        topicIds,
+        existingSubjectsOnly: true,
+        uploadId,
+      });
       return {
-        created: [],
-        skipped: [],
-        imported: 0,
-        message: "Already up to date.",
+        imported: result.created.length,
+        skipped: result.skipped.length,
+        created: result.created,
+        skippedItems: result.skipped,
+        topicsProcessed: result.topicsProcessed,
+        message:
+          result.created.length > 0
+            ? `Imported ${result.created.length} new file(s).`
+            : "No new files to import.",
       };
     }
 
-    topicIds = withUpdates.map((s) => s.topicId).filter(Boolean);
-    channelId = withUpdates[0]?.channelId;
-  }
-
-  if (!channelId) {
-    throw new Error("No Telegram channel linked to this batch. Import from Telegram first.");
-  }
-
-  let mapping = await TelegramChannelMapping.findOne({
-    programmeId,
-    channelId: String(channelId),
-  });
-  channelTitle = mapping?.channelTitle || "";
-
-  let isFlatChannel = mapping?.channelMode === "flat";
-  if (!isFlatChannel && mapping?.channelMode !== "forum") {
-    try {
-      isFlatChannel = !(await fetchForumTopicsForChannel(channelId)).length;
-    } catch {
-      isFlatChannel = true;
-    }
-  }
-
-  if (isFlatChannel) {
-    const { importBatchByFlatSubjects } = await import("./telegramFlatChannelService.js");
-    const result = await importBatchByFlatSubjects({
+    const result = await importBatchByForumTopics({
       channelId,
       channelTitle,
       programmeId,
       autoSync: mapping?.autoSync ?? true,
+      cleanSync: false,
       topicIds,
       existingSubjectsOnly: true,
+      uploadId,
     });
+
     return {
       imported: result.created.length,
       skipped: result.skipped.length,
@@ -1285,27 +1349,10 @@ export const updateProgrammeSubjects = async ({
           ? `Imported ${result.created.length} new file(s).`
           : "No new files to import.",
     };
+  } catch (error) {
+    if (uploadId && error?.code !== "CANCELLED") {
+      failProgress(uploadId, error.message || "Update failed");
+    }
+    throw error;
   }
-
-  const result = await importBatchByForumTopics({
-    channelId,
-    channelTitle,
-    programmeId,
-    autoSync: mapping?.autoSync ?? true,
-    cleanSync: false,
-    topicIds,
-    existingSubjectsOnly: true,
-  });
-
-  return {
-    imported: result.created.length,
-    skipped: result.skipped.length,
-    created: result.created,
-    skippedItems: result.skipped,
-    topicsProcessed: result.topicsProcessed,
-    message:
-      result.created.length > 0
-        ? `Imported ${result.created.length} new file(s).`
-        : "No new files to import.",
-  };
 };

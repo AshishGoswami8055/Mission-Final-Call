@@ -70,8 +70,33 @@ export const completeProgress = (uploadId, patch = {}) => {
     phase: "done",
     percent: 100,
     error: null,
+    cancelled: false,
     ...patch,
   });
+};
+
+export const requestCancel = (uploadId) => {
+  if (!uploadId) return;
+  const prev = stateMap.get(uploadId) || {};
+  stateMap.set(uploadId, {
+    ...prev,
+    cancelRequested: true,
+    updatedAt: now(),
+  });
+};
+
+export const isCancelled = (uploadId) => {
+  if (!uploadId) return false;
+  return Boolean(stateMap.get(uploadId)?.cancelRequested);
+};
+
+export const throwIfCancelled = (uploadId) => {
+  if (!isCancelled(uploadId)) return;
+  const message = "Import cancelled by user";
+  failProgress(uploadId, message);
+  const err = new Error(message);
+  err.code = "CANCELLED";
+  throw err;
 };
 
 const sweep = () => {

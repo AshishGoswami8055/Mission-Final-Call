@@ -1,36 +1,43 @@
-import { FiCheck, FiLoader, FiTrash2, FiUploadCloud } from "react-icons/fi";
+import { FiCheck, FiLoader, FiSearch, FiTrash2, FiUploadCloud, FiX } from "react-icons/fi";
 import { formatBytes } from "../utils/uploadProgress";
 
 const PHASE_META = {
+  checking: { label: "Checking for updates", icon: FiSearch },
   cleaning: { label: "Cleaning old import", icon: FiTrash2 },
   deleting: { label: "Removing course data", icon: FiTrash2 },
   importing: { label: "Importing from Telegram", icon: FiUploadCloud },
   "telegram-download": { label: "Downloading PDF from Telegram", icon: FiLoader },
   uploading: { label: "Uploading PDF to Cloudinary", icon: FiUploadCloud },
   syncing: { label: "Downloading new lessons", icon: FiLoader },
+  pending: { label: "Preparing…", icon: FiLoader },
   finalizing: { label: "Finalizing import", icon: FiLoader },
   done: { label: "Complete", icon: FiCheck },
   error: { label: "Failed", icon: FiTrash2 },
+  cancelled: { label: "Cancelled", icon: FiX },
 };
 
-const OperationProgressOverlay = ({ progress, onDismiss }) => {
+const OperationProgressOverlay = ({ progress, onDismiss, onCancel }) => {
   if (!progress?.active) return null;
 
   const meta = PHASE_META[progress.phase] || PHASE_META.importing;
   const Icon = meta.icon;
   const isDone = progress.phase === "done";
-  const isError = progress.phase === "error";
+  const isError = progress.phase === "error" || progress.phase === "cancelled";
+  const isCancelled = progress.phase === "cancelled";
   const percent = Math.max(0, Math.min(100, Math.round(Number(progress.percent) || 0)));
   const showSpinner =
     !isDone &&
     !isError &&
-    (progress.phase === "importing" ||
+    (progress.phase === "checking" ||
+      progress.phase === "importing" ||
       progress.phase === "syncing" ||
+      progress.phase === "pending" ||
       progress.phase === "deleting" ||
       progress.phase === "cleaning" ||
       progress.phase === "telegram-download" ||
       progress.phase === "uploading" ||
       progress.phase === "finalizing");
+  const canCancel = Boolean(onCancel) && showSpinner;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center">
@@ -66,6 +73,11 @@ const OperationProgressOverlay = ({ progress, onDismiss }) => {
                 {progress.currentLabel || progress.currentFile}
               </p>
             )}
+            {(progress.detail || progress.errorDetail) && (
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                {progress.errorDetail || progress.detail}
+              </p>
+            )}
             {progress.total > 0 && !isError && (
               <p className="mt-1 text-xs tabular-nums text-slate-500 dark:text-slate-400">
                 {progress.current ?? 0} / {progress.total}
@@ -94,11 +106,23 @@ const OperationProgressOverlay = ({ progress, onDismiss }) => {
         <div className="progress-bar h-2.5">
           <div
             className={`progress-bar-fill h-full transition-all duration-300 ease-out ${
-              isError ? "bg-rose-500" : isDone ? "progress-bar-fill-done" : "progress-bar-fill-default"
+              isCancelled
+                ? "bg-slate-400"
+                : isError
+                  ? "bg-rose-500"
+                  : isDone
+                    ? "progress-bar-fill-done"
+                    : "progress-bar-fill-default"
             }`}
-            style={{ width: `${Math.max(isError ? 100 : 2, percent)}%` }}
+            style={{ width: `${Math.max(isError && !isCancelled ? 100 : 2, percent)}%` }}
           />
         </div>
+
+        {canCancel && (
+          <button type="button" className="btn-secondary mt-4 w-full text-sm" onClick={onCancel}>
+            Cancel
+          </button>
+        )}
 
         {(isDone || isError) && onDismiss && (
           <button type="button" className="btn-primary mt-4 w-full text-sm" onClick={onDismiss}>

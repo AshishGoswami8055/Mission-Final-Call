@@ -21,6 +21,7 @@ import {
   telegramBatchUpdates,
   telegramUpdateBatch,
   telegramUpdateSubject,
+  telegramCancelProgress,
   telegramVerifyOtp,
   telegramVerifyPassword,
 } from "../controllers/telegramController.js";
@@ -47,6 +48,7 @@ router.post("/sync-all", protect, telegramSyncAll);
 router.get("/batch-updates", protect, telegramBatchUpdates);
 router.post("/update-subject", protect, telegramUpdateSubject);
 router.post("/update-batch", protect, telegramUpdateBatch);
+router.post("/progress/:uploadId/cancel", protect, telegramCancelProgress);
 router.get("/stream/:messageId", protectStream, telegramStream);
 
 export default router;
