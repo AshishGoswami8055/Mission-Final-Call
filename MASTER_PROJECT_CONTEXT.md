@@ -21,7 +21,7 @@ The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, p
 | **Course organization** | CDS cycle → coaching batch (Programme) → Subject → Chapter → Content (video/PDF) |
 | **Content ingestion** | File upload, URL, YouTube download→Cloudinary (dev), Telegram import (forum/flat channels), Telegram video links (prod) |
 | **Telegram** | GramJS login, channel browse, batch import, auto-sync, stream proxy, optional cloudify to Cloudinary |
-| **Video playback** | **Plyr** player (`CdsPlyrPlayer`), HTML5 local, Cloudinary CDN, Telegram stream, YouTube embed, screenshot notes, resume position, stall watchdog + retry, Telegram live-connection banner, **OpenAI Ask panel** (when `OPENAI_API_KEY` set) |
+| **Video playback** | **Plyr** player (`CdsPlyrPlayer`), HTML5 local, Cloudinary CDN, Telegram stream, YouTube embed, screenshot notes, resume position, stall watchdog + retry, Telegram live-connection banner |
 | **PDF / PYQ** | Inline viewer, course PDFs on disk, PYQ on Cloudinary, **AI question extract** (`POST /papers/:id/extract`), optional OCR via `ocrmypdf` on upload |
 | **Progress** | Per-content completion, chapter stats, paper attempted tracking |
 | **Dashboard** | Lazy course loading — subject stats from `/chapters/stats`; lesson rows fetched only when a subject is opened; library view paginated (`limit=20`) |
@@ -118,7 +118,7 @@ d:\1. Projects\CDS JOURNEY OTA\
 │       ├── config/courses.js     # CDS cycle UI config, exam dates
 │       ├── constants/streak.js   # VIDEO_STREAK_GOAL_MINUTES = 60
 │       ├── context/              # AuthContext, StudyContext, ThemeContext
-│       ├── hooks/                # useDashboardCourseContents, useVideoContentAi, useTelegramPlaybackStatus, useWorkspaceCapabilities
+│       ├── hooks/                # useDashboardCourseContents, useTelegramPlaybackStatus, useWorkspaceCapabilities
 │       ├── components/           # Reusable UI (Layout, CdsPlyrPlayer, TelegramConnectionStatus, modals, mission/*, streak/*)
 │       ├── pages/                # Route-level pages (incl. CloudinaryStoragePage)
 │       ├── styles/               # plyr-overrides.css (teal Plyr theme + screenshot button)
@@ -161,7 +161,6 @@ d:\1. Projects\CDS JOURNEY OTA\
 | `client/src/utils/videoScreenshot.js` | Frame capture for Plyr; `applyVideoCrossOrigin`, `applyVideoSource`, `resolvePlyrVideoElement` |
 | `client/src/components/CdsPlyrPlayer.jsx` | Plyr wrapper — imperative `<video>` (avoids React StrictMode DOM conflicts); stall watchdog |
 | `client/src/hooks/useDashboardCourseContents.js` | Lazy per-subject course content + `subjectStats` from chapter stats |
-| `client/src/hooks/useVideoContentAi.js` | Video AI overview + Ask panel state |
 | `client/src/hooks/useTelegramPlaybackStatus.js` | Telegram session polling for stream playback |
 | `client/src/hooks/useWorkspaceCapabilities.js` | Feature flags from `GET /workspace/capabilities` |
 | `client/src/pages/CloudinaryStoragePage.jsx` | `/cloudinary` — storage usage, remaining space, console links |
@@ -554,9 +553,6 @@ Base URL: `http://localhost:5000/api` (dev) or `VITE_API_URL` (prod).
 | DELETE | `/:id/local-library` | Yes | Remove from PC library |
 | POST | `/:id/cloudify` | Yes | Migrate Telegram-stream video to Cloudinary |
 | GET | `/:id` | Yes | Single content with completion flag |
-| GET | `/:id/ai-overview` | Yes | Cached AI summary for video (OpenAI) |
-| POST | `/:id/ai-refresh` | Yes | Regenerate AI summary |
-| POST | `/:id/ai-ask` | Yes | Ask question about video (body: `question`, `history[]`) |
 | PUT | `/:id` | Yes | Update metadata |
 | DELETE | `/:id` | Yes | Delete + asset cleanup; response includes `destroyedCloudinary` |
 
@@ -578,7 +574,7 @@ Base URL: `http://localhost:5000/api` (dev) or `VITE_API_URL` (prod).
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/capabilities` | Feature flags: `videoAiAsk`, `youtubeUpload`, `paperExtract`, etc. (based on env + OAuth state) |
+| GET | `/capabilities` | Feature flags: `youtubeUpload`, `paperExtract` (based on env + OAuth state) |
 
 ## Progress (`/api/progress`)
 
@@ -1031,7 +1027,6 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 |------|--------|
 | `POST /api/papers/:id/extract` + `GET /api/papers/:id/analysis` | Wired in `paperRoutes.js`; UI in `PaperViewerPage` |
 | YouTube direct upload | `uploadDestination: "youtube"` in `contentController`; radio in `ContentModal` when OAuth connected |
-| AI Ask panel | `GET/POST /contents/:id/ai-*` + `useVideoContentAi`; enabled via `GET /workspace/capabilities` when `OPENAI_API_KEY` set |
 | Dashboard course view | Lazy load via `useDashboardCourseContents` — stats from `/chapters/stats`, contents on subject open |
 | Unit tests + CI | `server/tests/*.test.js`, `.github/workflows/ci.yml` |
 

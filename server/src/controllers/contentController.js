@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import mongoose from "mongoose";
 import Chapter from "../models/Chapter.js";
 import Content from "../models/Content.js";
-import ContentAiCache from "../models/ContentAiCache.js";
 import Progress from "../models/Progress.js";
 import Subject from "../models/Subject.js";
 import {
@@ -53,12 +52,6 @@ import {
 import { formatBytesLabel, isTelegramStreamContent } from "../utils/contentPlayback.js";
 import { streamTelegramMedia } from "../services/telegramService.js";
 import { toCloudinaryDownloadUrl } from "../services/subjectDownloadService.js";
-import {
-  askVideoQuestion,
-  getVideoAiOverview,
-  isVideoAiEnabled,
-  refreshVideoAiOverview,
-} from "../services/contentAiService.js";
 import {
   getYouTubeStatus,
   uploadVideoToYouTube,
@@ -1037,45 +1030,11 @@ export const deleteContent = async (req, res) => {
 
   const assets = await destroyContentAssets(content);
 
-  await Promise.all([
-    Progress.deleteMany({ contentId: content._id }),
-    ContentAiCache.deleteOne({ contentId: content._id }),
-  ]);
+  await Promise.all([Progress.deleteMany({ contentId: content._id })]);
   await content.deleteOne();
   res.json({
     message: "Content deleted",
     destroyedCloudinary: assets.cloudinary,
     cloudinaryErrors: assets.errors?.length ? assets.errors : undefined,
   });
-};
-
-export const getContentAiOverview = async (req, res) => {
-  try {
-    if (!isVideoAiEnabled()) {
-      return res.status(503).json({ message: "OPENAI_API_KEY is not configured on the server" });
-    }
-    const data = await getVideoAiOverview(req.params.id);
-    res.json(data);
-  } catch (error) {
-    res.status(400).json({ message: error.message || "Could not load AI overview" });
-  }
-};
-
-export const refreshContentAiOverview = async (req, res) => {
-  try {
-    const data = await refreshVideoAiOverview(req.params.id);
-    res.json(data);
-  } catch (error) {
-    res.status(400).json({ message: error.message || "Could not generate AI overview" });
-  }
-};
-
-export const askContentAi = async (req, res) => {
-  try {
-    const { question, history } = req.body || {};
-    const data = await askVideoQuestion(req.params.id, { question, history });
-    res.json(data);
-  } catch (error) {
-    res.status(400).json({ message: error.message || "Ask failed" });
-  }
 };

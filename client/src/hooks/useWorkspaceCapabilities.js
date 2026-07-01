@@ -4,7 +4,6 @@ import api from "../api/client";
 /** Workspace feature flags from GET /api/workspace/capabilities */
 export const useWorkspaceCapabilities = () => {
   const [capabilities, setCapabilities] = useState({
-    videoAiAsk: false,
     paperExtract: false,
     youtubeUpload: false,
     youtubeConfigured: false,
@@ -15,7 +14,6 @@ export const useWorkspaceCapabilities = () => {
     try {
       const { data } = await api.get("/workspace/capabilities");
       setCapabilities({
-        videoAiAsk: Boolean(data.videoAiAsk),
         paperExtract: Boolean(data.paperExtract),
         youtubeUpload: Boolean(data.youtubeUpload),
         youtubeConfigured: Boolean(data.youtubeConfigured),

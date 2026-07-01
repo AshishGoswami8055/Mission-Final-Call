@@ -1,8 +1,9 @@
 import Content from "../models/Content.js";
-import { isVideoAiEnabled } from "../services/contentAiService.js";
 import { isYouTubeConfigured, getYouTubeStatus } from "../services/youtubeUploadService.js";
 
 const EXAM_DATE = new Date("2026-09-13T00:00:00");
+
+const isPaperExtractEnabled = () => Boolean(String(process.env.OPENAI_API_KEY || "").trim());
 
 const getExamCountdownDays = () => {
   const now = new Date();
@@ -40,9 +41,9 @@ export const getWorkspaceCapabilities = async (_req, res) => {
   } catch {
     youtube = { configured: isYouTubeConfigured(), connected: false };
   }
+
   res.json({
-    videoAiAsk: isVideoAiEnabled(),
-    paperExtract: isVideoAiEnabled(),
+    paperExtract: isPaperExtractEnabled(),
     youtubeUpload: Boolean(youtube.configured && youtube.connected),
     youtubeConfigured: Boolean(youtube.configured),
   });

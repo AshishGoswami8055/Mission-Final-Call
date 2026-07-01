@@ -8,21 +8,15 @@ import {
   FiDownload,
   FiEdit2,
   FiFileText,
-  FiMessageCircle,
   FiMoon,
   FiLoader,
   FiRefreshCw,
-  FiSend,
   FiSun,
-  FiX,
-  FiZap,
   FiTrash2,
 } from "react-icons/fi";
 import { Link, useParams } from "react-router-dom";
 import api from "../api/client";
-import { useWorkspaceCapabilities } from "../hooks/useWorkspaceCapabilities";
 import { useTelegramPlaybackStatus } from "../hooks/useTelegramPlaybackStatus";
-import { useVideoContentAi } from "../hooks/useVideoContentAi";
 import StudyTracker from "../components/StudyTracker";
 import CdsPlyrPlayer from "../components/CdsPlyrPlayer";
 import TelegramConnectionStatus from "../components/TelegramConnectionStatus";
@@ -68,27 +62,6 @@ const loadVideoPosition = (contentId) => {
   } catch {
     return null;
   }
-};
-
-const renderWithTimeHighlights = (text) => {
-  const parts = String(text || "").split(/(\(\d{1,2}:\d{2}(?:-\d{1,2}:\d{2})?\))/g);
-  return parts.map((part, index) => {
-    if (/^\(\d{1,2}:\d{2}(?:-\d{1,2}:\d{2})?\)$/.test(part)) {
-      return (
-        <span key={`${part}-${index}`} className="font-medium text-sky-400">
-          {part}
-        </span>
-      );
-    }
-    return <span key={`${part}-${index}`}>{part}</span>;
-  });
-};
-
-const formatElapsed = (seconds = 0) => {
-  const safe = Math.max(0, Math.floor(seconds));
-  const mins = Math.floor(safe / 60);
-  const secs = safe % 60;
-  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 };
 
 const parseTimecodeToSeconds = (timecode = "") => {
@@ -179,7 +152,6 @@ const VideoPlayerPage = () => {
   const prevVideoTimeRef = useRef(0);
   const syncWatchToServerRef = useRef(async () => {});
   const { addStudyMinutes, addToWatchHistory, applyVideoStreakStatus } = useStudy();
-  const { videoAiAsk } = useWorkspaceCapabilities();
 
   const isTelegramStream = item ? isTelegramStreamContent(item) : false;
   const isTelegramLink = item ? isTelegramLinkVideo(item) : false;
@@ -194,25 +166,6 @@ const VideoPlayerPage = () => {
   );
   const src = isTelegramLink || isYoutube ? "" : preferSameOriginMediaUrl(rawSrc);
   const playbackSrc = cachedPlayUrl ? resolveVideoPlaybackUrl(cachedPlayUrl) : src;
-  const canUseAiAsk = Boolean(videoAiAsk && item?.type === "video");
-  const showAskPanel = canUseAiAsk;
-
-  const {
-    aiOverview,
-    loadingAi,
-    refreshingAi,
-    askInput,
-    setAskInput,
-    askingAi,
-    askMessages,
-    askPanelOpen,
-    setAskPanelOpen,
-    askStatusText,
-    askErrorText,
-    processingElapsedSec,
-    refreshAiSummary,
-    submitAsk,
-  } = useVideoContentAi({ contentId: id, canUseAiAsk });
 
   const {
     telegramStatus,
@@ -1024,155 +977,6 @@ const VideoPlayerPage = () => {
                   </div>
                 ) : null}
                 </div>
-
-                {showAskPanel && (
-                <aside
-                  className="rounded-2xl border border-white/10 bg-[#1f1f1f] p-3 text-slate-100 shadow-2xl"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="inline-flex items-center gap-2 text-base font-semibold">
-                      <FiMessageCircle size={14} />
-                      Ask about this video
-                    </h3>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1 rounded-lg bg-white/10 px-2.5 py-1 text-xs font-medium text-slate-100 transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
-                        onClick={refreshAiSummary}
-                        disabled={!canUseAiAsk || refreshingAi}
-                      >
-                        <FiRefreshCw className={refreshingAi ? "animate-spin" : ""} />
-                        {refreshingAi ? "Generating..." : "Generate"}
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-md p-1.5 text-slate-300 hover:bg-white/10 hover:text-white"
-                        onClick={() => setAskPanelOpen((v) => !v)}
-                        aria-label="Toggle ask panel"
-                      >
-                        <FiX size={14} />
-                      </button>
-                    </div>
-                  </div>
-
-                  {!canUseAiAsk && (
-                    <p className="mt-2 text-xs text-slate-400">
-                      Ask is available for video lessons only.
-                    </p>
-                  )}
-
-                  {canUseAiAsk && askPanelOpen && (
-                    <>
-                      <div
-                        className="mt-3 rounded-xl border border-white/10 bg-[#232323] p-3"
-                      >
-                        <p className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-slate-300">
-                          <FiZap size={12} />
-                          Summary
-                        </p>
-                        {loadingAi ? (
-                          <p className="mt-2 text-xs text-slate-400">Loading summary...</p>
-                        ) : aiOverview?.ready ? (
-                          <>
-                            <p className="mt-2 text-sm leading-6 text-slate-100">
-                              {aiOverview.shortSummary}
-                            </p>
-                            {!!aiOverview?.keyMoments?.length && (
-                              <div className="mt-3 space-y-1">
-                                {aiOverview.keyMoments.slice(0, 5).map((moment, index) => (
-                                  <button
-                                    key={`${moment.timecode}-${index}`}
-                                    type="button"
-                                    onClick={() => jumpToMoment(moment.timecode)}
-                                    className="flex w-full items-center gap-2 text-left text-xs transition hover:opacity-90"
-                                  >
-                                    <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-slate-200">
-                                      <FiClock size={10} />
-                                      {moment.timecode}
-                                    </span>
-                                    <span className="text-slate-300">{moment.title}</span>
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <p className="mt-2 text-xs text-slate-400">
-                            Click Generate to create the video summary.
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="mt-3 rounded-xl border border-white/10 bg-[#232323]">
-                        <div className="max-h-[330px] space-y-2 overflow-y-auto p-3">
-                          {!askMessages.length ? (
-                            <div className="space-y-2">
-                              <button
-                                type="button"
-                                className="ml-auto block rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-900"
-                                onClick={() => submitAsk("Give me the full summary in simple points")}
-                              >
-                                Summarize the video
-                              </button>
-                            </div>
-                          ) : (
-                            askMessages.map((msg, index) => (
-                              <div
-                                key={`${msg.role}-${index}`}
-                                className={`rounded-xl px-3 py-2 text-sm leading-6 ${
-                                  msg.role === "user"
-                                    ? "ml-auto max-w-[90%] bg-white text-slate-900"
-                                    : "max-w-[95%] bg-transparent text-slate-100"
-                                }`}
-                              >
-                                {renderWithTimeHighlights(msg.text)}
-                              </div>
-                            ))
-                          )}
-                          {askingAi && (
-                            <p className="text-xs text-slate-400">{askStatusText || "Thinking..."}</p>
-                          )}
-                          {(askingAi || refreshingAi) && (
-                            <p className="text-[11px] text-slate-500">
-                              Elapsed: {formatElapsed(processingElapsedSec)} | Typical local timestamp run: 00:05-00:30
-                            </p>
-                          )}
-                          {!askingAi && !!askErrorText && (
-                            <p className="text-xs text-rose-400">{askErrorText}</p>
-                          )}
-                        </div>
-                        <form
-                          className="border-t border-white/10 p-2"
-                          onSubmit={(e) => {
-                            e.preventDefault();
-                            submitAsk();
-                          }}
-                        >
-                          <div className="flex items-center gap-2 rounded-full border border-white/10 bg-[#2a2a2a] px-3 py-2">
-                            <input
-                              className="w-full bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
-                              placeholder="Ask a question..."
-                              value={askInput}
-                              onChange={(e) => setAskInput(e.target.value)}
-                              disabled={!canUseAiAsk || askingAi}
-                            />
-                            <button
-                              type="submit"
-                              className="rounded p-1 text-slate-300 transition hover:bg-white/10 hover:text-white disabled:opacity-50"
-                              disabled={!askInput.trim() || askingAi || !canUseAiAsk}
-                            >
-                              <FiSend size={16} />
-                            </button>
-                          </div>
-                        </form>
-                        <div className="pb-2 text-center text-[10px] text-slate-500">
-                          AI can make mistakes, so double-check it.
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </aside>
-                )}
               </div>
             </>
           )}
