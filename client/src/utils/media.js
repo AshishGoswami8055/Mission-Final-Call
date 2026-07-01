@@ -26,6 +26,24 @@ export const toAbsoluteMediaUrl = (url) => {
   return `${serverBaseUrl}${url}`;
 };
 
+/** Keep /api and /uploads on the page origin so canvas screenshot capture works in dev. */
+export const preferSameOriginMediaUrl = (url) => {
+  if (!url) return "";
+  if (url.startsWith("/")) return url;
+  if (typeof window === "undefined") return url;
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.origin === window.location.origin) {
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    }
+  } catch {
+    /* ignore */
+  }
+  return url;
+};
+
+export const resolveVideoPlaybackUrl = (url) => preferSameOriginMediaUrl(toAbsoluteMediaUrl(url));
+
 export const isYouTubeUrl = (url = "") =>
   /(?:youtube\.com\/watch\?v=|youtu\.be\/)/i.test(url);
 
@@ -45,9 +63,10 @@ export const isTelegramStreamContent = (item) =>
   );
 
 const resolveApiBase = () => {
+  // Video/canvas capture needs same-origin URLs in the browser (Vite proxies /api).
+  if (typeof window !== "undefined") return "/api";
   const configured = String(import.meta.env.VITE_API_URL || "").trim();
   if (configured) return configured.replace(/\/$/, "");
-  if (import.meta.env.DEV) return "/api";
   return "/api";
 };
 
@@ -117,7 +136,10 @@ export const resolveContentSrc = (item) => {
   const telegramLink = getTelegramVideoUrl(item);
   if (telegramLink) return telegramLink;
   if (item.sourceType === "cloudinary") return item.videoUrl || item.url || "";
-  if (item.sourceType === "upload") return toAbsoluteMediaUrl(item.filePath);
+  if (item.sourceType === "upload") {
+    const filePath = item.filePath || "";
+    return filePath.startsWith("/") ? filePath : toAbsoluteMediaUrl(filePath);
+  }
   return item.url || item.videoUrl || "";
 };
 

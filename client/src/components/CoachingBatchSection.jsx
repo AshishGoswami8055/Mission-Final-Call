@@ -1,4 +1,5 @@
-import { FiCloud, FiPlus, FiTrash2 } from "react-icons/fi";
+import { FiCloud, FiHardDrive, FiPlus, FiTrash2 } from "react-icons/fi";
+import { Link } from "react-router-dom";
 
 /**
  * One-line coaching batch picker. Renders the active batch as a horizontal pill
@@ -60,6 +61,10 @@ const CoachingBatchSection = ({
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
+        <Link to="/cloudinary" className="btn-ghost text-xs" title="Cloudinary storage & usage">
+          <FiHardDrive size={14} />
+          <span className="hidden sm:inline">Storage</span>
+        </Link>
         {onOpenCloudMappings && (
           <button
             type="button"

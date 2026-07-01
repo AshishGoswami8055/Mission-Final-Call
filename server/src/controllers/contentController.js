@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import mongoose from "mongoose";
 import Chapter from "../models/Chapter.js";
 import Content from "../models/Content.js";
+import ContentAiCache from "../models/ContentAiCache.js";
 import Progress from "../models/Progress.js";
 import Subject from "../models/Subject.js";
 import {
@@ -52,6 +53,16 @@ import {
 import { formatBytesLabel, isTelegramStreamContent } from "../utils/contentPlayback.js";
 import { streamTelegramMedia } from "../services/telegramService.js";
 import { toCloudinaryDownloadUrl } from "../services/subjectDownloadService.js";
+import {
+  askVideoQuestion,
+  getVideoAiOverview,
+  isVideoAiEnabled,
+  refreshVideoAiOverview,
+} from "../services/contentAiService.js";
+import {
+  getYouTubeStatus,
+  uploadVideoToYouTube,
+} from "../services/youtubeUploadService.js";
 
 const assertLocalLibrary = (_req, res, next) => {
   if (!isLocalLibraryEnabled()) {
@@ -332,6 +343,49 @@ export const createContent = async (req, res) => {
               "Video file uploads are disabled in production. Add a Telegram video link (t.me / telegram.me) instead.",
           });
         }
+
+        const uploadDestination = String(req.body.uploadDestination || "").toLowerCase();
+        if (uploadDestination === "youtube") {
+          const ytStatus = await getYouTubeStatus();
+          if (!ytStatus.connected) {
+            safeUnlink(req.file.path);
+            return res.status(400).json({
+              message: "Connect YouTube first (Dashboard → YouTube settings / auth flow).",
+            });
+          }
+          if (uploadId) {
+            setProgress(uploadId, {
+              phase: "uploading",
+              message: "Uploading video to YouTube (Unlisted)",
+              percent: 0,
+            });
+          }
+          const yt = await uploadVideoToYouTube({
+            filePath: req.file.path,
+            title: doc.title || buildVideoTitleFromFilename(req.file.originalname),
+            description: `CDS Journey — ${subject.name}`,
+            privacyStatus: "unlisted",
+            onProgress: uploadId
+              ? ({ bytesUploaded, bytesTotal, percent }) => {
+                  setProgress(uploadId, {
+                    phase: "uploading",
+                    message: "Uploading video to YouTube",
+                    bytesLoaded: bytesUploaded,
+                    bytesTotal,
+                    percent,
+                  });
+                }
+              : undefined,
+          });
+          safeUnlink(req.file.path);
+          doc.type = "video";
+          doc.sourceType = "url";
+          doc.url = yt.url;
+          doc.videoUrl = yt.url;
+          doc.thumbnail = yt.thumbnail;
+          doc.videoSourceType = null;
+          doc.uploadedAt = new Date();
+        } else {
         const filePath = toUploadsRelativePath(req.file.path);
         if (!filePath) {
           safeUnlink(req.file.path);
@@ -341,6 +395,7 @@ export const createContent = async (req, res) => {
         doc.filePath = filePath;
         doc.videoSourceType = "local";
         doc.uploadedAt = new Date();
+        }
       } else {
         // PDF — keep on local disk.
         const filePath = toUploadsRelativePath(req.file.path);
@@ -980,9 +1035,47 @@ export const deleteContent = async (req, res) => {
   const content = await Content.findById(req.params.id);
   if (!content) return res.status(404).json({ message: "Content not found" });
 
-  await destroyContentAssets(content);
+  const assets = await destroyContentAssets(content);
 
-  await Progress.deleteMany({ contentId: content._id });
+  await Promise.all([
+    Progress.deleteMany({ contentId: content._id }),
+    ContentAiCache.deleteOne({ contentId: content._id }),
+  ]);
   await content.deleteOne();
-  res.json({ message: "Content deleted" });
+  res.json({
+    message: "Content deleted",
+    destroyedCloudinary: assets.cloudinary,
+    cloudinaryErrors: assets.errors?.length ? assets.errors : undefined,
+  });
+};
+
+export const getContentAiOverview = async (req, res) => {
+  try {
+    if (!isVideoAiEnabled()) {
+      return res.status(503).json({ message: "OPENAI_API_KEY is not configured on the server" });
+    }
+    const data = await getVideoAiOverview(req.params.id);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Could not load AI overview" });
+  }
+};
+
+export const refreshContentAiOverview = async (req, res) => {
+  try {
+    const data = await refreshVideoAiOverview(req.params.id);
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Could not generate AI overview" });
+  }
+};
+
+export const askContentAi = async (req, res) => {
+  try {
+    const { question, history } = req.body || {};
+    const data = await askVideoQuestion(req.params.id, { question, history });
+    res.json(data);
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Ask failed" });
+  }
 };

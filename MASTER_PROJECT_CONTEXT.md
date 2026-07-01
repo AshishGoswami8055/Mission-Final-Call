@@ -21,17 +21,18 @@ The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, p
 | **Course organization** | CDS cycle → coaching batch (Programme) → Subject → Chapter → Content (video/PDF) |
 | **Content ingestion** | File upload, URL, YouTube download→Cloudinary (dev), Telegram import (forum/flat channels), Telegram video links (prod) |
 | **Telegram** | GramJS login, channel browse, batch import, auto-sync, stream proxy, optional cloudify to Cloudinary |
-| **Video playback** | HTML5 local, Cloudinary CDN, Telegram stream (`/api/telegram/stream`), YouTube embed, screenshot notes (browser IndexedDB), resume position |
-| **PDF** | Inline viewer, course PDFs on disk, PYQ on Cloudinary, optional OCR via `ocrmypdf` on upload |
-| **PYQ papers** | Upload/link papers by year, mark attempted, filter by CDS slot (I/II) |
+| **Video playback** | **Plyr** player (`CdsPlyrPlayer`), HTML5 local, Cloudinary CDN, Telegram stream, YouTube embed, screenshot notes, resume position, stall watchdog + retry, Telegram live-connection banner, **OpenAI Ask panel** (when `OPENAI_API_KEY` set) |
+| **PDF / PYQ** | Inline viewer, course PDFs on disk, PYQ on Cloudinary, **AI question extract** (`POST /papers/:id/extract`), optional OCR via `ocrmypdf` on upload |
 | **Progress** | Per-content completion, chapter stats, paper attempted tracking |
+| **Dashboard** | Lazy course loading — subject stats from `/chapters/stats`; lesson rows fetched only when a subject is opened; library view paginated (`limit=20`) |
 | **Vocabulary** | Vocabulary / Idioms / One-word substitution with SRS (`again`/`good`/`easy`), CSV/Excel/image OCR import |
 | **Study tracker** | Daily minutes, per-subject targets, watch history, exam countdown, celebration overlays |
 | **Daily Mission** (`/mission`) | Auto-generated daily plan: 1 English + 1 Maths + 1 GS video + reading; Sunday mock; AI briefing; discipline score; streaks |
 | **Analytics** | Study intelligence (`/history/intelligence`), weekly charts, mock trends, video streak (60 min/day goal) |
 | **Local PC library** | Download videos to `uploads/_local_library/` for smooth playback (local server only) |
 | **Playback cache** | Server-side Telegram stream cache for smoother seeking |
-| **Cloudinary multi-account** | Per-subject cloud mapping, usage dashboard, PYQ on dedicated cloud |
+| **Cloudinary multi-account** | Per-subject cloud mapping, **`/cloudinary` storage dashboard** (usage, remaining space, console links), automatic asset delete on content/paper removal, PYQ on dedicated cloud |
+| **Telegram UX** | Live connection check on video refresh, “Check for updates” with progress overlay, optimized batch update scan (`fetchNewChannelMediaSince`) |
 | **Admin auth** | Single JWT-protected admin (auto-seeded from env) |
 
 ## Target Users
@@ -52,7 +53,7 @@ The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, p
 | Routing | React Router v7 (`BrowserRouter` in `main.jsx`) |
 | HTTP | Axios (`src/api/client.js`) |
 | UI libs | react-hot-toast, react-icons (Feather `Fi*`), clsx, date-fns |
-| Media | react-pdf, react-player (installed; primary viewers use `<iframe>` for PDF and custom `<video>` / embeds) |
+| Media | **Plyr** (`plyr` npm), react-pdf, react-player (installed; PDF uses `<iframe>`; video uses `CdsPlyrPlayer`) |
 | Export | jspdf (screenshot notes export) |
 | Auth client | jwt-decode (available), JWT in `localStorage` key `cds_token` |
 
@@ -67,14 +68,14 @@ The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, p
 | Uploads | Multer 2 (disk storage, 5 GB/file limit) |
 | CDN | Cloudinary v2 (multi-account registry) |
 | Telegram | GramJS (`telegram` npm package) |
-| Google | googleapis — YouTube OAuth (implemented, **not wired** to content upload) |
-| AI | OpenAI Node SDK — paper analysis/extract, AI daily briefing, chapter detail (services exist; most HTTP routes **not wired**) |
+| Google | googleapis — YouTube OAuth + **direct upload** (`uploadDestination: "youtube"` when OAuth connected) |
+| AI | OpenAI Node SDK — paper extract/analysis, **video AI overview + Ask**, daily mission briefing |
 | PDF | pdf-parse, optional ocrmypdf CLI |
 | OCR | tesseract.js (vocab image import), `eng.traineddata` at `server/eng.traineddata` |
 | Spreadsheet | xlsx (vocab import) |
 | Security | helmet, cors, express-validator |
 | Logging | morgan |
-| Optional CLI | ffmpeg (video compress), yt-dlp + ffmpeg (YouTube download, dev only) |
+| Testing | Node.js built-in test runner — `npm test` in `server/` (auth, Cloudinary cleanup, mission scoring, Telegram helpers); GitHub Actions CI |
 
 ## Database
 
@@ -99,7 +100,7 @@ d:\1. Projects\CDS JOURNEY OTA\
 ├── MASTER_PROJECT_CONTEXT.md     # THIS FILE — read before any code change
 ├── PROJECT_CONTEXT.md            # Shorter AI context (subset of this doc)
 ├── README.md                     # User-facing readme (partially stale)
-├── SETUP_YOUTUBE.md              # YouTube OAuth setup (service exists; upload path not wired)
+├── SETUP_YOUTUBE.md              # YouTube OAuth + direct upload via ContentModal
 ├── vercel.json                   # Vercel: build client, output client/dist
 │
 ├── client/                       # React frontend
@@ -116,10 +117,12 @@ d:\1. Projects\CDS JOURNEY OTA\
 │       ├── api/client.js         # Axios instance + JWT interceptor
 │       ├── config/courses.js     # CDS cycle UI config, exam dates
 │       ├── constants/streak.js   # VIDEO_STREAK_GOAL_MINUTES = 60
-│       ├── context/              # AuthContext, StudyContext, ThemeContext (no hooks/ folder)
-│       ├── components/           # Reusable UI (Layout, modals, mission/*, streak/*)
-│       ├── pages/                # Route-level pages
-│       └── utils/                # media.js, uploadProgress, screenshotNotes, etc.
+│       ├── context/              # AuthContext, StudyContext, ThemeContext
+│       ├── hooks/                # useDashboardCourseContents, useVideoContentAi, useTelegramPlaybackStatus, useWorkspaceCapabilities
+│       ├── components/           # Reusable UI (Layout, CdsPlyrPlayer, TelegramConnectionStatus, modals, mission/*, streak/*)
+│       ├── pages/                # Route-level pages (incl. CloudinaryStoragePage)
+│       ├── styles/               # plyr-overrides.css (teal Plyr theme + screenshot button)
+│       └── utils/                # media.js, videoScreenshot.js, uploadProgress, screenshotNotes, etc.
 │
 ├── server/                       # Express backend (MVC)
 │   ├── package.json
@@ -128,6 +131,7 @@ d:\1. Projects\CDS JOURNEY OTA\
 │   ├── cloudflare/               # Tunnel config example + PowerShell scripts
 │   ├── scripts/
 │   │   └── purgeAllMedia.js      # Wipe media (local + Cloudinary + DB records)
+│   └── tests/                    # Unit tests (node --test tests/**/*.test.js)
 │   └── src/
 │       ├── server.js             # Bootstrap, migrations, Telegram auto-sync
 │       ├── app.js                # Express app, route mounts, static /uploads, optional SPA
@@ -136,8 +140,8 @@ d:\1. Projects\CDS JOURNEY OTA\
 │       ├── middlewares/          # auth, streamAuth, upload, error
 │       ├── models/               # Mongoose schemas
 │       ├── routes/               # Express routers
-│       ├── services/             # Business logic (Telegram, Cloudinary, mission, etc.)
-│       └── utils/                # Helpers (content, chapters, slugify, buckets)
+│       ├── services/             # Business logic (Telegram, Cloudinary, mission, cleanup, etc.)
+│       └── utils/                # Helpers (content, chapters, cloudinaryAsset, slugify, buckets)
 │
 └── uploads/                      # Local media root (sibling of server/, not inside it)
     ├── _tmp_videos/              # Multer scratch before YouTube→Cloudinary or delete
@@ -153,12 +157,23 @@ d:\1. Projects\CDS JOURNEY OTA\
 
 | File | Role |
 |------|------|
-| `client/src/utils/media.js` | **`resolveContentSrc()`** — canonical URL resolver for all playback |
+| `client/src/utils/media.js` | **`resolveContentSrc()`**, `preferSameOriginMediaUrl()`, `resolveVideoPlaybackUrl()` — canonical playback URLs (Vite proxy `/api`) |
+| `client/src/utils/videoScreenshot.js` | Frame capture for Plyr; `applyVideoCrossOrigin`, `applyVideoSource`, `resolvePlyrVideoElement` |
+| `client/src/components/CdsPlyrPlayer.jsx` | Plyr wrapper — imperative `<video>` (avoids React StrictMode DOM conflicts); stall watchdog |
+| `client/src/hooks/useDashboardCourseContents.js` | Lazy per-subject course content + `subjectStats` from chapter stats |
+| `client/src/hooks/useVideoContentAi.js` | Video AI overview + Ask panel state |
+| `client/src/hooks/useTelegramPlaybackStatus.js` | Telegram session polling for stream playback |
+| `client/src/hooks/useWorkspaceCapabilities.js` | Feature flags from `GET /workspace/capabilities` |
+| `client/src/pages/CloudinaryStoragePage.jsx` | `/cloudinary` — storage usage, remaining space, console links |
+| `server/src/utils/cloudinaryAsset.js` | Parse `publicId` from Cloudinary URLs for legacy rows; resolve cloud type by cloud name |
+| `server/src/services/cloudinaryUsageService.js` | Admin API usage fetch, 60s cache, Free-plan 25 GB limit fallback, console URLs |
+| `server/src/services/paperCleanupService.js` | Cloudinary + local cleanup for PYQ delete/replace |
 | `server/src/utils/contentHelpers.js` | MIME/URL detection, Telegram link helper, filename parser |
 | `server/src/utils/subjectBuckets.js` | Mission slot classification (english/maths/gs) |
 | `server/src/config/cdsCourses.js` | Cycle id ↔ disk folder name |
-| `server/src/services/uploadProgressBus.js` | In-memory upload job state (UUID `uploadId`) |
-| `server/src/services/contentCleanupService.js` | Unified delete: Cloudinary + local files |
+| `server/src/services/uploadProgressBus.js` | In-memory upload job state (UUID `uploadId`); also Telegram update progress |
+| `server/src/services/contentCleanupService.js` | Unified delete: Cloudinary (incl. thumbnails + URL fallback) + local files |
+| `server/src/services/telegramService.js` | GramJS client, **`checkTelegramConnectionLive()`**, stream, **`fetchNewChannelMediaSince()`** |
 
 ---
 
@@ -300,10 +315,42 @@ MissionPage mount → GET /api/mission/today
 ## Screenshot notes (client-only)
 
 ```
-VideoPlayerPage capture → screenshotNotes.js
-  → IndexedDB cds_screenshot_notes_db / notes_by_video
-  → localStorage fallback per contentId
+VideoPlayerPage → CdsPlyrPlayer screenshot button (or S key)
+  → videoScreenshot.captureVideoFrameDataUrl (crossOrigin only when cross-origin)
+  → screenshotNotes.js → IndexedDB cds_screenshot_notes_db
   → ScreenshotViewerPage reads same store (never hits server)
+```
+
+## Video playback flow (Telegram stream)
+
+```
+VideoPlayerPage loads content → resolveContentSrc() → /api/telegram/stream/:messageId?channelId=&token=
+  → GET /api/telegram/session on mount + window focus + visibilitychange (TelegramConnectionStatus banner)
+  → CdsPlyrPlayer (ready=false until Telegram live OR PC library cache)
+  → applyVideoSource() after imperative video mount (fixes refresh race / infinite buffer)
+  → Stall watchdog: 18s timeout, max 2 auto-retries, then Retry playback UI
+  → protectStream middleware validates JWT from ?token=
+  → telegramService.streamTelegramMediaDirect (byte-range)
+```
+
+## Cloudinary storage dashboard flow
+
+```
+CloudinaryStoragePage → GET /api/cloud-mappings/usage (?refresh=1 bypasses 60s cache)
+  → cloudinaryUsageService.fetchAllCloudinaryUsage()
+  → Per cloud: storage used, limit (API or Free-plan 25 GB fallback), remaining, %, console URLs
+  → Auto-refresh every 60s (silent background poll)
+```
+
+## Content / paper delete → Cloudinary cleanup
+
+```
+DELETE /api/contents/:id or /api/papers/:id
+  → destroyContentAssets / destroyPaperAssets
+  → resolveCloudinaryAssetRefs() — uses publicId+cloudType OR parses delivery URL
+  → destroyCloudinaryAsset() with one retry; thumbnails (image) deleted separately
+  → Local upload file removed from uploads/
+  → DB row deleted
 ```
 
 ---
@@ -374,7 +421,7 @@ TelegramChannelMapping (channelId + programmeId — sync config)
 - `paperId` (unique), `status` (`pending`|`processing`|`completed`|`failed`)
 - `questions[]`: `{ number, text, options[] }`
 - `questionImages[]`, `errorMessage`
-- **Service exists; HTTP routes not wired**
+- **Wired:** `GET /api/papers/:id/analysis`, `POST /api/papers/:id/extract`
 
 ### PaperChapterDetail (`PaperChapterDetail.js`)
 - `paperId`, `subjectName`, `chapterName`
@@ -497,7 +544,7 @@ Base URL: `http://localhost:5000/api` (dev) or `VITE_API_URL` (prod).
 | GET | `/playback-cache/storage` | Yes | Playback cache disk usage |
 | GET | `/local-library/storage` | Yes | PC library disk usage (local only) |
 | GET | `/` | Yes | List with filters: `subjectId`, `chapterId`, `type`, `search`, `sort`, `page`, `limit`, `programmeId` |
-| POST | `/` | Yes | Create content (multipart `file` optional); `sourceType`: `upload`\|`url`\|`youtube_download` |
+| POST | `/` | Yes | Create content (multipart `file` optional); `sourceType`: `upload`\|`url`\|`youtube_download`; optional `uploadDestination`: `local`\|`youtube` |
 | POST | `/bulk-upload` | Yes | Up to 100 files; auto-create chapters from filenames |
 | GET | `/:id/playback-cache` | Yes | Cache status for content |
 | POST | `/:id/playback-cache` | Yes | Start Telegram playback cache download |
@@ -507,8 +554,11 @@ Base URL: `http://localhost:5000/api` (dev) or `VITE_API_URL` (prod).
 | DELETE | `/:id/local-library` | Yes | Remove from PC library |
 | POST | `/:id/cloudify` | Yes | Migrate Telegram-stream video to Cloudinary |
 | GET | `/:id` | Yes | Single content with completion flag |
+| GET | `/:id/ai-overview` | Yes | Cached AI summary for video (OpenAI) |
+| POST | `/:id/ai-refresh` | Yes | Regenerate AI summary |
+| POST | `/:id/ai-ask` | Yes | Ask question about video (body: `question`, `history[]`) |
 | PUT | `/:id` | Yes | Update metadata |
-| DELETE | `/:id` | Yes | Delete + asset cleanup |
+| DELETE | `/:id` | Yes | Delete + asset cleanup; response includes `destroyedCloudinary` |
 
 ## Papers / PYQ (`/api/papers`)
 
@@ -518,13 +568,17 @@ Base URL: `http://localhost:5000/api` (dev) or `VITE_API_URL` (prod).
 | POST | `/` | Create with PDF upload or URL |
 | POST | `/bulk` | Bulk PDF upload (up to 100) |
 | GET | `/:id` | Single paper |
+| GET | `/:id/analysis` | Get extracted questions / analysis status |
+| POST | `/:id/extract` | Extract questions from PDF via OpenAI |
 | POST | `/:id/progress` | Toggle attempted |
 | PUT | `/:id` | Update (optional new file) |
-| DELETE | `/:id` | Delete + Cloudinary cleanup |
+| DELETE | `/:id` | Delete + Cloudinary cleanup (`destroyPaperAssets`); response includes `destroyedCloudinary` |
 
-**Not wired (services exist):**
-- `GET /:id/analysis` — get extracted questions
-- `POST /:id/extract` — extract questions from PDF via OpenAI
+## Workspace (`/api/workspace`)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/capabilities` | Feature flags: `videoAiAsk`, `youtubeUpload`, `paperExtract`, etc. (based on env + OAuth state) |
 
 ## Progress (`/api/progress`)
 
@@ -552,7 +606,7 @@ Base URL: `http://localhost:5000/api` (dev) or `VITE_API_URL` (prod).
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/clouds` | List configured Cloudinary account keys |
-| GET | `/usage` | Storage/credits per cloud (Admin API) |
+| GET | `/usage` | Storage/credits per cloud; query `refresh=1` bypasses 60s server cache |
 | GET | `/` | List subject→cloud mappings |
 | POST | `/` | Upsert single mapping |
 | PUT | `/bulk` | Bulk upsert mappings |
@@ -565,7 +619,7 @@ Base URL: `http://localhost:5000/api` (dev) or `VITE_API_URL` (prod).
 | POST | `/login` | Start phone login |
 | POST | `/verify-otp` | Submit OTP |
 | POST | `/verify-password` | Submit 2FA password |
-| GET | `/session` | Active session status |
+| GET | `/session` | Session status + **`live`** GramJS ping (`checkTelegramConnectionLive`: connected, live, phone, error) |
 | POST | `/logout` | Deactivate session |
 | POST | `/reset-session` | Clear session data |
 | GET | `/channels` | List joined channels |
@@ -696,14 +750,18 @@ CDS cycle (cds-1-2026, cds-2-2026)
 - Client chunks large batches (10 files) with `OperationProgressOverlay`
 
 ### Deletion cascade
-- `subjectCleanupService`, `programmeCleanupService`, `contentCleanupService`
-- Removes Cloudinary assets (`publicId` + `cloudType`), local files, progress, mappings
+- `subjectCleanupService`, `programmeCleanupService`, `contentCleanupService`, **`paperCleanupService`**
+- Removes Cloudinary assets via **`destroyCloudinaryAsset()`** (video/raw/image, invalidate CDN, **1 retry**)
+- **`cloudinaryAsset.js`** resolves `publicId` from delivery URL when legacy rows lack metadata
+- Deletes Cloudinary **thumbnails** (image resource) with lesson content
+- Removes local files under `uploads/`, progress rows, mappings
+- Cascade: chapter → subject → programme clear/delete all call `deleteContentsWithAssets`
 
 ## Telegram subsystem
 
 ### Services
-- `telegramService.js` — GramJS client, login, channel list, media download, streaming
-- `telegramMappingService.js` — forum topic import
+- `telegramService.js` — GramJS client, login, channel list, media download, streaming, **`checkTelegramConnectionLive()`**, **`fetchNewChannelMediaSince()`** (fast update scan)
+- `telegramMappingService.js` — forum topic import, **`getProgrammeSubjectUpdates()`** (optimized minId scan)
 - `telegramFlatChannelService.js` — flat channel import (caption metadata grouping)
 - `telegramVideoImportService.js` — download → compress → Cloudinary
 - `telegramPdfImportService.js` — PDF import from channels
@@ -727,6 +785,19 @@ CDS cycle (cds-1-2026, cds-2-2026)
 - Optional usage keys: `_USAGE_API_KEY`, `_USAGE_API_SECRET`, `_USAGE_DISABLED`
 - `resolveCloudForSubject(subjectId)` → `SubjectCloudMapping` or `CLOUDINARY_DEFAULT_CLOUD`
 - PYQ uses `CLOUDINARY_PAPER_CLOUD` (default `cloud1`)
+
+### Storage dashboard (`/cloudinary`)
+- **Frontend:** `CloudinaryStoragePage.jsx` — sidebar + dashboard **Storage** button
+- **API:** `GET /api/cloud-mappings/usage` → `fetchAllCloudinaryUsage()`
+- **Caching:** 60s in-memory TTL; `?refresh=1` for manual refresh
+- **Limits:** Parses Admin API limits; **Free plan fallback = 25 GB** when API omits byte limit
+- **Console links:** Media library, usage settings, dashboard per cloud name
+- **Env for usage panel:** If upload keys get 403 on `/usage`, add `CLOUDINARY_<KEY>_USAGE_API_KEY` + `_USAGE_API_SECRET` (master-capable pair)
+
+### Upload / destroy (`cloudinaryUploadService.js`)
+- Chunked upload for videos (20 MB chunks, 30 min timeout) and raw PDFs
+- **`destroyCloudinaryAsset({ cloudType, publicId, resourceType })`** — unified destroy with retry
+- Wrappers: `destroyCloudinaryVideo`, `destroyCloudinaryRaw`, `destroyCloudinaryImage`
 
 ### Upload limits
 - Compress targets ≤ ~95 MB for free tier (`CLOUDINARY_FREE_LIMIT_BYTES` in services)
@@ -935,6 +1006,7 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 
 | Command | Location | Purpose |
 |---------|----------|---------|
+| `npm test` | server | Run unit tests (`node --test tests/**/*.test.js`) |
 | `npm run dev` | server | Start API |
 | `npm start` | server | Production API |
 | `npm run start:home` | server | Build client + serve combined |
@@ -950,16 +1022,26 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 
 | Item | Status |
 |------|--------|
-| `POST /api/papers/:id/extract` | Service `paperExtractService.js` exists; **route not in paperRoutes.js** |
-| `GET /api/papers/:id/analysis` | Model + service exist; **route not wired** |
 | Paper chapter detail HTTP API | `chapterDetailService.js` exists; **no routes** |
-| YouTube direct upload | OAuth + `youtubeUploadService.js` complete; **`contentController` does not use `uploadDestination`**; dev uses `youtube_download` → Cloudinary |
-| AI Ask panel (`VideoPlayerPage`) | UI built; **`canUseAiAsk = false`** hardcoded |
 | `GEMINI_API_KEY` | Referenced in old docs; **unused in codebase** |
-| `SETUP_YOUTUBE.md` | Describes upload flow that is **not implemented** in content controller |
+
+## Recently wired (8.5+ hardening)
+
+| Item | Status |
+|------|--------|
+| `POST /api/papers/:id/extract` + `GET /api/papers/:id/analysis` | Wired in `paperRoutes.js`; UI in `PaperViewerPage` |
+| YouTube direct upload | `uploadDestination: "youtube"` in `contentController`; radio in `ContentModal` when OAuth connected |
+| AI Ask panel | `GET/POST /contents/:id/ai-*` + `useVideoContentAi`; enabled via `GET /workspace/capabilities` when `OPENAI_API_KEY` set |
+| Dashboard course view | Lazy load via `useDashboardCourseContents` — stats from `/chapters/stats`, contents on subject open |
+| Unit tests + CI | `server/tests/*.test.js`, `.github/workflows/ci.yml` |
 
 ## Behavioral caveats
 
+- **Legacy Cloudinary rows without `publicId`** — now handled by parsing delivery URL in `cloudinaryAsset.js`; edge cases may still warn if URL is malformed
+- **Destroy failures** — retried once; DB delete still proceeds if Cloudinary API fails (check server logs)
+- **Upload-then-DB-fail orphans** — Cloudinary asset not rolled back if DB save fails after upload (rare)
+- **Telegram GramJS TIMEOUT** — benign update loop timeouts; client configured to suppress; use **Reset session** if streams stall
+- **Cloudinary Free plan usage API** — may omit byte limit; server uses **25 GB fallback** for progress bar %
 - **In-memory upload progress** — lost on server restart
 - **Telegram auto-sync** — requires active session + mapped `syncTopicIds`/`syncSubjectKeys`; silently skips if no session
 - **Legacy disk PYQ** — boot migration may move old files; new uploads go to Cloudinary only
@@ -972,18 +1054,16 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 
 # Future Improvements
 
-1. **Wire paper extract/analysis routes** — expose existing services via `paperRoutes.js`
-2. **Complete YouTube upload path** — implement `uploadDestination: "youtube"` in `contentController` per `SETUP_YOUTUBE.md`
-3. **Enable AI Ask panel** — connect to OpenAI with proper context from video/transcript
-4. **Persist upload progress** — Redis or MongoDB job documents for multi-instance deploys
-5. **Multi-admin / roles** — if product scope expands beyond single user
-6. **Automated tests** — no test suite currently in repo
-7. **`.env.example` files** — document required vars without committing secrets
-8. **CDN for course PDFs in production** — currently local disk even in prod
-9. **Webhook notifications** — Telegram sync completion, mission reminders
-10. **Offline PWA** — cache mission plan and vocab for spotty connectivity
-11. **Consolidate PROJECT_CONTEXT.md** — point to this file as single source of truth
-12. **Remove committed `client/dist/`** — rely on CI build only
+1. **Paper chapter detail routes** — expose `chapterDetailService.js` via HTTP
+2. **Persist upload progress** — Redis or MongoDB job documents for multi-instance deploys
+3. **Multi-admin / roles** — if product scope expands beyond single user
+4. **Integration tests** — supertest for auth-protected routes with test DB
+5. **`.env.example` files** — document required vars without committing secrets
+6. **CDN for course PDFs in production** — currently local disk even in prod
+7. **Webhook notifications** — Telegram sync completion, mission reminders
+8. **Offline PWA** — cache mission plan and vocab for spotty connectivity
+9. **Code-split VideoPlayerPage** — further component extraction beyond hooks
+10. **Remove committed `client/dist/`** — rely on CI build only
 
 ---
 
@@ -992,24 +1072,28 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 ## Conventions for developers
 
 1. **Always read this file first** before coding.
-2. **Always use `resolveContentSrc(item)`** on the client for playable URLs — never hard-code Cloudinary vs `/uploads`.
-3. **Respect production media gate** — `NODE_ENV === "production"` blocks video file upload and YouTube download.
-4. **Telegram stream auth** — append `?token=` from `localStorage` for `<video src>`.
-5. **Chapter sorting** — use `.collation({ locale: "en", numericOrdering: true })` for natural chapter order.
-6. **Subject delete** — must use cleanup services to avoid orphaned Cloudinary assets.
-7. **Adding CDS cycle** — update both `client/src/config/courses.js` and `server/src/config/cdsCourses.js`.
-8. **No `hooks/` folder** — shared state lives in `context/`; no custom React hooks directory.
-9. **Multer limit** — 5 GB per file; bulk content max 100 files per request.
+2. **Always use `resolveContentSrc(item)`** on the client for playable URLs — use **`preferSameOriginMediaUrl()`** / **`resolveVideoPlaybackUrl()`** in dev so Vite proxies `/api` (required for screenshots + Telegram streams).
+3. **Video player** — use `CdsPlyrPlayer` (imperative video DOM); do not let React reconcile nodes Plyr moves.
+4. **Respect production media gate** — `NODE_ENV === "production"` blocks video file upload and YouTube download.
+5. **Telegram stream auth** — append `?token=` from `localStorage` for `<video src>`.
+6. **Telegram stream playback** — check `GET /telegram/session` `live` before starting player; show `TelegramConnectionStatus` banner.
+7. **Chapter sorting** — use `.collation({ locale: "en", numericOrdering: true })` for natural chapter order.
+8. **Subject delete** — must use cleanup services to avoid orphaned Cloudinary assets (URL-only legacy rows now parsed via `cloudinaryAsset.js`).
+9. **Adding CDS cycle** — update both `client/src/config/courses.js` and `server/src/config/cdsCourses.js`.
+10. **Custom hooks** — live in `client/src/hooks/`; prefer extracting from mega-pages when adding features.
+11. **Multer limit** — 5 GB per file; bulk content max 100 files per request.
+12. **Cloudinary usage dashboard** — needs Admin API read or `CLOUDINARY_<KEY>_USAGE_*` env vars per account.
 
 ## Frontend routes (`App.jsx`)
 
 | Path | Page |
 |------|------|
 | `/login` | Public login |
-| `/` | Dashboard (batch/subject/content hub) |
+| `/` | Dashboard (batch/subject/content hub; lazy course content load) |
+| `/cloudinary` | **Cloudinary storage** — usage, remaining space, console links |
 | `/mission` | Daily mission command center |
 | `/import/telegram` | Telegram import wizard |
-| `/video/:id` | Video player |
+| `/video/:id` | Video player (Plyr + Telegram status banner + stall retry) |
 | `/video/:id/screenshot/:noteId` | Screenshot note viewer |
 | `/pdf/:id` | PDF viewer |
 | `/papers`, `/paper/:id` | PYQ list + viewer |
@@ -1041,10 +1125,14 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 |------|-------|
 | Add CDS cycle | `client/src/config/courses.js`, `server/src/config/cdsCourses.js` |
 | New page | `client/src/pages/`, `App.jsx`, `Sidebar.jsx` |
+| Video player / Plyr | `CdsPlyrPlayer.jsx`, `plyr-overrides.css`, `VideoPlayerPage.jsx`, `videoScreenshot.js` |
+| Telegram stream reliability | `VideoPlayerPage.jsx`, `TelegramConnectionStatus.jsx`, `telegramService.js` (`checkTelegramConnectionLive`) |
+| Cloudinary storage UI | `CloudinaryStoragePage.jsx`, `cloudinaryUsageService.js`, `CoachingBatchSection.jsx` |
+| Cloudinary delete on remove | `contentCleanupService.js`, `paperCleanupService.js`, `cloudinaryAsset.js`, `cloudinaryUploadService.js` |
 | Change PDF disk layout | `uploadMiddleware.js`, `uploadOrganizationService.js` |
 | Add Cloudinary account | Env vars only (`CLOUDINARY_CLOUDS` + per-key vars) |
-| Telegram import behavior | `telegramMappingService.js`, `telegramVideoImportService.js`, `TelegramImportPage.jsx` |
-| Wire paper AI HTTP | `paperRoutes.js` + existing extract/analysis services |
+| Telegram import / updates | `telegramMappingService.js`, `telegramVideoImportService.js`, `TelegramImportPage.jsx` |
+| Wire paper chapter detail | `paperRoutes.js` + `chapterDetailService.js` |
 | Change SRS algorithm | `vocabularyController.js` → `reviewVocabulary` |
 | Study time tracking | `useStudy().addStudyMinutes()` in `StudyContext.jsx` |
 | Purge all media | `node server/scripts/purgeAllMedia.js` |
@@ -1066,4 +1154,22 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 
 ---
 
-*Last comprehensive audit: 2026-07-01. Repository path: `d:\1. Projects\CDS JOURNEY OTA`.*
+# Recent Changes Log (chat sessions — 2026-07-01)
+
+| Area | Change |
+|------|--------|
+| **Video player** | Replaced custom controls with **Plyr** (`CdsPlyrPlayer.jsx`); F=fullscreen, arrows ±5s, screenshot button + S key |
+| **React crash fix** | Imperative `<video>` inside Plyr wrapper — avoids StrictMode `removeChild` errors |
+| **Screenshot** | `videoScreenshot.js` — conditional `crossOrigin`, same-origin `/api` URLs via Vite proxy |
+| **Infinite buffering** | `applyVideoSource` rAF race fix; stall watchdog (18s, 2 retries); player remount on retry; Telegram stream loader overlay |
+| **Telegram status UX** | `TelegramConnectionStatus` banner; `checkTelegramConnectionLive()` on `GET /telegram/session`; recheck on focus/visibility |
+| **Telegram updates speed** | `fetchNewChannelMediaSince()` — single GramJS call with `minId` per channel vs per-topic scans |
+| **Telegram update UI** | Check for updates button, progress overlay, cancel, error toasts |
+| **Cloudinary dashboard** | New `/cloudinary` page — storage used/remaining, progress bars, console links, 60s auto-refresh |
+| **Cloudinary delete** | `cloudinaryAsset.js` URL parsing; `paperCleanupService.js`; thumbnail delete; destroy retry |
+| **Usage API** | 60s cache, `?refresh=1`, Free plan 25 GB limit fallback, `storageLimitFromPlan` flag |
+| **Bug fixes** | `getCloudConfig` import in `cloudinaryUsageService.js`; empty cloud progress bar (no fake 8% fill) |
+
+---
+
+*Last comprehensive audit: 2026-07-01 (includes video/Telegram/Cloudinary session changes). Repository path: `d:\1. Projects\CDS JOURNEY OTA`.*

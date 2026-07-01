@@ -5,6 +5,7 @@ import {
   FiCrosshair,
   FiFileText,
   FiGrid,
+  FiHardDrive,
   FiLogOut,
   FiType,
   FiTrendingUp,
@@ -37,6 +38,12 @@ const NAV_ITEMS = [
     label: "PYQ Papers",
     icon: FiFileText,
     match: (p) => p.startsWith("/papers") || p.startsWith("/paper/"),
+  },
+  {
+    to: "/cloudinary",
+    label: "Cloudinary Storage",
+    icon: FiHardDrive,
+    match: (p) => p.startsWith("/cloudinary"),
   },
   {
     to: "/vocabulary",

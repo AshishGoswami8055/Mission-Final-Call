@@ -28,7 +28,8 @@ export const listClouds = async (req, res) => {
 
 /** GET /api/cloud-mappings/usage — storage / credits snapshot per configured account. */
 export const getCloudinaryUsage = async (req, res) => {
-  const data = await fetchAllCloudinaryUsage();
+  const refresh = String(req.query.refresh || "") === "1";
+  const data = await fetchAllCloudinaryUsage({ refresh });
   res.json(data);
 };
 

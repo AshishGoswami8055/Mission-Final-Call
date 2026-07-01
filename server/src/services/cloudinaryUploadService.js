@@ -136,10 +136,9 @@ export const uploadVideoToCloudinary = async ({
 };
 
 /**
- * Destroy a Cloudinary video. Swallows errors after logging so callers can
- * proceed with DB cleanup even if the remote side is flaky.
+ * Destroy a Cloudinary asset (video, raw PDF, or image). Retries once on failure.
  */
-export const destroyCloudinaryVideo = async ({ cloudType, publicId }) => {
+export const destroyCloudinaryAsset = async ({ cloudType, publicId, resourceType = "video" }) => {
   if (!publicId || !cloudType) return { ok: false, skipped: true };
   const cfg = getCloudConfig(cloudType);
   if (!cfg) {
@@ -148,19 +147,42 @@ export const destroyCloudinaryVideo = async ({ cloudType, publicId }) => {
     );
     return { ok: false, skipped: true };
   }
+
+  const rt = resourceType === "raw" ? "raw" : resourceType === "image" ? "image" : "video";
   const { cloudinary } = getCloudinaryFor(cloudType);
-  try {
-    const result = await cloudinary.uploader.destroy(publicId, {
-      ...pickCloudinarySdkConfig(cfg),
-      resource_type: "video",
-      invalidate: true,
-    });
-    return { ok: true, result };
-  } catch (error) {
-    console.warn(`[cloudinary] destroy failed for ${publicId}:`, error.message);
-    return { ok: false, error: error.message };
+
+  const attempt = async () => {
+    try {
+      const result = await cloudinary.uploader.destroy(publicId, {
+        ...pickCloudinarySdkConfig(cfg),
+        resource_type: rt,
+        invalidate: true,
+      });
+      const ok = result?.result === "ok" || result?.result === "not found";
+      return { ok, result };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  };
+
+  let outcome = await attempt();
+  if (!outcome.ok) {
+    await new Promise((r) => setTimeout(r, 450));
+    outcome = await attempt();
   }
+
+  if (!outcome.ok) {
+    console.warn(`[cloudinary] destroy ${rt} failed for ${publicId}:`, outcome.error || "unknown");
+  }
+  return outcome;
 };
+
+/**
+ * Destroy a Cloudinary video. Swallows errors after logging so callers can
+ * proceed with DB cleanup even if the remote side is flaky.
+ */
+export const destroyCloudinaryVideo = async ({ cloudType, publicId }) =>
+  destroyCloudinaryAsset({ cloudType, publicId, resourceType: "video" });
 
 const buildPaperFolder = (year) => {
   const y = safeSegment(String(year || "unknown"));
@@ -294,28 +316,11 @@ export const uploadPdfToCloudinary = async ({
     onProgress,
   });
 
-export const destroyCloudinaryRaw = async ({ cloudType, publicId }) => {
-  if (!publicId || !cloudType) return { ok: false, skipped: true };
-  const cfg = getCloudConfig(cloudType);
-  if (!cfg) {
-    console.warn(
-      `[cloudinary] cannot destroy raw ${publicId}: cloud "${cloudType}" not configured`
-    );
-    return { ok: false, skipped: true };
-  }
-  const { cloudinary } = getCloudinaryFor(cloudType);
-  try {
-    const result = await cloudinary.uploader.destroy(publicId, {
-      ...pickCloudinarySdkConfig(cfg),
-      resource_type: "raw",
-      invalidate: true,
-    });
-    return { ok: true, result };
-  } catch (error) {
-    console.warn(`[cloudinary] destroy raw failed for ${publicId}:`, error.message);
-    return { ok: false, error: error.message };
-  }
-};
+export const destroyCloudinaryRaw = async ({ cloudType, publicId }) =>
+  destroyCloudinaryAsset({ cloudType, publicId, resourceType: "raw" });
+
+export const destroyCloudinaryImage = async ({ cloudType, publicId }) =>
+  destroyCloudinaryAsset({ cloudType, publicId, resourceType: "image" });
 
 export const safeUnlink = (absolutePath) => {
   if (!absolutePath) return;

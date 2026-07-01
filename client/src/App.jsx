@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+import CloudinaryStoragePage from "./pages/CloudinaryStoragePage";
 import DashboardPage from "./pages/DashboardPage";
 import TelegramImportPage from "./pages/TelegramImportPage";
 import MissionPage from "./pages/MissionPage";
@@ -47,6 +48,14 @@ function App() {
         element={
           <PrivateRoute>
             <DashboardPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/cloudinary"
+        element={
+          <PrivateRoute>
+            <CloudinaryStoragePage />
           </PrivateRoute>
         }
       />

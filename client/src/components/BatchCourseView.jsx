@@ -30,6 +30,8 @@ const BatchCourseView = ({
   onRenameSubject,
   onClearCourse,
   subjectUpdates = {},
+  subjectStats: subjectStatsProp = null,
+  loadingSubjectContents = false,
   updatesLoading = false,
   updatesAvailable = null,
   onUpdateBatch,
@@ -64,6 +66,7 @@ const BatchCourseView = ({
   }, [sortedSubjects]);
 
   const subjectStats = useMemo(() => {
+    if (subjectStatsProp) return subjectStatsProp;
     const map = {};
     for (const subject of subjects) {
       map[String(subject._id)] = { videos: 0, pdfs: 0, completed: 0 };
@@ -77,7 +80,7 @@ const BatchCourseView = ({
       if (item.completed) map[sid].completed += 1;
     }
     return map;
-  }, [subjects, contents]);
+  }, [subjects, contents, subjectStatsProp]);
 
   const batchSummary = useMemo(() => {
     let totalLessons = 0;
@@ -264,14 +267,20 @@ const BatchCourseView = ({
             </div>
           </div>
         </div>
-        <SubjectLessonAccordion
-          contents={subjectContents}
-          chapters={subjectChapters}
-          subjectId={activeSubjectId}
-          onDeleteContent={onDeleteContent}
-          onRenameContent={onRenameContent}
-          deletingContentId={deletingContentId}
-        />
+          {loadingSubjectContents ? (
+            <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-500">
+              <FiLoader className="animate-spin" /> Loading lessons…
+            </div>
+          ) : (
+            <SubjectLessonAccordion
+              contents={subjectContents}
+              chapters={subjectChapters}
+              subjectId={activeSubjectId}
+              onDeleteContent={onDeleteContent}
+              onRenameContent={onRenameContent}
+              deletingContentId={deletingContentId}
+            />
+          )}
       </section>
     );
   }

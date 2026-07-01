@@ -1,15 +1,19 @@
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
-import { FiArrowLeft, FiCheckCircle } from "react-icons/fi";
+import { FiArrowLeft, FiCheckCircle, FiLoader, FiZap } from "react-icons/fi";
 import { Link, useParams } from "react-router-dom";
 import api from "../api/client";
 import Loader from "../components/Loader";
+import useWorkspaceCapabilities from "../hooks/useWorkspaceCapabilities";
 import { toAbsoluteMediaUrl } from "../utils/media";
 
 const PaperViewerPage = () => {
   const { id } = useParams();
   const [item, setItem] = useState(null);
   const [toggling, setToggling] = useState(false);
+  const [analysis, setAnalysis] = useState(null);
+  const [extracting, setExtracting] = useState(false);
+  const { paperExtract } = useWorkspaceCapabilities();
 
   useEffect(() => {
     const fetchPaper = async () => {
@@ -23,6 +27,19 @@ const PaperViewerPage = () => {
     fetchPaper();
   }, [id]);
 
+  useEffect(() => {
+    if (!id || !paperExtract) return;
+    const loadAnalysis = async () => {
+      try {
+        const { data } = await api.get(`/papers/${id}/analysis`);
+        setAnalysis(data);
+      } catch {
+        setAnalysis(null);
+      }
+    };
+    void loadAnalysis();
+  }, [id, paperExtract]);
+
   const handleToggleAttempted = async () => {
     if (!item || toggling) return;
     setToggling(true);
@@ -34,6 +51,20 @@ const PaperViewerPage = () => {
       toast.error(e.response?.data?.message || "Failed to update");
     } finally {
       setToggling(false);
+    }
+  };
+
+  const handleExtract = async () => {
+    if (!id || extracting) return;
+    setExtracting(true);
+    try {
+      const { data } = await api.post(`/papers/${id}/extract`);
+      setAnalysis({ status: data.status, questions: data.questions || [] });
+      toast.success(`Extracted ${data.count || data.questions?.length || 0} questions`);
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Extraction failed");
+    } finally {
+      setExtracting(false);
     }
   };
 
@@ -53,19 +84,32 @@ const PaperViewerPage = () => {
           <Link to="/papers" className="btn-secondary inline-flex w-fit text-sm">
             <FiArrowLeft /> Back to Papers
           </Link>
-          <button
-            type="button"
-            className={`inline-flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium transition sm:w-auto ${
-              item.attempted
-                ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
-                : "btn-secondary"
-            }`}
-            onClick={handleToggleAttempted}
-            disabled={toggling}
-          >
-            <FiCheckCircle size={18} />
-            {item.attempted ? "Attempted" : "Mark as attempted"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {paperExtract ? (
+              <button
+                type="button"
+                className="btn-secondary inline-flex text-sm"
+                onClick={() => void handleExtract()}
+                disabled={extracting}
+              >
+                {extracting ? <FiLoader className="animate-spin" size={16} /> : <FiZap size={16} />}
+                {extracting ? "Extracting…" : "Extract questions (AI)"}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className={`inline-flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium transition sm:w-auto ${
+                item.attempted
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+                  : "btn-secondary"
+              }`}
+              onClick={handleToggleAttempted}
+              disabled={toggling}
+            >
+              <FiCheckCircle size={18} />
+              {item.attempted ? "Attempted" : "Mark as attempted"}
+            </button>
+          </div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 dark:border-slate-800 dark:bg-slate-900">
           <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -78,21 +122,39 @@ const PaperViewerPage = () => {
               </span>
             )}
             {item.durationMinutes && (
-              <span className="text-sm text-slate-500">
-                {item.durationMinutes} min
-                {item.totalQuestions ? ` • ${item.totalQuestions} questions` : ""}
-              </span>
+              <span className="text-sm text-slate-500">{item.durationMinutes} min</span>
             )}
           </div>
-          <h1 className="text-lg font-semibold sm:text-2xl">{item.title}</h1>
-          {item.description && (
-            <p className="mt-1 text-xs text-slate-500 sm:text-sm dark:text-slate-400">{item.description}</p>
-          )}
-          <iframe
-            title={item.title}
-            src={src}
-            className="viewer-frame mt-3 w-full rounded-lg border border-slate-300 sm:mt-4 dark:border-slate-700"
-          />
+          <h1 className="text-lg font-semibold sm:text-xl">{item.title}</h1>
+          {item.description ? <p className="mt-1 text-sm text-slate-500">{item.description}</p> : null}
+        </div>
+
+        {paperExtract && analysis?.questions?.length ? (
+          <section className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+            <h2 className="text-sm font-semibold">
+              Extracted questions ({analysis.questions.length})
+            </h2>
+            <ol className="mt-3 max-h-72 space-y-3 overflow-y-auto text-sm">
+              {analysis.questions.map((q, index) => (
+                <li key={`${q.number}-${index}`} className="border-b border-slate-100 pb-2 dark:border-slate-800">
+                  <p className="font-medium">
+                    Q{q.number}. {q.text}
+                  </p>
+                  {q.options?.length ? (
+                    <ul className="mt-1 list-inside list-disc text-slate-600 dark:text-slate-400">
+                      {q.options.map((opt, i) => (
+                        <li key={i}>{opt}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          </section>
+        ) : null}
+
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+          <iframe title={item.title} src={src} className="h-[75vh] w-full" />
         </div>
       </div>
     </div>

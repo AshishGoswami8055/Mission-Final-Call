@@ -1,0 +1,31 @@
+/* Plyr theming to match the app's teal accent + rounded, modern look */
+.cds-plyr-shell {
+  --plyr-color-main: #14b8a6;
+  --plyr-video-background: #000;
+  --plyr-video-control-color: #f1f5f9;
+  --plyr-video-control-color-hover: #ffffff;
+  --plyr-menu-background: rgba(15, 23, 42, 0.96);
+  --plyr-menu-color: #e2e8f0;
+  --plyr-tooltip-background: rgba(15, 23, 42, 0.96);
+  --plyr-tooltip-color: #f8fafc;
+  --plyr-range-thumb-background: #14b8a6;
+  --plyr-range-fill-background: #14b8a6;
+  --plyr-control-radius: 10px;
+  --plyr-font-family: inherit;
+}
+
+.cds-plyr-shell .plyr {
+  border-radius: 0.75rem;
+  overflow: hidden;
+  width: 100%;
+}
+
+.cds-plyr-shell .plyr__control--overlaid {
+  background: var(--plyr-color-main);
+}
+
+/* Custom screenshot control injected into the Plyr control bar */
+.plyr__control.plyr-screenshot-btn svg {
+  width: 18px;
+  height: 18px;
+}

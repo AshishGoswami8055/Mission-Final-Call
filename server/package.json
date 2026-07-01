@@ -5,10 +5,11 @@
   "type": "module",
   "main": "src/server.js",
   "scripts": {
-    "dev": "node src/server.js",
+    "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "build:client": "npm run build --prefix ../client",
     "start:home": "npm run build:client && node src/server.js",
+    "test": "node --test tests/**/*.test.js",
     "tunnel:start": "powershell -ExecutionPolicy Bypass -File cloudflare/scripts/start-tunnel.ps1",
     "tunnel:status": "powershell -ExecutionPolicy Bypass -File cloudflare/scripts/status-tunnel.ps1",
     "tunnel:url": "powershell -ExecutionPolicy Bypass -File cloudflare/scripts/get-tunnel-url.ps1"

@@ -8,32 +8,31 @@ import {
   FiDownload,
   FiEdit2,
   FiFileText,
-  FiMaximize,
   FiMessageCircle,
-  FiMinimize,
   FiMoon,
   FiLoader,
-  FiPause,
-  FiPlay,
   FiRefreshCw,
   FiSend,
-  FiSettings,
   FiSun,
-  FiVolume2,
-  FiVolumeX,
   FiX,
   FiZap,
   FiTrash2,
 } from "react-icons/fi";
 import { Link, useParams } from "react-router-dom";
 import api from "../api/client";
+import { useWorkspaceCapabilities } from "../hooks/useWorkspaceCapabilities";
+import { useTelegramPlaybackStatus } from "../hooks/useTelegramPlaybackStatus";
+import { useVideoContentAi } from "../hooks/useVideoContentAi";
 import StudyTracker from "../components/StudyTracker";
+import CdsPlyrPlayer from "../components/CdsPlyrPlayer";
+import TelegramConnectionStatus from "../components/TelegramConnectionStatus";
 import VideoStreakBadge from "../components/streak/VideoStreakBadge";
 import SmoothPlaybackPanel from "../components/SmoothPlaybackPanel";
 import VideoPlaybackCachePanel from "../components/VideoPlaybackCachePanel";
 import { useStudy } from "../context/StudyContext";
 import { useTheme } from "../context/ThemeContext";
-import { getTelegramVideoUrl, isLocalFrontend, isTelegramLinkVideo, isTelegramStreamContent, isYouTubeUrl, resolveContentSrc, toAbsoluteMediaUrl } from "../utils/media";
+import { getTelegramVideoUrl, isLocalFrontend, isTelegramLinkVideo, isTelegramStreamContent, isYouTubeUrl, preferSameOriginMediaUrl, resolveContentSrc, resolveVideoPlaybackUrl, toAbsoluteMediaUrl } from "../utils/media";
+import { captureVideoFrameDataUrl, resolvePlyrVideoElement } from "../utils/videoScreenshot";
 import { fetchLocalLibraryStatus } from "../utils/localLibraryApi";
 import { downloadDataUrl, loadScreenshotNotes, saveScreenshotNotes } from "../utils/screenshotNotes";
 import { getYouTubeThumbnailDataUrl } from "../utils/youtubeThumbnail";
@@ -92,18 +91,6 @@ const formatElapsed = (seconds = 0) => {
   return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 };
 
-const getApiErrorMessage = (error, fallbackMessage) => {
-  const apiMessage = error?.response?.data?.message;
-  const timeoutMsg = error?.code === "ECONNABORTED" ? "Request timed out after 120s. Try again." : null;
-  return apiMessage || timeoutMsg || fallbackMessage;
-};
-
-const isGeminiProcessingError = (error) => {
-  const status = error?.response?.status;
-  const msg = String(error?.response?.data?.message || "");
-  return status === 409 || /still processing/i.test(msg);
-};
-
 const parseTimecodeToSeconds = (timecode = "") => {
   const parts = String(timecode).trim().split(":").map((v) => Number(v) || 0);
   if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
@@ -153,18 +140,7 @@ const VideoPlayerPage = () => {
   const [item, setItem] = useState(null);
   const [relatedPdfs, setRelatedPdfs] = useState([]);
   const [loadingPdfs, setLoadingPdfs] = useState(false);
-  const [aiOverview, setAiOverview] = useState(null);
-  const [loadingAi, setLoadingAi] = useState(false);
-  const [refreshingAi, setRefreshingAi] = useState(false);
-  const [askInput, setAskInput] = useState("");
-  const [askingAi, setAskingAi] = useState(false);
-  const [askMessages, setAskMessages] = useState([]);
-  const [askPanelOpen, setAskPanelOpen] = useState(true);
-  const [askStatusText, setAskStatusText] = useState("");
-  const [askErrorText, setAskErrorText] = useState("");
-  const [processingStartedAt, setProcessingStartedAt] = useState(null);
-  const [processingElapsedSec, setProcessingElapsedSec] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [, setIsPlaying] = useState(false);
   const { theme } = useTheme();
   const [pageDark, setPageDark] = useState(() => {
     try {
@@ -180,28 +156,21 @@ const VideoPlayerPage = () => {
   const [bufferPercent, setBufferPercent] = useState(0);
   const [loadElapsedSec, setLoadElapsedSec] = useState(0);
   const loadStartedAtRef = useRef(null);
-  const [volume, setVolume] = useState(1);
-  const [showControls, setShowControls] = useState(true);
-  const [isMuted, setIsMuted] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [playbackRate, setPlaybackRate] = useState(1);
-  const [showSettings, setShowSettings] = useState(false);
   const [capturePending, setCapturePending] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [screenshotNotes, setScreenshotNotes] = useState([]);
   const [cachedPlayUrl, setCachedPlayUrl] = useState(null);
   const [playbackSourceReady, setPlaybackSourceReady] = useState(false);
-  const [isScrubbing, setIsScrubbing] = useState(false);
+  const [playerGeneration, setPlayerGeneration] = useState(0);
+  const [playbackStalled, setPlaybackStalled] = useState(false);
   const usingCacheRef = useRef(false);
   const usingLocalLibraryRef = useRef(false);
   const videoRef = useRef(null);
   const playerRef = useRef(null);
-  const hideTimerRef = useRef(null);
-  const settingsRef = useRef(null);
-  const progressBarRef = useRef(null);
-  const previewVideoRef = useRef(null);
-  const previewSeekTimerRef = useRef(null);
-  const hoverTimeRef = useRef(0);
+  const handleCaptureRef = useRef(() => {});
+  const cachedPlayUrlRef = useRef(null);
+  const addStudyMinutesRef = useRef(() => {});
+  const handlePlaybackEndedRef = useRef(async () => {});
   const lastSavedPositionRef = useRef(0);
   const studyAccumSecondsRef = useRef(0);
   const heartbeatPendingSecondsRef = useRef(0);
@@ -209,8 +178,8 @@ const VideoPlayerPage = () => {
   const itemRef = useRef(null);
   const prevVideoTimeRef = useRef(0);
   const syncWatchToServerRef = useRef(async () => {});
-  const [timelineHover, setTimelineHover] = useState(null);
   const { addStudyMinutes, addToWatchHistory, applyVideoStreakStatus } = useStudy();
+  const { videoAiAsk } = useWorkspaceCapabilities();
 
   const isTelegramStream = item ? isTelegramStreamContent(item) : false;
   const isTelegramLink = item ? isTelegramLinkVideo(item) : false;
@@ -223,14 +192,36 @@ const VideoPlayerPage = () => {
         item.sourceType === "cloudinary" ||
         (item.sourceType === "upload" && item.filePath))
   );
-  const src = isTelegramLink || isYoutube ? "" : rawSrc;
-  const playbackSrc = cachedPlayUrl ? toAbsoluteMediaUrl(cachedPlayUrl) : src;
-  const canUseAiAsk = false;
-  const showAskPanel = false;
+  const src = isTelegramLink || isYoutube ? "" : preferSameOriginMediaUrl(rawSrc);
+  const playbackSrc = cachedPlayUrl ? resolveVideoPlaybackUrl(cachedPlayUrl) : src;
+  const canUseAiAsk = Boolean(videoAiAsk && item?.type === "video");
+  const showAskPanel = canUseAiAsk;
 
-  const PREVIEW_SEEK_MS = 50;
-  const PREVIEW_W = 160;
-  const PREVIEW_H = 90;
+  const {
+    aiOverview,
+    loadingAi,
+    refreshingAi,
+    askInput,
+    setAskInput,
+    askingAi,
+    askMessages,
+    askPanelOpen,
+    setAskPanelOpen,
+    askStatusText,
+    askErrorText,
+    processingElapsedSec,
+    refreshAiSummary,
+    submitAsk,
+  } = useVideoContentAi({ contentId: id, canUseAiAsk });
+
+  const {
+    telegramStatus,
+    telegramStatusResetting,
+    refreshTelegramStatus,
+    handleResetTelegramSession,
+    verifyTelegramForRetry,
+  } = useTelegramPlaybackStatus({ item, itemRef, isTelegramStream });
+
   const youtubeVideoId = isYoutube ? extractYoutubeVideoId(rawSrc) : "";
   const youtubeThumb =
     item?.thumbnail ||
@@ -239,6 +230,19 @@ const VideoPlayerPage = () => {
   const hintedDuration = Number(item?.duration) || 0;
   const hasVideoDuration = duration > 0 && Number.isFinite(duration);
   const showInitialLoader = Boolean(playbackSrc) && !hasVideoDuration && !isTelegramStream && !cachedPlayUrl;
+  const telegramBlocksStream =
+    isTelegramStream && !cachedPlayUrl && !telegramStatus.checking && !telegramStatus.live;
+  const showTelegramStreamLoader =
+    isTelegramStream &&
+    !cachedPlayUrl &&
+    Boolean(playbackSrc) &&
+    playbackSourceReady &&
+    !telegramBlocksStream &&
+    (!hasVideoDuration || playbackStalled);
+  const showStreamLoadingOverlay = showInitialLoader || showTelegramStreamLoader;
+  const showNativePlayer = !isTelegramLink && !isYoutube;
+  const showLibraryCheckOverlay =
+    showNativePlayer && !playbackSourceReady && isLocalFrontend() && isTelegramStream && canCachePlayback;
 
   const applyVideoDuration = useCallback((video) => {
     const dur = Number(video?.duration);
@@ -311,9 +315,24 @@ const VideoPlayerPage = () => {
     };
   }, [id, canCachePlayback]);
 
+  useEffect(() => {
+    setPlayerGeneration(0);
+    setPlaybackStalled(false);
+  }, [id]);
+
+  const handleRetryPlayback = useCallback(async () => {
+    setPlaybackStalled(false);
+    setBufferPercent(0);
+    setLoadElapsedSec(0);
+    loadStartedAtRef.current = Date.now();
+    if (isTelegramStream) {
+      await verifyTelegramForRetry();
+    }
+    setPlayerGeneration((value) => value + 1);
+  }, [isTelegramStream, verifyTelegramForRetry]);
+
   const handlePlaybackEnded = useCallback(async () => {
     setIsPlaying(false);
-    setShowControls(true);
     if (id && videoRef.current) {
       saveVideoPosition(id, videoRef.current.currentTime);
     }
@@ -329,8 +348,126 @@ const VideoPlayerPage = () => {
     }
   }, [id]);
 
+  const handleVideoLoadStart = useCallback(() => {
+    setBufferPercent(0);
+    loadStartedAtRef.current = Date.now();
+    const hint = Number(itemRef.current?.duration) || 0;
+    const telegram = itemRef.current ? isTelegramStreamContent(itemRef.current) : false;
+    if (!telegram || hint <= 0) setDuration(0);
+  }, []);
+
+  const handleVideoLoadedMetadata = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    setPlaybackStalled(false);
+    applyVideoDuration(video);
+    updateBufferProgress(video);
+    const dur = video.duration || 0;
+    if (!id || !(dur > 0)) return;
+    const saved = loadVideoPosition(id);
+    if (
+      saved != null &&
+      Number.isFinite(saved) &&
+      saved >= MIN_RESUME_SECONDS &&
+      saved < dur - MIN_RESUME_SECONDS
+    ) {
+      video.currentTime = saved;
+      setCurrentTime(saved);
+      lastSavedPositionRef.current = saved;
+      toast.success(`Resumed from ${formatTime(saved)}`);
+    }
+  }, [applyVideoDuration, id, updateBufferProgress]);
+
+  const handleVideoDurationChange = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    applyVideoDuration(video);
+    updateBufferProgress(video);
+  }, [applyVideoDuration, updateBufferProgress]);
+
+  const handleVideoProgress = useCallback(() => {
+    updateBufferProgress(videoRef.current);
+  }, [updateBufferProgress]);
+
+  const handleVideoError = useCallback(() => {
+    const tryLocalFallback = async () => {
+      if (usingLocalLibraryRef.current || cachedPlayUrlRef.current) {
+        toast.error("Local video file failed to load.");
+        return;
+      }
+      if (!isLocalFrontend() || !canCachePlayback || !id) {
+        toast.error("Video failed to load. Check Telegram connection and refresh.");
+        return;
+      }
+      try {
+        const { data } = await fetchLocalLibraryStatus(id);
+        if (data.cached && data.ready && data.playUrl) {
+          setCachedPlayUrl(data.playUrl);
+          usingLocalLibraryRef.current = true;
+          usingCacheRef.current = true;
+          toast.success("Playing from your PC library.");
+          return;
+        }
+        if (data.job?.status === "downloading") {
+          toast.error(
+            "This video is still downloading to your PC library. Wait for it to finish, then refresh."
+          );
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
+      toast.error(
+        "Telegram stream failed. Re-login to Telegram in Settings, restart the server, wait 30 seconds, then refresh. Or click Smooth playback to save this video to your PC first.",
+        { duration: 10000 }
+      );
+    };
+    void tryLocalFallback();
+  }, [canCachePlayback, id]);
+
+  const handleVideoTimeUpdate = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const t = video.currentTime;
+    setCurrentTime(t);
+    if (video.paused) return;
+    const prev = prevVideoTimeRef.current;
+    const delta = Math.max(0, Math.min(2, t - prev));
+    prevVideoTimeRef.current = t;
+    studyAccumSecondsRef.current += delta;
+    heartbeatPendingSecondsRef.current += delta;
+    if (studyAccumSecondsRef.current >= 60) {
+      const sid = itemRef.current?.subjectId?._id ?? itemRef.current?.subjectId;
+      addStudyMinutesRef.current(studyAccumSecondsRef.current / 60, sid);
+      studyAccumSecondsRef.current = 0;
+    }
+    if (heartbeatPendingSecondsRef.current >= 300) void syncWatchToServerRef.current(300);
+    if (id && t - lastSavedPositionRef.current >= SAVE_INTERVAL_SECONDS) {
+      lastSavedPositionRef.current = t;
+      saveVideoPosition(id, t);
+    }
+  }, [id]);
+
+  const handleVideoPlay = useCallback(() => setIsPlaying(true), []);
+
+  const handleVideoPause = useCallback(() => {
+    setIsPlaying(false);
+    if (id && videoRef.current) saveVideoPosition(id, videoRef.current.currentTime);
+  }, [id]);
+
+  const handleVideoEnded = useCallback(() => {
+    void handlePlaybackEndedRef.current();
+  }, []);
+
+  const handleVideoStalled = useCallback(({ gaveUp }) => {
+    if (gaveUp) {
+      setPlaybackStalled(true);
+      toast.error("Video stalled. Check Telegram connection below, then retry playback.", { duration: 8000 });
+    }
+  }, []);
+
   useEffect(() => {
-    if (!showInitialLoader) {
+    if (!showStreamLoadingOverlay) {
       loadStartedAtRef.current = null;
       return undefined;
     }
@@ -344,71 +481,13 @@ const VideoPlayerPage = () => {
       setLoadElapsedSec(Math.floor((Date.now() - loadStartedAtRef.current) / 1000));
     }, 1000);
     return () => clearInterval(interval);
-  }, [showInitialLoader]);
-
-  useEffect(() => {
-    if (!processingStartedAt) {
-      setProcessingElapsedSec(0);
-      return undefined;
-    }
-    setProcessingElapsedSec(Math.floor((Date.now() - processingStartedAt) / 1000));
-    const interval = setInterval(() => {
-      setProcessingElapsedSec(Math.floor((Date.now() - processingStartedAt) / 1000));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [processingStartedAt]);
+  }, [showStreamLoadingOverlay]);
 
   useEffect(() => {
     try {
       localStorage.setItem(VIDEO_PAGE_THEME_KEY, pageDark ? "dark" : "light");
     } catch {}
   }, [pageDark]);
-
-  const handleTimelineMouseMove = useCallback(
-    (e) => {
-      if (!progressBarRef.current || !duration || duration <= 0) return;
-      const rect = progressBarRef.current.getBoundingClientRect();
-      const position = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      const time = Math.max(0, Math.min(position * duration, duration - 0.01));
-      hoverTimeRef.current = time;
-      setTimelineHover({ time, position });
-
-      if (previewSeekTimerRef.current) clearTimeout(previewSeekTimerRef.current);
-      previewSeekTimerRef.current = setTimeout(() => {
-        previewSeekTimerRef.current = null;
-        const el = previewVideoRef.current;
-        if (el) el.currentTime = hoverTimeRef.current;
-      }, PREVIEW_SEEK_MS);
-    },
-    [duration]
-  );
-
-  const handleTimelineMouseLeave = useCallback(() => {
-    if (previewSeekTimerRef.current) {
-      clearTimeout(previewSeekTimerRef.current);
-      previewSeekTimerRef.current = null;
-    }
-    setTimelineHover(null);
-  }, []);
-
-  const handleTimelineClick = useCallback(
-    (e) => {
-      if (!progressBarRef.current || !duration || duration <= 0 || !videoRef.current) return;
-      const rect = progressBarRef.current.getBoundingClientRect();
-      const position = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      const time = Math.max(0, Math.min(position * duration, duration - 0.01));
-      videoRef.current.currentTime = time;
-      setCurrentTime(time);
-      resetControlsTimer();
-    },
-    [duration]
-  );
-
-  useEffect(() => {
-    return () => {
-      if (previewSeekTimerRef.current) clearTimeout(previewSeekTimerRef.current);
-    };
-  }, []);
 
   useEffect(() => {
     return () => {
@@ -528,143 +607,12 @@ const VideoPlayerPage = () => {
     fetchRelatedPdfs();
   }, [item?.chapterId?._id]);
 
-  useEffect(() => {
-    const fetchAiOverview = async () => {
-      if (!id || !canUseAiAsk) {
-        setAiOverview(null);
-        return;
-      }
-      setLoadingAi(true);
-      try {
-        const { data } = await api.get(`/contents/${id}/ai-overview`);
-        setAiOverview(data);
-      } catch (error) {
-        toast.error(error.response?.data?.message || "Could not load AI summary");
-      } finally {
-        setLoadingAi(false);
-      }
-    };
-    fetchAiOverview();
-  }, [id, canUseAiAsk]);
-
-  const refreshAiSummary = async () => {
-    if (!id || !canUseAiAsk) return;
-    setAskErrorText("");
-    setProcessingStartedAt(Date.now());
-    setRefreshingAi(true);
-    try {
-      const maxRetries = 8;
-      const retryDelayMs = 7000;
-      let lastError = null;
-
-      for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-        try {
-          const { data } = await api.post(`/contents/${id}/ai-refresh`, {}, { timeout: 120000 });
-          setAiOverview(data);
-          setAskStatusText("");
-          setProcessingStartedAt(null);
-          toast.success("AI summary generated");
-          return;
-        } catch (error) {
-          lastError = error;
-          if (isGeminiProcessingError(error) && attempt < maxRetries) {
-            const left = maxRetries - attempt;
-            setAskStatusText(`Video still processing... retrying in ${retryDelayMs / 1000}s (${left} retries left)`);
-            await wait(retryDelayMs);
-            continue;
-          }
-          throw error;
-        }
-      }
-
-      throw lastError || new Error("Could not generate AI summary");
-    } catch (error) {
-      const message = getApiErrorMessage(error, "Could not generate AI summary");
-      setAskErrorText(message);
-      toast.error(message);
-    } finally {
-      setProcessingStartedAt(null);
-      if (!askingAi) setAskStatusText("");
-      setRefreshingAi(false);
-    }
-  };
-
-  const submitAsk = async (promptText) => {
-    const question = String(promptText || askInput).trim();
-    if (!question || !id || !canUseAiAsk || askingAi) return;
-    setAskErrorText("");
-    setAskStatusText("Thinking...");
-    const historyForApi = askMessages.map((m) => ({ role: m.role, text: m.text }));
-    const nextMessages = [...askMessages, { role: "user", text: question }];
-    setAskMessages(nextMessages);
-    setAskInput("");
-    setAskingAi(true);
-    setProcessingStartedAt(Date.now());
-    const startedAt = Date.now();
-    const statusTimer = setInterval(() => {
-      const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
-      if (elapsedSec < 8) {
-        setAskStatusText("Thinking...");
-      } else if (elapsedSec < 25) {
-        setAskStatusText("Preparing video context...");
-      } else {
-        setAskStatusText("Still processing. First run on uploaded videos can take longer.");
-      }
-    }, 1000);
-    try {
-      const maxRetries = 10;
-      const retryDelayMs = 7000;
-      let data = null;
-      let lastError = null;
-
-      for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-        try {
-          const response = await api.post(
-            `/contents/${id}/ai-ask`,
-            {
-              question,
-              history: historyForApi,
-            },
-            {
-              timeout: 120000,
-            }
-          );
-          data = response.data;
-          break;
-        } catch (error) {
-          lastError = error;
-          if (isGeminiProcessingError(error) && attempt < maxRetries) {
-            const left = maxRetries - attempt;
-            setAskStatusText(`Video still processing... retrying in ${retryDelayMs / 1000}s (${left} retries left)`);
-            await wait(retryDelayMs);
-            continue;
-          }
-          throw error;
-        }
-      }
-
-      if (!data) throw lastError || new Error("Ask failed");
-      setAskMessages((prev) => [...prev, { role: "assistant", text: data.answer || "No answer returned." }]);
-    } catch (error) {
-      const message = getApiErrorMessage(error, "Ask failed");
-      setAskErrorText(message);
-      toast.error(message);
-      setAskMessages((prev) => prev.filter((m, idx) => !(m.role === "user" && idx === prev.length - 1)));
-    } finally {
-      clearInterval(statusTimer);
-      setAskStatusText("");
-      setProcessingStartedAt(null);
-      setAskingAi(false);
-    }
-  };
-
   const jumpToMoment = (timecode) => {
     const sec = parseTimecodeToSeconds(timecode);
     if (Number.isNaN(sec) || sec < 0) return;
     if (!isYoutube && !isTelegramLink && videoRef.current) {
       videoRef.current.currentTime = sec;
       setCurrentTime(sec);
-      resetControlsTimer();
       return;
     }
     if (isTelegramLink) {
@@ -675,65 +623,6 @@ const VideoPlayerPage = () => {
     if (isYoutube) {
       setCurrentTime(sec);
       window.open(buildYoutubeWatchUrl(rawSrc, sec), "_blank", "noopener,noreferrer");
-    }
-  };
-
-  const resetControlsTimer = () => {
-    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    setShowControls(true);
-    if (isFullscreen && !isScrubbing) {
-      hideTimerRef.current = setTimeout(() => {
-        setShowControls(false);
-      }, 1200);
-      return;
-    }
-    if (isPlaying && !isScrubbing) {
-      hideTimerRef.current = setTimeout(() => {
-        setShowControls(false);
-      }, 2000);
-    }
-  };
-
-  const seekBy = (delta) => {
-    if (!videoRef.current) return;
-    const next = Math.min(Math.max(videoRef.current.currentTime + delta, 0), duration || 0);
-    videoRef.current.currentTime = next;
-    setCurrentTime(next);
-    resetControlsTimer();
-  };
-
-  const setVolumeLevel = (nextVolume) => {
-    if (!videoRef.current) return;
-    const normalized = Math.min(Math.max(nextVolume, 0), 1);
-    videoRef.current.volume = normalized;
-    videoRef.current.muted = normalized === 0;
-    setVolume(normalized);
-    setIsMuted(normalized === 0);
-  };
-
-  const togglePlay = async () => {
-    if (!videoRef.current) return;
-    if (videoRef.current.paused) {
-      await videoRef.current.play();
-      setIsPlaying(true);
-      resetControlsTimer();
-    } else {
-      videoRef.current.pause();
-      setIsPlaying(false);
-      setShowControls(true);
-    }
-  };
-
-  const toggleFullscreen = async () => {
-    if (!playerRef.current) return;
-    try {
-      if (!document.fullscreenElement) {
-        await playerRef.current.requestFullscreen();
-      } else {
-        await document.exitFullscreen();
-      }
-    } catch {
-      toast.error("Fullscreen not available");
     }
   };
 
@@ -773,7 +662,7 @@ const VideoPlayerPage = () => {
       }
       return;
     }
-    const video = videoRef.current;
+    const video = resolvePlyrVideoElement(videoRef, playerRef);
     if (!video || !video.videoWidth || !video.videoHeight) {
       toast.error("Video is not ready for screenshot yet.");
       return;
@@ -781,15 +670,7 @@ const VideoPlayerPage = () => {
 
     setCapturePending(true);
     try {
-      const canvas = document.createElement("canvas");
-      const maxWidth = 1280;
-      const scale = video.videoWidth > maxWidth ? maxWidth / video.videoWidth : 1;
-      canvas.width = Math.floor(video.videoWidth * scale);
-      canvas.height = Math.floor(video.videoHeight * scale);
-      const context = canvas.getContext("2d");
-      if (!context) throw new Error("Could not capture frame");
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const imageData = canvas.toDataURL("image/jpeg", 0.82);
+      const imageData = captureVideoFrameDataUrl(video);
 
       const note = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -805,12 +686,17 @@ const VideoPlayerPage = () => {
         return next;
       });
       toast.success("Screenshot note saved");
-    } catch {
-      toast.error("Could not capture screenshot");
+    } catch (error) {
+      toast.error(error?.message || "Could not capture screenshot");
     } finally {
       setCapturePending(false);
     }
   };
+
+  handleCaptureRef.current = handleCaptureScreenshot;
+  cachedPlayUrlRef.current = cachedPlayUrl;
+  addStudyMinutesRef.current = addStudyMinutes;
+  handlePlaybackEndedRef.current = handlePlaybackEnded;
 
   const handleDeleteScreenshot = (noteId) => {
     if (!id) return;
@@ -897,80 +783,20 @@ const VideoPlayerPage = () => {
     }
   };
 
+  // Extra shortcut: "S" captures a screenshot note (Plyr handles the rest).
   useEffect(() => {
     const onKeyDown = (event) => {
       const tag = document.activeElement?.tagName?.toLowerCase();
       if (tag === "input" || tag === "textarea") return;
-      const key = event.key.toLowerCase();
       if (isYoutube || isTelegramLink) return;
-
-      if (key === "arrowleft") {
+      if (event.key.toLowerCase() === "s" && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
-        seekBy(-5);
-      } else if (key === "arrowright") {
-        event.preventDefault();
-        seekBy(5);
-      } else if (key === "j") {
-        event.preventDefault();
-        seekBy(-10);
-      } else if (key === "l") {
-        event.preventDefault();
-        seekBy(10);
-      } else if (key === "arrowup") {
-        event.preventDefault();
-        setVolumeLevel((videoRef.current?.volume ?? volume) + 0.1);
-      } else if (key === "arrowdown") {
-        event.preventDefault();
-        setVolumeLevel((videoRef.current?.volume ?? volume) - 0.1);
-      } else if (event.key === " " || key === "k") {
-        event.preventDefault();
-        togglePlay();
-      } else if (key === "m") {
-        event.preventDefault();
-        if (!videoRef.current) return;
-        const nextMuted = !videoRef.current.muted;
-        videoRef.current.muted = nextMuted;
-        setIsMuted(nextMuted);
-      } else if (key === "f") {
-        event.preventDefault();
-        toggleFullscreen();
-      } else if (/^[0-9]$/.test(key)) {
-        event.preventDefault();
-        if (!videoRef.current || !duration) return;
-        const pct = Number(key) / 10;
-        const next = duration * pct;
-        videoRef.current.currentTime = next;
-        setCurrentTime(next);
+        void handleCaptureRef.current?.();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isYoutube, isTelegramLink, duration, volume, isPlaying]);
-
-  useEffect(() => {
-    return () => {
-      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    };
-  }, []);
-
-  useEffect(() => {
-    const onFullscreenChange = () => {
-      setIsFullscreen(Boolean(document.fullscreenElement));
-      resetControlsTimer();
-    };
-    document.addEventListener("fullscreenchange", onFullscreenChange);
-    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
-  }, []);
-
-  useEffect(() => {
-    const onClickOutside = (event) => {
-      if (settingsRef.current && !settingsRef.current.contains(event.target)) {
-        setShowSettings(false);
-      }
-    };
-    document.addEventListener("mousedown", onClickOutside);
-    return () => document.removeEventListener("mousedown", onClickOutside);
-  }, []);
+  }, [isYoutube, isTelegramLink]);
 
   return (
     <div className={`page-viewer ${isDark ? "bg-black text-slate-100" : "bg-slate-100 text-slate-800"}`}>
@@ -1038,6 +864,19 @@ const VideoPlayerPage = () => {
                   }}
                 />
               )}
+              {isTelegramStream ? (
+                <TelegramConnectionStatus
+                  checking={telegramStatus.checking}
+                  connected={telegramStatus.connected}
+                  live={telegramStatus.live}
+                  error={telegramStatus.error}
+                  phone={telegramStatus.phone}
+                  isDark={isDark}
+                  onRefresh={refreshTelegramStatus}
+                  onResetSession={handleResetTelegramSession}
+                  resetting={telegramStatusResetting}
+                />
+              ) : null}
               <div className="mt-4">
                 <div className="rounded-xl bg-black overflow-visible">
                 {isTelegramLink ? (
@@ -1095,150 +934,64 @@ const VideoPlayerPage = () => {
                       ) : null}
                     </div>
                   </div>
-                ) : !playbackSourceReady && isLocalFrontend() && isTelegramStream && canCachePlayback ? (
-                  <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black">
-                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center">
-                      <FiLoader className="animate-spin text-white" size={28} />
-                      <p className="text-sm text-slate-300">Checking PC library…</p>
-                    </div>
-                  </div>
-                ) : (
+                ) : showNativePlayer ? (
                   <div
                     ref={playerRef}
-                    className={`group relative overflow-visible ${showControls ? "cursor-default" : "cursor-none"}`}
-                    onMouseMove={resetControlsTimer}
-                    onMouseEnter={resetControlsTimer}
-                    onMouseLeave={() => {
-                      if (isPlaying) setShowControls(false);
-                    }}
+                    className="cds-plyr-shell group relative overflow-visible"
                   >
-                    <div className="overflow-hidden rounded-xl relative">
-                    <video
-                      key={playbackSrc}
-                      ref={videoRef}
-                      className="aspect-video w-full"
+                    <CdsPlyrPlayer
+                      key={`${id}-${playerGeneration}`}
+                      contentId={id}
                       src={playbackSrc}
-                      controls={false}
-                      preload="auto"
-                      playsInline
-                      onLoadStart={() => {
-                        setBufferPercent(0);
-                        loadStartedAtRef.current = Date.now();
-                        const hint = Number(itemRef.current?.duration) || 0;
-                        const telegram = itemRef.current
-                          ? isTelegramStreamContent(itemRef.current)
-                          : false;
-                        if (!telegram || hint <= 0) {
-                          setDuration(0);
-                        }
-                      }}
-                      onLoadedMetadata={(e) => {
-                        const video = e.currentTarget;
-                        applyVideoDuration(video);
-                        setVolume(video.volume);
-                        updateBufferProgress(video);
-                        const dur = video.duration || 0;
-                        if (!id || !(dur > 0)) return;
-                        const saved = loadVideoPosition(id);
-                        if (
-                          saved != null &&
-                          Number.isFinite(saved) &&
-                          saved >= MIN_RESUME_SECONDS &&
-                          saved < dur - MIN_RESUME_SECONDS
-                        ) {
-                          video.currentTime = saved;
-                          setCurrentTime(saved);
-                          lastSavedPositionRef.current = saved;
-                          toast.success(`Resumed from ${formatTime(saved)}`);
-                        }
-                      }}
-                      onDurationChange={(e) => {
-                        applyVideoDuration(e.currentTarget);
-                        updateBufferProgress(e.currentTarget);
-                      }}
-                      onProgress={(e) => updateBufferProgress(e.currentTarget)}
-                      onError={() => {
-                        const tryLocalFallback = async () => {
-                          if (usingLocalLibraryRef.current || cachedPlayUrl) {
-                            toast.error("Local video file failed to load.");
-                            return;
-                          }
-                          if (!isLocalFrontend() || !canCachePlayback || !id) {
-                            toast.error("Video failed to load. Check Telegram connection and refresh.");
-                            return;
-                          }
-                          try {
-                            const { data } = await fetchLocalLibraryStatus(id);
-                            if (data.cached && data.ready && data.playUrl) {
-                              setCachedPlayUrl(data.playUrl);
-                              usingLocalLibraryRef.current = true;
-                              usingCacheRef.current = true;
-                              toast.success("Playing from your PC library.");
-                              return;
-                            }
-                            if (data.job?.status === "downloading") {
-                              toast.error(
-                                "This video is still downloading to your PC library. Wait for it to finish, then refresh."
-                              );
-                              return;
-                            }
-                          } catch {
-                            /* ignore */
-                          }
-                          toast.error(
-                            "Telegram stream failed. Re-login to Telegram in Settings, restart the server, wait 30 seconds, then refresh. Or click Smooth playback to save this video to your PC first.",
-                            { duration: 10000 }
-                          );
-                        };
-                        void tryLocalFallback();
-                      }}
-                      onTimeUpdate={(e) => {
-                        const t = e.currentTarget.currentTime;
-                        setCurrentTime(t);
-                        if (e.currentTarget.paused) return;
-                        const prev = prevVideoTimeRef.current;
-                        const delta = Math.max(0, Math.min(2, t - prev));
-                        prevVideoTimeRef.current = t;
-                        studyAccumSecondsRef.current += delta;
-                        heartbeatPendingSecondsRef.current += delta;
-                        if (studyAccumSecondsRef.current >= 60) {
-                          const sid = itemRef.current?.subjectId?._id ?? itemRef.current?.subjectId;
-                          addStudyMinutes(studyAccumSecondsRef.current / 60, sid);
-                          studyAccumSecondsRef.current = 0;
-                        }
-                        if (heartbeatPendingSecondsRef.current >= 300) {
-                          void syncWatchToServer(300);
-                        }
-                        if (id && t - lastSavedPositionRef.current >= SAVE_INTERVAL_SECONDS) {
-                          lastSavedPositionRef.current = t;
-                          saveVideoPosition(id, t);
-                        }
-                      }}
-                      onPlay={() => {
-                        setIsPlaying(true);
-                        resetControlsTimer();
-                      }}
-                      onPause={() => {
-                        setIsPlaying(false);
-                        setShowControls(true);
-                        if (id && videoRef.current) {
-                          saveVideoPosition(id, videoRef.current.currentTime);
-                        }
-                      }}
-                      onEnded={handlePlaybackEnded}
-                      onClick={togglePlay}
-                      onDoubleClick={toggleFullscreen}
-                    >
-                      <track kind="captions" />
-                    </video>
+                      ready={playbackSourceReady && (!isTelegramStream || telegramStatus.live || cachedPlayUrl)}
+                      videoRef={videoRef}
+                      onScreenshot={handleCaptureScreenshot}
+                      onLoadStart={handleVideoLoadStart}
+                      onLoadedMetadata={handleVideoLoadedMetadata}
+                      onDurationChange={handleVideoDurationChange}
+                      onProgress={handleVideoProgress}
+                      onError={handleVideoError}
+                      onTimeUpdate={handleVideoTimeUpdate}
+                      onPlay={handleVideoPlay}
+                      onPause={handleVideoPause}
+                      onEnded={handleVideoEnded}
+                      onStalled={handleVideoStalled}
+                    />
 
-                    {showInitialLoader && (
-                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-black/85 px-6 text-center">
+                    {showLibraryCheckOverlay && (
+                      <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 rounded-xl bg-black/90 text-center">
+                        <FiLoader className="animate-spin text-white" size={28} />
+                        <p className="text-sm text-slate-300">Checking PC library…</p>
+                      </div>
+                    )}
+
+                    {telegramBlocksStream && (
+                      <div className="absolute inset-0 z-20 flex aspect-video flex-col items-center justify-center gap-3 rounded-xl bg-black px-6 text-center">
+                        <p className="text-sm font-medium text-white">Telegram stream unavailable</p>
+                        <p className="max-w-sm text-xs text-slate-400">
+                          Connect Telegram using the banner above, then click Recheck or Retry playback.
+                        </p>
+                        <button
+                          type="button"
+                          className="btn-secondary inline-flex text-xs"
+                          onClick={() => void refreshTelegramStatus()}
+                        >
+                          <FiRefreshCw size={14} /> Recheck connection
+                        </button>
+                      </div>
+                    )}
+
+                    {showStreamLoadingOverlay && (
+                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 rounded-xl bg-black/85 px-6 text-center">
                         <FiLoader className="animate-spin text-3xl text-teal-400" />
                         <div className="space-y-1">
-                          <p className="text-sm font-semibold text-white">Loading video…</p>
+                          <p className="text-sm font-semibold text-white">
+                            {playbackStalled ? "Playback stalled" : "Loading video…"}
+                          </p>
                           <p className="text-xs tabular-nums text-slate-300">
-                            Waiting for duration · {formatTime(loadElapsedSec)} elapsed
+                            {playbackStalled
+                              ? "Telegram stream did not start. Check connection above."
+                              : `Waiting for stream · ${formatTime(loadElapsedSec)} elapsed`}
                           </p>
                           {hintedDuration > 0 ? (
                             <p className="text-[11px] text-slate-500">
@@ -1257,161 +1010,19 @@ const VideoPlayerPage = () => {
                             {bufferPercent > 0 ? `${bufferPercent}% buffered` : "Connecting to stream…"}
                           </p>
                         </div>
-                      </div>
-                    )}
-                    </div>
-
-                    {!showInitialLoader && (
-                    <div
-                      className={`absolute bottom-0 left-0 right-0 z-10 overflow-visible bg-linear-to-t from-black/75 to-transparent p-3 transition ${
-                        showControls || !isPlaying ? "opacity-100" : "pointer-events-none opacity-0"
-                      }`}
-                    >
-                      <div
-                        ref={progressBarRef}
-                        className={`video-timeline relative overflow-visible cursor-pointer ${timelineHover ? "timeline-hovered" : ""}`}
-                        style={{
-                          "--progress-pct": duration ? `${(currentTime / duration) * 100}%` : "0%",
-                        }}
-                        onMouseMove={handleTimelineMouseMove}
-                        onMouseLeave={handleTimelineMouseLeave}
-                        onClick={handleTimelineClick}
-                      >
-                        <input
-                          type="range"
-                          min="0"
-                          max={duration || 0}
-                          step="0.1"
-                          value={Math.min(currentTime, duration || 0)}
-                          onMouseDown={() => setIsScrubbing(true)}
-                          onMouseUp={() => {
-                            setIsScrubbing(false);
-                            resetControlsTimer();
-                          }}
-                          onChange={(e) => {
-                            const next = Number(e.target.value);
-                            if (!videoRef.current) return;
-                            videoRef.current.currentTime = next;
-                            setCurrentTime(next);
-                            resetControlsTimer();
-                          }}
-                          className="yt-range w-full"
-                        />
-                        {!isYoutube && !isTelegramLink && timelineHover && duration > 0 && src && (
-                          <div
-                            className="absolute z-30 flex flex-col items-center pointer-events-none shrink-0"
-                            style={{
-                              left: `${timelineHover.position * 100}%`,
-                              bottom: "100%",
-                              transform: "translateX(-50%)",
-                              marginBottom: "10px",
-                              width: PREVIEW_W,
-                              minWidth: PREVIEW_W,
-                              maxWidth: PREVIEW_W,
-                            }}
+                        {(playbackStalled || loadElapsedSec >= 30) && (
+                          <button
+                            type="button"
+                            className="btn-secondary inline-flex text-xs"
+                            onClick={() => void handleRetryPlayback()}
                           >
-                            <div
-                              className="rounded-lg overflow-hidden border-2 border-white/90 bg-black shadow-xl ring-2 ring-black/20 shrink-0"
-                              style={{ width: PREVIEW_W, height: PREVIEW_H, minWidth: PREVIEW_W, minHeight: PREVIEW_H }}
-                            >
-                              <video
-                                ref={previewVideoRef}
-                                src={src}
-                                muted
-                                preload="auto"
-                                playsInline
-                                className="block object-contain bg-black w-full h-full"
-                                style={{ width: PREVIEW_W, height: PREVIEW_H, minWidth: PREVIEW_W, minHeight: PREVIEW_H }}
-                              />
-                            </div>
-                            <span className="mt-1.5 rounded bg-black/90 px-2 py-1 text-xs font-semibold text-white shadow-lg whitespace-nowrap">
-                              {formatTime(timelineHover.time)}
-                            </span>
-                          </div>
+                            <FiRefreshCw size={14} /> Retry playback
+                          </button>
                         )}
                       </div>
-                      <div className="mt-2 flex flex-wrap items-center justify-between gap-y-2 text-xs text-slate-200">
-                        <div className="flex items-center gap-1.5 sm:gap-2">
-                          <button type="button" className="rounded p-1.5 hover:bg-white/20 sm:p-1" onClick={togglePlay}>
-                            {isPlaying ? <FiPause /> : <FiPlay />}
-                          </button>
-                          <span className="tabular-nums text-[11px] sm:text-xs">
-                            {formatTime(currentTime)} / {formatTime(duration)}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1 sm:gap-2">
-                          <button
-                            type="button"
-                            className="rounded p-1.5 hover:bg-white/20 sm:p-1"
-                            onClick={handleCaptureScreenshot}
-                            disabled={capturePending}
-                            title="Save screenshot note"
-                          >
-                            <FiCamera />
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded p-1.5 hover:bg-white/20 sm:p-1"
-                            onClick={() => {
-                              if (!videoRef.current) return;
-                              const nextMuted = !isMuted;
-                              videoRef.current.muted = nextMuted;
-                              setIsMuted(nextMuted);
-                            }}
-                          >
-                            {isMuted || volume === 0 ? <FiVolumeX /> : <FiVolume2 />}
-                          </button>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.01"
-                            value={isMuted ? 0 : volume}
-                            onChange={(e) => {
-                              setVolumeLevel(Number(e.target.value));
-                              resetControlsTimer();
-                            }}
-                            className="video-volume-slider yt-volume-range w-16 sm:w-24"
-                          />
-                          <div className="relative" ref={settingsRef}>
-                            <button
-                              type="button"
-                              className="rounded p-1 hover:bg-white/20"
-                              onClick={() => setShowSettings((prev) => !prev)}
-                            >
-                              <FiSettings />
-                            </button>
-                            {showSettings && (
-                              <div className="absolute bottom-8 right-0 w-28 rounded-md bg-black/90 p-1">
-                                {[0.5, 1, 1.25, 1.5, 1.75, 2].map((rate) => (
-                                  <button
-                                    key={rate}
-                                    type="button"
-                                    className={`block w-full rounded px-2 py-1 text-left text-xs ${
-                                      playbackRate === rate ? "bg-white/20 text-white" : "text-slate-200 hover:bg-white/10"
-                                    }`}
-                                    onClick={() => {
-                                      if (!videoRef.current) return;
-                                      videoRef.current.playbackRate = rate;
-                                      setPlaybackRate(rate);
-                                      setShowSettings(false);
-                                    }}
-                                  >
-                                    {rate}x
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                          <button type="button" className="rounded p-1 hover:bg-white/20" onClick={toggleFullscreen}>
-                            {isFullscreen ? <FiMinimize /> : <FiMaximize />}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
                     )}
                   </div>
-                )}
+                ) : null}
                 </div>
 
                 {showAskPanel && (

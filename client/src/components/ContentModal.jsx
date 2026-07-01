@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import UploadProgress from "./UploadProgress";
 import { isLocalFrontend } from "../utils/media";
+import useWorkspaceCapabilities from "../hooks/useWorkspaceCapabilities";
 
 const ContentModal = ({
   subjects,
@@ -12,6 +13,8 @@ const ContentModal = ({
   uploadState,
 }) => {
   const isLocal = isLocalFrontend();
+  const { youtubeUpload } = useWorkspaceCapabilities();
+  const [uploadDestination, setUploadDestination] = useState("local");
   const [title, setTitle] = useState("");
   const [titlePrefix, setTitlePrefix] = useState("");
   const [subjectId, setSubjectId] = useState(selectedSubjectId || subjects[0]?._id || "");
@@ -92,6 +95,7 @@ const ContentModal = ({
       files,
       url,
       autoCreateChapters: useAutoChapters,
+      uploadDestination: sourceType === "upload" ? uploadDestination : undefined,
       flow: "local_dev",
     });
   };
@@ -304,6 +308,26 @@ const ContentModal = ({
                     : " Videos are saved under /uploads on the API server (localhost development)."}
                 </p>
               )}
+              {youtubeUpload && files.length === 1 && String(files[0]?.type || "").startsWith("video/") ? (
+                <div className="flex flex-wrap gap-3 pt-1">
+                  <label className="flex items-center gap-2 text-xs">
+                    <input
+                      type="radio"
+                      checked={uploadDestination === "local"}
+                      onChange={() => setUploadDestination("local")}
+                    />
+                    Save on server (local / Cloudinary path)
+                  </label>
+                  <label className="flex items-center gap-2 text-xs">
+                    <input
+                      type="radio"
+                      checked={uploadDestination === "youtube"}
+                      onChange={() => setUploadDestination("youtube")}
+                    />
+                    Upload to YouTube (Unlisted)
+                  </label>
+                </div>
+              ) : null}
             </div>
           ) : null}
 

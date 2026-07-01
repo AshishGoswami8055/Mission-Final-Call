@@ -312,4 +312,4 @@ export const completeMissionItem = async (userId, { slot, contentId, paperId, it
   return mission;
 };
 
-export { recalcMissionProgress };
+export { recalcMissionProgress, scoreVideo as scoreVideoCandidate };

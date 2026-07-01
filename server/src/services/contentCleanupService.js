@@ -3,17 +3,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Content from "../models/Content.js";
 import Progress from "../models/Progress.js";
-import { getDefaultCloud } from "../config/cloudinary.js";
-import {
-  destroyCloudinaryRaw,
-  destroyCloudinaryVideo,
-} from "./cloudinaryUploadService.js";
+import { resolveCloudinaryAssetRefs } from "../utils/cloudinaryAsset.js";
+import { destroyCloudinaryAsset } from "./cloudinaryUploadService.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadRoot = path.resolve(__dirname, "..", "..", "uploads");
 
 const CONTENT_ASSET_FIELDS =
-  "_id type sourceType filePath publicId cloudType chapterId subjectId";
+  "_id type sourceType filePath publicId cloudType videoUrl url thumbnail chapterId subjectId";
 
 /**
  * Remove a file stored under server/uploads from a relative path (e.g. uploads/...).
@@ -21,6 +18,7 @@ const CONTENT_ASSET_FIELDS =
 export const removeLocalUploadFile = (relativeFilePath) => {
   if (!relativeFilePath) return;
   const trimmed = String(relativeFilePath).replace(/^\/+/, "");
+  if (/^https?:\/\//i.test(trimmed)) return;
   const absolute = path.resolve(__dirname, "..", "..", trimmed);
   if (absolute.startsWith(uploadRoot) && fs.existsSync(absolute)) {
     try {
@@ -35,29 +33,35 @@ export const removeLocalUploadFile = (relativeFilePath) => {
  * Delete Cloudinary + local files for one content document. Safe to call before DB delete.
  */
 export const destroyContentAssets = async (content) => {
-  if (!content) return { cloudinary: 0, local: 0 };
+  if (!content) return { cloudinary: 0, local: 0, errors: [] };
 
   let cloudinary = 0;
   let local = 0;
+  const errors = [];
+  const refs = resolveCloudinaryAssetRefs(content);
 
-  const publicId = content.publicId ? String(content.publicId).trim() : "";
-  const cloudType = content.cloudType || getDefaultCloud();
-
-  if (publicId && cloudType) {
-    const destroy =
-      content.type === "pdf"
-        ? destroyCloudinaryRaw({ cloudType, publicId })
-        : destroyCloudinaryVideo({ cloudType, publicId });
-    const result = await destroy;
+  if (refs.isCloudinary && refs.publicId && refs.cloudType) {
+    const result = await destroyCloudinaryAsset({
+      cloudType: refs.cloudType,
+      publicId: refs.publicId,
+      resourceType: refs.resourceType,
+    });
     if (result?.ok) cloudinary += 1;
-  } else if (
-    content.sourceType === "cloudinary" &&
-    content.videoUrl &&
-    /res\.cloudinary\.com/i.test(String(content.videoUrl))
-  ) {
+    else if (!result?.skipped) errors.push(result?.error || "Cloudinary destroy failed");
+  } else if (refs.isCloudinary) {
+    errors.push("Cloudinary URL found but publicId could not be resolved");
     console.warn(
-      `[cleanup] content ${content._id} has Cloudinary URL but no publicId — DB row will be removed only`
+      `[cleanup] content ${content._id} has Cloudinary source but no resolvable publicId`
     );
+  }
+
+  if (refs.thumbnailAsset?.publicId && refs.thumbnailAsset?.cloudType) {
+    const thumb = await destroyCloudinaryAsset({
+      cloudType: refs.thumbnailAsset.cloudType,
+      publicId: refs.thumbnailAsset.publicId,
+      resourceType: "image",
+    });
+    if (thumb?.ok) cloudinary += 1;
   }
 
   if (content.filePath || content.sourceType === "upload") {
@@ -65,7 +69,7 @@ export const destroyContentAssets = async (content) => {
     local += 1;
   }
 
-  return { cloudinary, local };
+  return { cloudinary, local, errors };
 };
 
 /** Destroy remote/local assets for many content rows. */
@@ -73,13 +77,17 @@ export const destroyContentsAssets = async (contents = []) => {
   const results = await Promise.allSettled(contents.map((c) => destroyContentAssets(c)));
   let cloudinary = 0;
   let local = 0;
+  const errors = [];
   for (const r of results) {
     if (r.status === "fulfilled") {
       cloudinary += r.value.cloudinary || 0;
       local += r.value.local || 0;
+      if (r.value.errors?.length) errors.push(...r.value.errors);
+    } else {
+      errors.push(r.reason?.message || "Asset cleanup failed");
     }
   }
-  return { cloudinary, local, total: contents.length };
+  return { cloudinary, local, total: contents.length, errors };
 };
 
 /**
@@ -106,5 +114,6 @@ export const deleteContentsWithAssets = async (filter) => {
     deletedContents: deleteResult.deletedCount,
     destroyedCloudinary: assets.cloudinary,
     removedLocalFiles: assets.local,
+    errors: assets.errors,
   };
 };

@@ -207,6 +207,47 @@ const ensureTelegramClient = async () => {
 
 export const getTelegramClient = async () => withTelegramLock(() => ensureTelegramClient());
 
+/** DB session + live GramJS ping (for UI status banners). */
+export const checkTelegramConnectionLive = async () => {
+  const session = await getActiveSession();
+  if (!session?.isActive) {
+    return {
+      connected: false,
+      live: false,
+      phone: null,
+      error: "Telegram is not connected. Log in from Add from Telegram.",
+    };
+  }
+
+  try {
+    const client = await Promise.race([
+      getTelegramClient(),
+      sleep(12000).then(() => {
+        throw new Error("Telegram connection timed out. Try Reset session in Telegram settings.");
+      }),
+    ]);
+    await Promise.race([
+      client.getMe(),
+      sleep(8000).then(() => {
+        throw new Error("Telegram is not responding.");
+      }),
+    ]);
+    return {
+      connected: true,
+      live: true,
+      phone: session.phone || null,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      connected: true,
+      live: false,
+      phone: session.phone || null,
+      error: error.message || "Telegram client is not responding",
+    };
+  }
+};
+
 export const startTelegramLogin = async (phoneRaw) => {
   const phone = normalizePhone(phoneRaw);
   if (!phone) throw new Error("Phone number is required.");

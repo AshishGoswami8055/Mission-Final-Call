@@ -3,6 +3,8 @@ import {
   bulkCreatePapers,
   createPaper,
   deletePaper,
+  extractPaperAnalysis,
+  getPaperAnalysis,
   getPaperById,
   getPapers,
   togglePaperProgress,
@@ -17,6 +19,8 @@ router.use(protect);
 
 router.route("/").get(getPapers).post(upload.single("file"), createPaper);
 router.post("/bulk", upload.array("files", 100), bulkCreatePapers);
+router.get("/:id/analysis", getPaperAnalysis);
+router.post("/:id/extract", extractPaperAnalysis);
 router.get("/:id", getPaperById);
 router.post("/:id/progress", togglePaperProgress);
 router.route("/:id").put(upload.single("file"), updatePaper).delete(deletePaper);

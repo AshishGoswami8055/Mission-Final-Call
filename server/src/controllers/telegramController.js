@@ -23,6 +23,7 @@ import {
   fetchForumTopicsForChannel,
   fetchTelegramChannels,
   fetchTelegramMessages,
+  checkTelegramConnectionLive,
   getActiveSession,
   getTelegramMessageMedia,
   getTelegramDeploymentKey,
@@ -84,10 +85,9 @@ export const telegramVerifyPassword = async (req, res) => {
 
 export const telegramSessionStatus = async (req, res) => {
   try {
-    const session = await getActiveSession();
+    const status = await checkTelegramConnectionLive();
     res.json({
-      connected: Boolean(session?.isActive),
-      phone: session?.phone || null,
+      ...status,
       deploymentKey: getTelegramDeploymentKey(),
     });
   } catch (error) {

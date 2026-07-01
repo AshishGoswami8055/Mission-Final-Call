@@ -20,6 +20,7 @@ import {
   FiPlus,
   FiUploadCloud,
 } from "react-icons/fi";
+import { useDashboardCourseContents } from "../hooks/useDashboardCourseContents";
 import ChapterModal from "../components/ChapterModal";
 import CloudMappingModal from "../components/CloudMappingModal";
 import ContentCard from "../components/ContentCard";
@@ -131,7 +132,6 @@ const DashboardPage = () => {
   const [cloudMappingModalOpen, setCloudMappingModalOpen] = useState(false);
   const [activeCourseSubjectId, setActiveCourseSubjectId] = useState("");
   const [showLibraryView, setShowLibraryView] = useState(false);
-  const [courseContents, setCourseContents] = useState([]);
   const [subjectUpdates, setSubjectUpdates] = useState({});
   const [updatesAvailable, setUpdatesAvailable] = useState(null);
   const [updatesLoading, setUpdatesLoading] = useState(false);
@@ -146,6 +146,27 @@ const DashboardPage = () => {
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const mobileActionsRef = useRef(null);
   const telegramOpRef = useRef({ uploadId: null, progressWait: null });
+
+  const {
+    courseContents,
+    subjectStats: courseSubjectStats,
+    loadingSubjectContents,
+    fetchSubjectCourseContents,
+    removeCourseContent,
+  } = useDashboardCourseContents({
+    selectedProgrammeId,
+    activeCourseSubjectId,
+    subjects,
+    chapters,
+    chapterStats,
+  });
+
+  const refreshCourseData = async () => {
+    await fetchChapterStats();
+    if (activeCourseSubjectId) {
+      await fetchSubjectCourseContents(activeCourseSubjectId);
+    }
+  };
 
   useEffect(() => {
     if (!mobileActionsOpen) return undefined;
@@ -179,31 +200,6 @@ const DashboardPage = () => {
       return acc;
     }, {});
     setChapterStats(mapped);
-  };
-
-  const fetchCourseContents = async () => {
-    if (!selectedProgrammeId) {
-      setCourseContents([]);
-      return;
-    }
-    const allItems = [];
-    let page = 1;
-    let totalPages = 1;
-    const pageSize = 500;
-    do {
-      const { data } = await api.get("/contents", {
-        params: {
-          programmeId: selectedProgrammeId,
-          sort: "chapter",
-          page,
-          limit: pageSize,
-        },
-      });
-      allItems.push(...(data.items || []));
-      totalPages = data.pagination?.totalPages || 1;
-      page += 1;
-    } while (page <= totalPages);
-    setCourseContents(allItems);
   };
 
   const fetchSubjectUpdates = async ({ silent = false } = {}) => {
@@ -268,7 +264,7 @@ const DashboardPage = () => {
         fetchChapters(),
         fetchChapterStats(),
         fetchContents(),
-        fetchCourseContents(),
+        refreshCourseData(),
         fetchProgress(),
         fetchSubjectUpdates({ silent: true }),
       ]);
@@ -309,7 +305,7 @@ const DashboardPage = () => {
   }, [selectedProgrammeId]);
 
   useEffect(() => {
-    if (selectedProgrammeId) fetchCourseContents();
+    if (selectedProgrammeId) refreshCourseData();
   }, [selectedProgrammeId]);
 
   useEffect(() => {
@@ -322,7 +318,7 @@ const DashboardPage = () => {
     if (!selectedProgrammeId || showLibraryView) return undefined;
     fetchSubjectUpdates({ silent: true });
     const interval = setInterval(() => {
-      fetchCourseContents();
+      refreshCourseData();
       fetchSubjectUpdates({ silent: true });
     }, 5 * 60 * 1000);
     return () => clearInterval(interval);
@@ -533,7 +529,7 @@ const DashboardPage = () => {
       setBusy: () => setUpdatingSubjectId(""),
       onSuccessRefresh: async () => {
         await Promise.all([
-          fetchCourseContents(),
+          refreshCourseData(),
           fetchSubjects(),
           fetchSubjectUpdates({ silent: true }),
         ]);
@@ -595,7 +591,7 @@ const DashboardPage = () => {
       setBusy: () => setBatchUpdating(false),
       onSuccessRefresh: async () => {
         await Promise.all([
-          fetchCourseContents(),
+          refreshCourseData(),
           fetchSubjects(),
           fetchChapterStats(),
           fetchSubjectUpdates({ silent: true }),
@@ -662,7 +658,7 @@ const DashboardPage = () => {
     setActiveCourseSubjectId("");
     Promise.all([
       fetchSubjects(),
-      fetchCourseContents(),
+      refreshCourseData(),
       fetchChapters(),
       fetchProgress(),
       fetchChapterStats(),
@@ -703,17 +699,24 @@ const DashboardPage = () => {
   /** Stats scope follows course-view selection, not stale library filters. */
   const dashboardStats = useMemo(() => {
     if (!showLibraryView) {
-      let items = courseContents;
       if (activeCourseSubjectId) {
-        items = items.filter(
-          (c) => String(c.subjectId?._id || c.subjectId) === String(activeCourseSubjectId)
-        );
+        const items = courseContents;
+        return {
+          totalVideos: items.filter((c) => c.type === "video").length,
+          totalPdfs: items.filter((c) => c.type === "pdf").length,
+          completedCount: items.filter((c) => c.completed).length,
+        };
       }
-      return {
-        totalVideos: items.filter((c) => c.type === "video").length,
-        totalPdfs: items.filter((c) => c.type === "pdf").length,
-        completedCount: items.filter((c) => c.completed).length,
-      };
+      const totals = Object.values(courseSubjectStats).reduce(
+        (acc, row) => {
+          acc.totalVideos += row.videos || 0;
+          acc.totalPdfs += row.pdfs || 0;
+          acc.completedCount += row.completed || 0;
+          return acc;
+        },
+        { totalVideos: 0, totalPdfs: 0, completedCount: 0 }
+      );
+      return totals;
     }
 
     if (selectedChapterId) {
@@ -743,6 +746,7 @@ const DashboardPage = () => {
   }, [
     showLibraryView,
     courseContents,
+    courseSubjectStats,
     activeCourseSubjectId,
     selectedChapterId,
     selectedSubjectId,
@@ -923,7 +927,7 @@ const DashboardPage = () => {
     setRenamingSubjectId(subject._id);
     try {
       await api.put(`/subjects/${subject._id}`, { name: trimmed });
-      await Promise.all([fetchSubjects(), fetchCourseContents(), fetchChapterStats()]);
+      await Promise.all([fetchSubjects(), refreshCourseData(), fetchChapterStats()]);
       toast.success("Subject renamed");
     } catch (error) {
       toast.error(error.response?.data?.message || "Could not rename subject");
@@ -937,7 +941,7 @@ const DashboardPage = () => {
     if (!item?._id) return;
     try {
       await api.put(`/contents/${item._id}`, { title: title.trim() });
-      await Promise.all([fetchContents(), fetchCourseContents(), fetchProgress(), fetchChapterStats()]);
+      await Promise.all([fetchContents(), refreshCourseData(), fetchProgress(), fetchChapterStats()]);
       toast.success("Lesson renamed");
     } catch (error) {
       toast.error(error.response?.data?.message || "Could not rename lesson");
@@ -1057,7 +1061,7 @@ const DashboardPage = () => {
         await api.post("/contents", body, {
           headers: { "Content-Type": "multipart/form-data" },
         });
-        await Promise.all([fetchContents(), fetchCourseContents(), fetchProgress(), fetchChapterStats()]);
+        await Promise.all([fetchContents(), refreshCourseData(), fetchProgress(), fetchChapterStats()]);
         toast.success("Content added");
         setContentModalOpen(false);
       } catch (error) {
@@ -1122,6 +1126,9 @@ const DashboardPage = () => {
         if (payload.sourceType === "upload" && payload.files?.[0]) {
           body.append("title", payload.title || payload.files[0].name);
           body.append("file", payload.files[0]);
+          if (payload.uploadDestination === "youtube") {
+            body.append("uploadDestination", "youtube");
+          }
         }
         if (payload.sourceType === "url") {
           body.append("title", payload.title);
@@ -1166,7 +1173,7 @@ const DashboardPage = () => {
   const handleDeleteContent = async (id) => {
     try {
       await api.delete(`/contents/${id}`);
-      await Promise.all([fetchContents(), fetchCourseContents(), fetchProgress(), fetchChapterStats()]);
+      await Promise.all([fetchContents(), refreshCourseData(), fetchProgress(), fetchChapterStats()]);
       toast.success("Content deleted");
     } catch (error) {
       toast.error(error.response?.data?.message || "Delete failed");
@@ -1178,7 +1185,7 @@ const DashboardPage = () => {
     try {
       await api.put(`/contents/${editingContent._id}`, payload);
       setEditingContent(null);
-      await Promise.all([fetchContents(), fetchCourseContents(), fetchProgress(), fetchChapterStats()]);
+      await Promise.all([fetchContents(), refreshCourseData(), fetchProgress(), fetchChapterStats()]);
       toast.success("Content updated");
     } catch (error) {
       toast.error(error.response?.data?.message || "Could not update content");
@@ -1188,7 +1195,7 @@ const DashboardPage = () => {
   const handleToggleCompleted = async (contentId) => {
     try {
       await api.post(`/progress/toggle/${contentId}`);
-      await Promise.all([fetchContents(), fetchCourseContents(), fetchProgress(), fetchChapterStats()]);
+      await Promise.all([fetchContents(), refreshCourseData(), fetchProgress(), fetchChapterStats()]);
     } catch (error) {
       toast.error(error.response?.data?.message || "Could not update progress");
     }
@@ -1212,7 +1219,7 @@ const DashboardPage = () => {
     try {
       await api.delete(`/chapters/${selectedChapterId}`);
       setSelectedChapterId("");
-      await Promise.all([fetchContents(), fetchCourseContents(), fetchProgress(), fetchChapterStats()]);
+      await Promise.all([fetchContents(), refreshCourseData(), fetchProgress(), fetchChapterStats()]);
       toast.success("Chapter deleted");
     } catch (error) {
       toast.error(error.response?.data?.message || "Delete failed");
@@ -1444,6 +1451,8 @@ const DashboardPage = () => {
             subjects={subjects}
             chapters={visibleChapters}
             contents={courseContents}
+            subjectStats={courseSubjectStats}
+            loadingSubjectContents={loadingSubjectContents}
             activeSubjectId={activeCourseSubjectId}
             onSelectSubject={(subject) => setActiveCourseSubjectId(String(subject._id))}
             onBackToSubjects={() => setActiveCourseSubjectId("")}

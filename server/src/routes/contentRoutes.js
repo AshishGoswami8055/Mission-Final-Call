@@ -9,6 +9,9 @@ import {
   deleteContentLocalLibrary,
   deleteContentPlaybackCache,
   getContentById,
+  getContentAiOverview,
+  refreshContentAiOverview,
+  askContentAi,
   getContentLocalLibrary,
   getContentPlaybackCache,
   getContents,
@@ -39,6 +42,9 @@ router.get("/:id/local-library", assertLocalLibrary, getContentLocalLibrary);
 router.post("/:id/local-library", assertLocalLibrary, startContentLocalLibrary);
 router.delete("/:id/local-library", assertLocalLibrary, deleteContentLocalLibrary);
 router.post("/:id/cloudify", cloudifyContent);
+router.get("/:id/ai-overview", getContentAiOverview);
+router.post("/:id/ai-refresh", refreshContentAiOverview);
+router.post("/:id/ai-ask", askContentAi);
 router.get("/:id", getContentById);
 router.route("/:id").put(updateContent).delete(deleteContent);
 

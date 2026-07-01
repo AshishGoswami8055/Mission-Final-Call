@@ -9,10 +9,11 @@ import { detectTypeFromMime } from "../utils/contentHelpers.js";
 import { ensurePdfDigitalized } from "../services/pdfDigitalizeService.js";
 import { movePaperFileToYearFolder } from "../services/paperOrganizationService.js";
 import {
-  destroyCloudinaryRaw,
   safeUnlink,
   uploadPdfToCloudinary,
 } from "../services/cloudinaryUploadService.js";
+import { destroyPaperAssets } from "../services/paperCleanupService.js";
+import { extractQuestionsFromPaper } from "../services/paperExtractService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -283,9 +284,7 @@ export const updatePaper = async (req, res) => {
   if (totalQuestions !== undefined) paper.totalQuestions = totalQuestions ? Number(totalQuestions) : null;
 
   if (sourceType === "url" && url !== undefined) {
-    if (paper.sourceType === "cloudinary" && paper.publicId && paper.cloudType) {
-      await destroyCloudinaryRaw({ cloudType: paper.cloudType, publicId: paper.publicId });
-    }
+    await destroyPaperAssets(paper);
     if (paper.filePath) removeLocalFile(paper.filePath);
     paper.sourceType = "url";
     paper.url = url;
@@ -295,9 +294,7 @@ export const updatePaper = async (req, res) => {
     paper.cloudType = null;
   }
   if (sourceType === "upload" && req.file) {
-    if (paper.sourceType === "cloudinary" && paper.publicId && paper.cloudType) {
-      await destroyCloudinaryRaw({ cloudType: paper.cloudType, publicId: paper.publicId });
-    }
+    await destroyPaperAssets(paper);
     if (paper.sourceType === "upload" && paper.filePath) {
       removeLocalFile(paper.filePath);
     }
@@ -352,16 +349,18 @@ export const deletePaper = async (req, res) => {
   const paper = await Paper.findById(req.params.id);
   if (!paper) return res.status(404).json({ message: "Paper not found" });
 
-  if (paper.sourceType === "cloudinary" && paper.publicId && paper.cloudType) {
-    await destroyCloudinaryRaw({ cloudType: paper.cloudType, publicId: paper.publicId });
-  }
+  const assets = await destroyPaperAssets(paper);
   if (paper.sourceType === "upload" && paper.filePath) {
     removeLocalFile(paper.filePath);
   }
   await PaperProgress.deleteMany({ paperId: paper._id });
   await PaperAnalysis.deleteOne({ paperId: paper._id });
   await paper.deleteOne();
-  res.json({ message: "Paper deleted" });
+  res.json({
+    message: "Paper deleted",
+    destroyedCloudinary: assets.cloudinary,
+    cloudinaryErrors: assets.errors?.length ? assets.errors : undefined,
+  });
 };
 
 export const togglePaperProgress = async (req, res) => {
@@ -387,4 +386,45 @@ export const togglePaperProgress = async (req, res) => {
     attemptedAt: new Date(),
   });
   res.json({ attempted: true });
+};
+
+export const getPaperAnalysis = async (req, res) => {
+  const paper = await Paper.findById(req.params.id);
+  if (!paper) return res.status(404).json({ message: "Paper not found" });
+
+  const analysis = await PaperAnalysis.findOne({ paperId: paper._id }).lean();
+  res.json({
+    paperId: paper._id,
+    status: analysis?.status || "pending",
+    questions: analysis?.questions || [],
+    errorMessage: analysis?.errorMessage || null,
+  });
+};
+
+export const extractPaperAnalysis = async (req, res) => {
+  const paper = await Paper.findById(req.params.id);
+  if (!paper) return res.status(404).json({ message: "Paper not found" });
+
+  await PaperAnalysis.findOneAndUpdate(
+    { paperId: paper._id },
+    { status: "processing", errorMessage: null, questions: [] },
+    { upsert: true, setDefaultsOnInsert: true }
+  );
+
+  try {
+    const { questions } = await extractQuestionsFromPaper(paper._id);
+    const doc = await PaperAnalysis.findOneAndUpdate(
+      { paperId: paper._id },
+      { status: "completed", questions, errorMessage: null },
+      { new: true }
+    );
+    res.json({ status: doc.status, questions: doc.questions, count: doc.questions.length });
+  } catch (error) {
+    await PaperAnalysis.findOneAndUpdate(
+      { paperId: paper._id },
+      { status: "failed", errorMessage: error.message || "Extraction failed" },
+      { upsert: true }
+    );
+    res.status(400).json({ message: error.message || "Extraction failed" });
+  }
 };

@@ -1,4 +1,4 @@
-import { listAvailableClouds, getCloudConfig } from "../config/cloudinary.js";
+import { getCloudConfig, listAvailableClouds } from "../config/cloudinary.js";
 
 const extractUsageErrorMessage = (json, status) => {
   if (!json || typeof json !== "object") return `HTTP ${status}`;
@@ -24,6 +24,53 @@ const formatBytes = (n) => {
   if (mb < 1024) return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
   const gb = mb / 1024;
   return `${gb < 10 ? gb.toFixed(2) : gb.toFixed(1)} GB`;
+};
+
+const USAGE_CACHE_TTL_MS = 60_000;
+let usageCache = { at: 0, payload: null };
+
+const parseStorageLimitFromApi = (json) => {
+  const storage = json?.storage || {};
+  const mediaLimits = json?.media_limits || {};
+  const candidates = [
+    storage.limit,
+    storage.credits_limit,
+    storage.usage_limit,
+    storage.limit_bytes,
+    mediaLimits.storage_bytes,
+    mediaLimits.max_storage_bytes,
+    mediaLimits.max_storage_in_bytes,
+    json?.limits?.storage,
+    json?.limits?.storage_bytes,
+  ];
+  for (const value of candidates) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+};
+
+/** Cloudinary Free = 25 GB storage; used when Admin API omits byte limits. */
+const resolveStorageLimitFromPlan = (plan) => {
+  const key = String(plan || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9+]/g, "");
+  if (!key || key.includes("free")) return 25 * 1024 * 1024 * 1024;
+  if (key.includes("plus")) return 100 * 1024 * 1024 * 1024;
+  if (key.includes("advanced")) return 250 * 1024 * 1024 * 1024;
+  return 25 * 1024 * 1024 * 1024;
+};
+
+const buildConsoleUrls = (cloudName) => {
+  if (!cloudName) return {};
+  const base = `https://console.cloudinary.com/console/c-${encodeURIComponent(cloudName)}`;
+  return {
+    dashboard: base,
+    mediaLibrary: `${base}/media_library`,
+    usage: `${base}/settings/usage`,
+    settings: `${base}/settings`,
+  };
 };
 
 /**
@@ -123,6 +170,21 @@ export const fetchUsageForCloud = async (cloudType) => {
 
     const plan = json.plan || json.media_limits?.plan || null;
     const lastUpdated = json.last_updated || json.last_updated_at || null;
+    const apiStorageLimitBytes = parseStorageLimitFromApi(json);
+    const storageLimitBytes = apiStorageLimitBytes ?? resolveStorageLimitFromPlan(plan);
+    const storageLimitFromPlan = apiStorageLimitBytes == null;
+    const totalStorageBytes =
+      storageBytes != null && derivedBytes != null
+        ? storageBytes + derivedBytes
+        : storageBytes;
+    const storageRemainingBytes =
+      storageLimitBytes != null && totalStorageBytes != null
+        ? Math.max(0, storageLimitBytes - totalStorageBytes)
+        : null;
+    const storagePercentUsed =
+      storageLimitBytes != null && totalStorageBytes != null && storageLimitBytes > 0
+        ? Math.min(100, (totalStorageBytes / storageLimitBytes) * 100)
+        : null;
 
     return {
       cloudType,
@@ -133,13 +195,23 @@ export const fetchUsageForCloud = async (cloudType) => {
       lastUpdated,
       storageBytes,
       storageDerivedBytes: derivedBytes,
+      storageTotalBytes: totalStorageBytes,
+      storageLimitBytes,
+      storageRemainingBytes,
+      storagePercentUsed,
+      storageLimitFromPlan: Boolean(storageLimitFromPlan),
       storageLabel: storageBytes != null ? formatBytes(storageBytes) : null,
       derivedLabel: derivedBytes != null ? formatBytes(derivedBytes) : null,
+      storageTotalLabel: totalStorageBytes != null ? formatBytes(totalStorageBytes) : null,
+      storageLimitLabel: storageLimitBytes != null ? formatBytes(storageLimitBytes) : null,
+      storageRemainingLabel:
+        storageRemainingBytes != null ? formatBytes(storageRemainingBytes) : null,
       bandwidthBytes,
       bandwidthLabel: bandwidthBytes != null ? formatBytes(bandwidthBytes) : null,
       creditsPercentUsed,
       creditsLabel,
       objectsCount: json.objects?.count ?? json.resources ?? null,
+      consoleUrls: buildConsoleUrls(cloud_name),
     };
   } catch (e) {
     return {
@@ -151,8 +223,19 @@ export const fetchUsageForCloud = async (cloudType) => {
   }
 };
 
-export const fetchAllCloudinaryUsage = async () => {
+export const fetchAllCloudinaryUsage = async ({ refresh = false } = {}) => {
+  const now = Date.now();
+  if (!refresh && usageCache.payload && now - usageCache.at < USAGE_CACHE_TTL_MS) {
+    return { ...usageCache.payload, cached: true, cachedAt: new Date(usageCache.at).toISOString() };
+  }
+
   const keys = listAvailableClouds();
   const items = await Promise.all(keys.map((k) => fetchUsageForCloud(k)));
-  return { items };
+  const payload = {
+    items,
+    refreshedAt: new Date().toISOString(),
+    cached: false,
+  };
+  usageCache = { at: now, payload };
+  return payload;
 };
