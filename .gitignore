@@ -1,4 +1,6 @@
 node_modules/
+uploads/
+client/dist/
 .env
 .env.*
 !.env.example
@@ -8,3 +10,7 @@ server/cloudflare/config.yml
 server/cloudflare/logs/*
 !server/cloudflare/logs/.gitkeep
 *.mp4
+*.mkv
+*.webm
+*.mov
+*.avi

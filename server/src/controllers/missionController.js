@@ -21,6 +21,7 @@ import {
   syncMissionProgressFromSummary,
 } from "../services/missionSummaryService.js";
 import { getOrCreateAiBriefing } from "../services/aiBriefingService.js";
+import { getVocabularyDashboardData } from "../services/vocabularyArenaService.js";
 import {
   addManualMissionItem,
   buildMissionPlanResponse,
@@ -92,6 +93,7 @@ export const getTodayMission = async (req, res) => {
     const streak = await calculateDisciplineStreak(userId);
     const readingStreak = await calculateReadingStreak(userId);
     const videoStreakStatus = await buildVideoStreakStatus(userId);
+    const vocabulary = await getVocabularyDashboardData(userId);
     const overview = await buildAnalyticsOverview(userId);
     overview.streak = streak;
     overview.readingStreak = readingStreak;
@@ -119,6 +121,13 @@ export const getTodayMission = async (req, res) => {
       readingStreak,
       videoStreak: videoStreakStatus.streak,
       videoStreakStatus,
+      vocabulary: {
+        dueToday: vocabulary.counts.dueToday,
+        weak: vocabulary.counts.weak,
+        mastered: vocabulary.counts.mastered,
+        streak: vocabulary.consistency.streak,
+        recommendedMode: vocabulary.recommendedMode,
+      },
       examCountdownDays: overview.examCountdownDays,
       totalStudyHours: overview.totalStudyHours,
       analytics: {

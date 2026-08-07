@@ -13,6 +13,7 @@ import {
 import SubjectGridCard from "./SubjectGridCard";
 import SubjectListRow from "./SubjectListRow";
 import SubjectLessonAccordion from "./SubjectLessonAccordion";
+import SubjectPlayAllPremium from "./SubjectPlayAllPremium";
 
 const BatchCourseView = ({
   batchName,
@@ -27,7 +28,11 @@ const BatchCourseView = ({
   onDeleteSubject,
   onDeleteContent,
   onRenameContent,
+  onReorderContent,
+  reorderingContentId = null,
   onRenameSubject,
+  onToggleCompleted,
+  togglingCompletedId = null,
   onClearCourse,
   subjectUpdates = {},
   subjectStats: subjectStatsProp = null,
@@ -272,14 +277,26 @@ const BatchCourseView = ({
               <FiLoader className="animate-spin" /> Loading lessons…
             </div>
           ) : (
-            <SubjectLessonAccordion
+            <>
+              <SubjectPlayAllPremium
+                subject={activeSubject}
+                contents={subjectContents}
+                chapters={subjectChapters}
+                disabled={subjectDetailBusy || loadingSubjectContents}
+              />
+              <SubjectLessonAccordion
               contents={subjectContents}
               chapters={subjectChapters}
               subjectId={activeSubjectId}
               onDeleteContent={onDeleteContent}
               onRenameContent={onRenameContent}
+              onReorderContent={onReorderContent}
+              reorderingContentId={reorderingContentId}
               deletingContentId={deletingContentId}
+              onToggleCompleted={onToggleCompleted}
+              togglingCompletedId={togglingCompletedId}
             />
+            </>
           )}
       </section>
     );

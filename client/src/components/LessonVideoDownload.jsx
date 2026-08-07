@@ -1,12 +1,21 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { FiCheck, FiDownload, FiLoader } from "react-icons/fi";
-import api from "../api/client";
-import { fetchLocalLibraryStatus, startLocalLibraryDownload } from "../utils/localLibraryApi";
+import { FiCheck, FiDownload, FiLoader, FiRefreshCw } from "react-icons/fi";
+import {
+  fetchLocalLibraryStatus,
+  replaceLocalLibraryVideo,
+  startLocalLibraryDownload,
+} from "../utils/localLibraryApi";
+
+const iconBtn =
+  "rounded-lg p-2 transition disabled:opacity-50";
 
 const LessonVideoDownload = ({ contentId, onCached, initiallyCached = false }) => {
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [replacing, setReplacing] = useState(false);
+  const [replacePercent, setReplacePercent] = useState(0);
+  const fileInputRef = useRef(null);
 
   const loadStatus = useCallback(async () => {
     if (!contentId) return;
@@ -37,10 +46,19 @@ const LessonVideoDownload = ({ contentId, onCached, initiallyCached = false }) =
   const cached = (status?.cached && status?.ready) || initiallyCached;
   const downloading = status?.job?.status === "downloading";
   const percent = Math.min(100, Math.max(0, Math.round(Number(status?.job?.percent) || 0)));
+  const working = busy || replacing || downloading;
+
+  const downloadTitle = cached
+    ? "On your PC"
+    : downloading
+      ? `Downloading ${percent}%`
+      : "Download to PC";
+
+  const replaceTitle = replacing ? `Replacing ${replacePercent}%` : "Replace — pick a video from your PC";
 
   const handleDownload = async (event) => {
     event.stopPropagation();
-    if (cached || downloading || busy) return;
+    if (cached || working) return;
     setBusy(true);
     try {
       const { data } = await startLocalLibraryDownload(contentId);
@@ -58,41 +76,76 @@ const LessonVideoDownload = ({ contentId, onCached, initiallyCached = false }) =
     }
   };
 
+  const handleReplaceClick = (event) => {
+    event.stopPropagation();
+    if (working) return;
+    fileInputRef.current?.click();
+  };
+
+  const handleReplaceFile = async (event) => {
+    event.stopPropagation();
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || working) return;
+
+    setReplacing(true);
+    setReplacePercent(0);
+    try {
+      const { data } = await replaceLocalLibraryVideo(contentId, file, {
+        onUploadProgress: setReplacePercent,
+      });
+      setStatus(data);
+      onCached?.(contentId);
+      toast.success(`Linked "${file.name}" to this lesson on your PC.`);
+    } catch (error) {
+      toast.error(error.response?.data?.message || error.message || "Could not replace video");
+    } finally {
+      setReplacing(false);
+      setReplacePercent(0);
+    }
+  };
+
   return (
-    <div className="w-full min-w-[88px] shrink-0 sm:w-auto" onClick={(e) => e.stopPropagation()}>
+    <div className="flex items-center gap-0.5" onClick={(event) => event.stopPropagation()}>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="video/mp4,video/webm,video/quicktime,video/x-matroska,.mp4,.webm,.mkv,.mov,.m4v"
+        className="hidden"
+        onChange={handleReplaceFile}
+      />
       <button
         type="button"
-        aria-label={cached ? "On PC" : downloading ? "Downloading" : "Download to PC"}
-        title={cached ? "On your PC" : downloading ? `Downloading ${percent}%` : "Download to PC"}
-        className={`inline-flex w-full items-center justify-center gap-1 rounded-lg border px-2.5 py-2 text-xs font-semibold transition sm:w-auto ${
+        aria-label={downloadTitle}
+        title={downloadTitle}
+        className={`${iconBtn} ${
           cached
-            ? "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-950/30 dark:text-violet-300"
+            ? "text-violet-600 hover:bg-violet-50 dark:text-violet-400 dark:hover:bg-violet-950/30"
             : downloading
-              ? "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-950/30 dark:text-sky-300"
-              : "border-slate-200/90 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900 dark:border-white/10 dark:bg-[#141414] dark:text-slate-300 dark:hover:border-white/20"
+              ? "text-sky-600 hover:bg-sky-50 dark:text-sky-400 dark:hover:bg-sky-950/30"
+              : "text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10 dark:hover:text-slate-200"
         }`}
-        disabled={cached || downloading || busy}
+        disabled={cached || working}
         onClick={handleDownload}
       >
         {downloading || busy ? (
-          <FiLoader size={14} className="animate-spin" />
+          <FiLoader size={15} className="animate-spin" />
         ) : cached ? (
-          <FiCheck size={14} />
+          <FiCheck size={15} />
         ) : (
-          <FiDownload size={14} />
+          <FiDownload size={15} />
         )}
-        <span className="hidden sm:inline">
-          {cached ? "On PC" : downloading ? `${percent}%` : "Download"}
-        </span>
       </button>
-      {downloading && (
-        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-slate-200 dark:bg-white/10">
-          <div
-            className="h-full rounded-full bg-sky-500 transition-[width] duration-500 ease-out"
-            style={{ width: `${percent}%` }}
-          />
-        </div>
-      )}
+      <button
+        type="button"
+        aria-label={replaceTitle}
+        title={replaceTitle}
+        className={`${iconBtn} text-amber-600 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950/30`}
+        disabled={working}
+        onClick={handleReplaceClick}
+      >
+        {replacing ? <FiLoader size={15} className="animate-spin" /> : <FiRefreshCw size={15} />}
+      </button>
     </div>
   );
 };

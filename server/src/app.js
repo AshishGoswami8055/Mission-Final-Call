@@ -19,6 +19,9 @@ import vocabularyRoutes from "./routes/vocabularyRoutes.js";
 import telegramRoutes from "./routes/telegramRoutes.js";
 import missionRoutes from "./routes/missionRoutes.js";
 import workspaceRoutes from "./routes/workspaceRoutes.js";
+import settingsRoutes from "./routes/settingsRoutes.js";
+import { createLocalMediaStaticHandler } from "./middlewares/mediaStaticMiddleware.js";
+import { PROJECT_UPLOADS_ROOT } from "./config/mediaStorage.js";
 import { errorHandler, notFound } from "./middlewares/errorMiddleware.js";
 
 dotenv.config();
@@ -26,7 +29,7 @@ dotenv.config();
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const uploadsPath = path.resolve(__dirname, "..", "..", "uploads");
+const uploadsPath = PROJECT_UPLOADS_ROOT;
 
 if (process.env.TRUST_PROXY === "true" || process.env.TRUST_PROXY === "1") {
   app.set("trust proxy", 1);
@@ -45,9 +48,13 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+app.use("/uploads/_local_library", createLocalMediaStaticHandler("_local_library"));
+app.use("/uploads/_merged_subjects", createLocalMediaStaticHandler("_merged_subjects"));
+app.use("/uploads/_playback_cache", createLocalMediaStaticHandler("_playback_cache"));
 app.use("/uploads", express.static(uploadsPath));
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 app.use("/api/workspace", workspaceRoutes);
+app.use("/api/settings", settingsRoutes);
 
 app.use("/api/auth", authRoutes);
 app.use("/api/programmes", programmeRoutes);

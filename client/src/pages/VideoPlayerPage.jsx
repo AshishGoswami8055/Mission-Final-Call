@@ -22,6 +22,7 @@ import StudyTracker from "../components/StudyTracker";
 import CdsPlyrPlayer from "../components/CdsPlyrPlayer";
 import TelegramConnectionStatus from "../components/TelegramConnectionStatus";
 import VideoStreakBadge from "../components/streak/VideoStreakBadge";
+import VideoCacheStatusBar from "../components/VideoCacheStatusBar";
 import SmoothPlaybackPanel from "../components/SmoothPlaybackPanel";
 import VideoPlaybackCachePanel from "../components/VideoPlaybackCachePanel";
 import { useStudy } from "../context/StudyContext";
@@ -29,6 +30,7 @@ import { useTheme } from "../context/ThemeContext";
 import { getTelegramVideoUrl, isLocalFrontend, isTelegramLinkVideo, isTelegramStreamContent, isYouTubeUrl, preferSameOriginMediaUrl, resolveContentSrc, resolveVideoPlaybackUrl, toAbsoluteMediaUrl } from "../utils/media";
 import { captureVideoFrameDataUrl, resolvePlyrVideoElement } from "../utils/videoScreenshot";
 import { fetchLocalLibraryStatus } from "../utils/localLibraryApi";
+import { fetchContentStreamCache } from "../utils/mediaStorageApi";
 import { downloadDataUrl, loadScreenshotNotes, saveScreenshotNotes } from "../utils/screenshotNotes";
 import { getYouTubeThumbnailDataUrl } from "../utils/youtubeThumbnail";
 
@@ -138,6 +140,8 @@ const VideoPlayerPage = () => {
   const [playbackSourceReady, setPlaybackSourceReady] = useState(false);
   const [playerGeneration, setPlayerGeneration] = useState(0);
   const [playbackStalled, setPlaybackStalled] = useState(false);
+  const [cacheRefreshToken, setCacheRefreshToken] = useState(0);
+  const [streamCacheComplete, setStreamCacheComplete] = useState(false);
   const [mobilePdfShowAll, setMobilePdfShowAll] = useState(false);
   const usingCacheRef = useRef(false);
   const usingLocalLibraryRef = useRef(false);
@@ -187,7 +191,7 @@ const VideoPlayerPage = () => {
   const hasVideoDuration = duration > 0 && Number.isFinite(duration);
   const showInitialLoader = Boolean(playbackSrc) && !hasVideoDuration && !isTelegramStream && !cachedPlayUrl;
   const telegramBlocksStream =
-    isTelegramStream && !cachedPlayUrl && !telegramStatus.checking && !telegramStatus.live;
+    isTelegramStream && !cachedPlayUrl && !telegramStatus.checking && !telegramStatus.connected;
   const showTelegramStreamLoader =
     isTelegramStream &&
     !cachedPlayUrl &&
@@ -196,6 +200,7 @@ const VideoPlayerPage = () => {
     !telegramBlocksStream &&
     (!hasVideoDuration || playbackStalled);
   const showStreamLoadingOverlay = showInitialLoader || showTelegramStreamLoader;
+  const scrubPreviewEnabled = Boolean(cachedPlayUrl || streamCacheComplete);
   const showNativePlayer = !isTelegramLink && !isYoutube;
   const showLibraryCheckOverlay =
     showNativePlayer && !playbackSourceReady && isLocalFrontend() && isTelegramStream && canCachePlayback;
@@ -342,9 +347,18 @@ const VideoPlayerPage = () => {
     updateBufferProgress(video);
   }, [applyVideoDuration, updateBufferProgress]);
 
+  const lastCacheStatusRefreshRef = useRef(0);
+
   const handleVideoProgress = useCallback(() => {
     updateBufferProgress(videoRef.current);
-  }, [updateBufferProgress]);
+    if (isTelegramStream && isLocalFrontend()) {
+      const now = Date.now();
+      if (now - lastCacheStatusRefreshRef.current > 20000) {
+        lastCacheStatusRefreshRef.current = now;
+        setCacheRefreshToken((value) => value + 1);
+      }
+    }
+  }, [updateBufferProgress, isTelegramStream]);
 
   const handleVideoError = useCallback(() => {
     const tryLocalFallback = async () => {
@@ -455,6 +469,30 @@ const VideoPlayerPage = () => {
       localStorage.setItem(VIDEO_PAGE_THEME_KEY, pageDark ? "dark" : "light");
     } catch {}
   }, [pageDark]);
+
+  useEffect(() => {
+    if (!id || !isTelegramStream || !isLocalFrontend()) {
+      setStreamCacheComplete(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const { data } = await fetchContentStreamCache(id);
+        if (!cancelled) setStreamCacheComplete(Boolean(data?.complete));
+      } catch {
+        if (!cancelled) setStreamCacheComplete(false);
+      }
+    };
+
+    void load();
+    const interval = setInterval(load, 12000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [id, isTelegramStream, cacheRefreshToken]);
 
   useEffect(() => {
     return () => {
@@ -878,11 +916,21 @@ const VideoPlayerPage = () => {
               </div>
             ) : showNativePlayer ? (
               <div ref={playerRef} className="cds-plyr-shell group relative aspect-video w-full overflow-hidden bg-black">
+                {isLocalFrontend() && (isTelegramStream || cachedPlayUrl) ? (
+                  <VideoCacheStatusBar
+                    contentId={id}
+                    isTelegramStream={isTelegramStream}
+                    pcLibraryActive={Boolean(cachedPlayUrl)}
+                    isDark
+                    variant="overlay"
+                    refreshToken={cacheRefreshToken}
+                  />
+                ) : null}
                 <CdsPlyrPlayer
                   key={`${id}-${playerGeneration}`}
                   contentId={id}
                   src={playbackSrc}
-                  ready={playbackSourceReady && (!isTelegramStream || telegramStatus.live || cachedPlayUrl)}
+                  ready={playbackSourceReady && (!isTelegramStream || telegramStatus.connected || cachedPlayUrl)}
                   videoRef={videoRef}
                   onScreenshot={handleCaptureScreenshot}
                   onLoadStart={handleVideoLoadStart}
@@ -895,6 +943,7 @@ const VideoPlayerPage = () => {
                   onPause={handleVideoPause}
                   onEnded={handleVideoEnded}
                   onStalled={handleVideoStalled}
+                  scrubPreviewEnabled={scrubPreviewEnabled}
                 />
 
                 {showLibraryCheckOverlay && (
@@ -908,12 +957,12 @@ const VideoPlayerPage = () => {
                   <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black px-6 text-center">
                     <p className="text-sm font-medium text-white">Telegram stream unavailable</p>
                     <p className="max-w-sm text-xs text-slate-400">
-                      Connect Telegram using the banner below, then click Recheck or Retry playback.
+                      Log in to Telegram from settings below, or use Smooth playback to download the lecture to your PC.
                     </p>
                     <button
                       type="button"
                       className="btn-secondary inline-flex text-xs"
-                      onClick={() => void refreshTelegramStatus()}
+                      onClick={() => void refreshTelegramStatus({ force: true })}
                     >
                       <FiRefreshCw size={14} /> Recheck connection
                     </button>
@@ -977,15 +1026,25 @@ const VideoPlayerPage = () => {
               key={`tools-${id}`}
               title="Playback tools"
               subtitle={
-                isTelegramStream && !telegramStatus.live
+                isTelegramStream && !telegramStatus.connected
                   ? "Telegram connection required"
                   : "Smooth playback & cache"
               }
-              defaultOpen={isTelegramStream && !telegramStatus.live && !telegramStatus.checking}
+              defaultOpen={isTelegramStream && !telegramStatus.connected && !telegramStatus.checking}
               isDark={isDark}
-              badge={isTelegramStream && !telegramStatus.live ? "!" : ""}
+              badge={isTelegramStream && !telegramStatus.connected ? "!" : ""}
             >
               <div className="space-y-2 md:space-y-3">
+                {isLocalFrontend() && (isTelegramStream || canCachePlayback) ? (
+                  <VideoCacheStatusBar
+                    contentId={id}
+                    isTelegramStream={isTelegramStream}
+                    pcLibraryActive={Boolean(cachedPlayUrl)}
+                    isDark={isDark}
+                    variant="panel"
+                    refreshToken={cacheRefreshToken}
+                  />
+                ) : null}
                 {isLocalFrontend() ? (
                   <SmoothPlaybackPanel
                     contentId={id}
@@ -1024,7 +1083,7 @@ const VideoPlayerPage = () => {
                     error={telegramStatus.error}
                     phone={telegramStatus.phone}
                     isDark={isDark}
-                    onRefresh={refreshTelegramStatus}
+                    onRefresh={() => void refreshTelegramStatus({ force: true })}
                     onResetSession={handleResetTelegramSession}
                     resetting={telegramStatusResetting}
                   />

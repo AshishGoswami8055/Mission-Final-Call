@@ -9,7 +9,7 @@ import axios from "axios";
 export const getApiBaseUrl = () => {
   const configured = String(import.meta.env.VITE_API_URL || "").trim();
   if (configured) return configured.replace(/\/$/, "");
-  if (import.meta.env.DEV) return "http://localhost:5000/api";
+  if (import.meta.env.DEV) return "/api";
   return "/api";
 };
 
@@ -32,7 +32,10 @@ export const getServerBaseUrl = () => {
   if (apiUrl) {
     return apiUrl.replace(/\/api\/?$/, "").replace(/\/$/, "");
   }
-  if (import.meta.env.DEV) return "http://localhost:5000";
+  if (import.meta.env.DEV && typeof window !== "undefined") {
+    return window.location.origin;
+  }
+  if (import.meta.env.DEV) return "http://localhost:5001";
   if (typeof window !== "undefined" && window.location?.origin) {
     return window.location.origin;
   }

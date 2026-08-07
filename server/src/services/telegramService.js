@@ -15,8 +15,24 @@ let activeClient = null;
 let telegramOpChain = Promise.resolve();
 let activeStreamCount = 0;
 let clientConnectPromise = null;
+let lastLiveCheck = { at: 0, result: null };
+let keepAliveTimer = null;
+let telegramLockBusy = false;
+
+const LIVE_CHECK_CACHE_MS = Math.max(
+  15000,
+  Number(process.env.TELEGRAM_STATUS_CACHE_MS || 45000)
+);
 
 export const getActiveStreamCount = () => activeStreamCount;
+
+export const beginTelegramPlayback = () => {
+  activeStreamCount += 1;
+};
+
+export const endTelegramPlayback = () => {
+  activeStreamCount = Math.max(0, activeStreamCount - 1);
+};
 
 export const waitForPlaybackIdle = async (maxWaitMs = 30 * 60 * 1000, options = {}) => {
   const forceAfterMs = options.forceAfterMs ?? null;
@@ -66,7 +82,15 @@ const isRetryableTelegramError = (error) => {
 
 /** Serializes all GramJS work — only one Telegram operation at a time per process. */
 export const withTelegramLock = (task) => {
-  const run = telegramOpChain.then(() => task(), () => task());
+  const runWrapped = async () => {
+    telegramLockBusy = true;
+    try {
+      return await task();
+    } finally {
+      telegramLockBusy = false;
+    }
+  };
+  const run = telegramOpChain.then(runWrapped, runWrapped);
   telegramOpChain = run.catch(() => {});
   return run;
 };
@@ -141,6 +165,7 @@ export const resetTelegramSessionClient = async (waitMs = 15000) => {
     activeClient = null;
   }
   clientConnectPromise = null;
+  lastLiveCheck = { at: 0, result: null };
   if (waitMs > 0) await sleep(waitMs);
 };
 
@@ -207,45 +232,136 @@ const ensureTelegramClient = async () => {
 
 export const getTelegramClient = async () => withTelegramLock(() => ensureTelegramClient());
 
+const buildLiveStatus = (session, { live, error = null }) => ({
+  connected: true,
+  live,
+  phone: session.phone || null,
+  error,
+});
+
+const rememberLiveStatus = (result) => {
+  lastLiveCheck = { at: Date.now(), result };
+  return result;
+};
+
 /** DB session + live GramJS ping (for UI status banners). */
-export const checkTelegramConnectionLive = async () => {
+export const checkTelegramConnectionLive = async ({ force = false } = {}) => {
   const session = await getActiveSession();
   if (!session?.isActive) {
-    return {
+    return rememberLiveStatus({
       connected: false,
       live: false,
       phone: null,
       error: "Telegram is not connected. Log in from Add from Telegram.",
-    };
+    });
+  }
+
+  const now = Date.now();
+  if (!force && lastLiveCheck.result && now - lastLiveCheck.at < LIVE_CHECK_CACHE_MS) {
+    return lastLiveCheck.result;
+  }
+
+  // Status checks must not queue behind an active stream/download — that caused false "timed out" errors.
+  if (activeStreamCount > 0 || telegramLockBusy) {
+    if (activeClient?.connected || lastLiveCheck.result?.live || lastLiveCheck.result?.connected) {
+      return rememberLiveStatus(buildLiveStatus(session, { live: true }));
+    }
+  }
+
+  if (activeClient?.connected) {
+    try {
+      await Promise.race([
+        activeClient.getMe(),
+        sleep(6000).then(() => {
+          throw new Error("Telegram is not responding.");
+        }),
+      ]);
+      return rememberLiveStatus(buildLiveStatus(session, { live: true }));
+    } catch (error) {
+      if (
+        lastLiveCheck.result?.live &&
+        now - lastLiveCheck.at < LIVE_CHECK_CACHE_MS * 2
+      ) {
+        return lastLiveCheck.result;
+      }
+      console.warn("[telegram] live ping failed:", telegramErrorText(error));
+    }
   }
 
   try {
+    const connectTimeoutMs = activeStreamCount > 0 ? 45000 : 20000;
     const client = await Promise.race([
       getTelegramClient(),
-      sleep(12000).then(() => {
+      sleep(connectTimeoutMs).then(() => {
         throw new Error("Telegram connection timed out. Try Reset session in Telegram settings.");
       }),
     ]);
     await Promise.race([
       client.getMe(),
-      sleep(8000).then(() => {
+      sleep(10000).then(() => {
         throw new Error("Telegram is not responding.");
       }),
     ]);
-    return {
-      connected: true,
-      live: true,
-      phone: session.phone || null,
-      error: null,
-    };
+    return rememberLiveStatus(buildLiveStatus(session, { live: true }));
   } catch (error) {
-    return {
-      connected: true,
-      live: false,
-      phone: session.phone || null,
-      error: error.message || "Telegram client is not responding",
-    };
+    return rememberLiveStatus(
+      buildLiveStatus(session, {
+        live: false,
+        error: error.message || "Telegram client is not responding",
+      })
+    );
   }
+};
+
+/** Connect on startup so the first video does not pay the connect cost. */
+export const warmTelegramConnection = async () => {
+  try {
+    await withTelegramLock(async () => {
+      const session = await getActiveSession();
+      if (!session?.isActive) {
+        console.log("[telegram] No saved session — log in from Telegram settings to stream videos.");
+        return;
+      }
+      const client = await ensureTelegramClient();
+      await client.getMe();
+      rememberLiveStatus(buildLiveStatus(session, { live: true }));
+    });
+    console.log("[telegram] Ready for video playback");
+  } catch (error) {
+    console.warn("[telegram] warm connect skipped:", telegramErrorText(error));
+  }
+};
+
+/** Periodic ping so idle connections stay warm between study sessions. */
+export const startTelegramKeepAlive = () => {
+  if (keepAliveTimer) return;
+  const intervalMs = Math.max(60000, Number(process.env.TELEGRAM_KEEPALIVE_MS || 4 * 60 * 1000));
+
+  const tick = () => {
+    withTelegramLock(async () => {
+      const session = await getActiveSession();
+      if (!session?.isActive) return;
+      if (activeStreamCount > 0) {
+        rememberLiveStatus(buildLiveStatus(session, { live: true }));
+        return;
+      }
+      try {
+        const client = await ensureTelegramClient();
+        await client.getMe();
+        rememberLiveStatus(buildLiveStatus(session, { live: true }));
+      } catch (error) {
+        console.warn("[telegram] keep-alive failed:", telegramErrorText(error));
+        if (isRetryableTelegramError(error)) {
+          await disconnectClient(activeClient);
+          activeClient = null;
+          clientConnectPromise = null;
+        }
+      }
+    }).catch(() => {});
+  };
+
+  keepAliveTimer = setInterval(tick, intervalMs);
+  setTimeout(tick, 5000);
 };
 
 export const startTelegramLogin = async (phoneRaw) => {
@@ -647,8 +763,13 @@ export const fetchForumTopicsByIds = async (channelId, topicIds = []) => {
   }
 };
 
-export const fetchForumTopicsForChannel = async (channelId) => {
+export const fetchForumTopicsForChannel = async (channelId, { skipDiscovery = false } = {}) => {
   const fromList = await fetchForumTopicsList(channelId);
+  const sorted = [...fromList].sort((a, b) => a.title.localeCompare(b.title));
+  if (skipDiscovery || !fromList.length) {
+    return sorted;
+  }
+
   const byId = new Map(fromList.map((topic) => [topic.id, topic]));
 
   const discoveredIds = await discoverTopicIdsFromChannel(channelId);

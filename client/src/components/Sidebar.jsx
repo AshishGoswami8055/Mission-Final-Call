@@ -6,76 +6,21 @@ import {
   FiFileText,
   FiGrid,
   FiHardDrive,
+  FiFolder,
   FiLogOut,
-  FiType,
   FiTrendingUp,
 } from "react-icons/fi";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
+import { NAV_ITEMS } from "../config/navItems";
+import { isLocalFrontend } from "../utils/media";
 
 /**
  * Primary navigation — matches the high-contrast reference shell:
  *   • Light app theme → dark sidebar (charcoal)
  *   • Dark app theme  → white sidebar (store-style), dark main lives in Layout
  */
-
-const NAV_ITEMS = [
-  {
-    to: "/",
-    label: "Dashboard",
-    icon: FiGrid,
-    match: (p) => p === "/",
-  },
-  {
-    to: "/mission",
-    label: "Today's Target",
-    icon: FiCrosshair,
-    match: (p) => p.startsWith("/mission"),
-  },
-  {
-    to: "/papers",
-    label: "PYQ Papers",
-    icon: FiFileText,
-    match: (p) => p.startsWith("/papers") || p.startsWith("/paper/"),
-  },
-  {
-    to: "/cloudinary",
-    label: "Cloudinary Storage",
-    icon: FiHardDrive,
-    match: (p) => p.startsWith("/cloudinary"),
-  },
-  {
-    to: "/vocabulary",
-    label: "Vocabulary",
-    icon: FiBookOpen,
-    match: (p) => p.startsWith("/vocabulary"),
-  },
-  {
-    to: "/idioms",
-    label: "Idioms",
-    icon: FiBookmark,
-    match: (p) => p.startsWith("/idioms"),
-  },
-  {
-    to: "/one-word-substitution",
-    label: "One Word",
-    icon: FiType,
-    match: (p) => p.startsWith("/one-word-substitution"),
-  },
-  {
-    to: "/history",
-    label: "Watch History",
-    icon: FiClock,
-    match: (p) => p === "/history",
-  },
-  {
-    to: "/history/intelligence",
-    label: "Study Intelligence",
-    icon: FiTrendingUp,
-    match: (p) => p.startsWith("/history/intelligence"),
-  },
-];
 
 const initialsFor = (name = "Admin") => {
   const parts = String(name).trim().split(/\s+/).filter(Boolean);
@@ -89,6 +34,8 @@ const Sidebar = ({ onItemClick }) => {
   const { user, logout } = useAuth();
   const { theme } = useTheme();
   const lightRail = theme === "dark";
+
+  const visibleItems = NAV_ITEMS.filter((item) => !item.localOnly || isLocalFrontend());
 
   return (
     <aside
@@ -127,7 +74,7 @@ const Sidebar = ({ onItemClick }) => {
 
       {/* Nav */}
       <nav className="flex-1 space-y-1 overflow-y-auto px-4 pb-5 pt-1">
-        {NAV_ITEMS.map((item) => {
+        {visibleItems.map((item) => {
           const Icon = item.icon;
           const active = item.match(location.pathname);
           return (

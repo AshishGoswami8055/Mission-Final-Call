@@ -110,7 +110,12 @@ const LoginPage = () => {
       toast.success("Logged in successfully");
       navigate("/");
     } catch (error) {
-      toast.error(error.response?.data?.message || "Login failed");
+      const message = error.response?.data?.message;
+      if (!error.response) {
+        toast.error("Cannot reach the server. Start the backend (npm run dev in server/) on port 5001.");
+      } else {
+        toast.error(message || "Login failed");
+      }
     } finally {
       setLoading(false);
     }

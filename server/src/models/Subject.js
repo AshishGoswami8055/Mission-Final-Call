@@ -34,6 +34,21 @@ const subjectSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    /** When syncing from Telegram, import video lessons (default true). */
+    telegramImportVideos: {
+      type: Boolean,
+      default: true,
+    },
+    /** When syncing from Telegram, import PDF lessons (default true). */
+    telegramImportPdfs: {
+      type: Boolean,
+      default: true,
+    },
+    /** Telegram message ids intentionally skipped during curated import (never re-offer as updates). */
+    telegramSkippedMessageIds: {
+      type: [Number],
+      default: [],
+    },
   },
   { timestamps: true }
 );

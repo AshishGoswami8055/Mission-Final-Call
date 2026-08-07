@@ -13,6 +13,24 @@ import {
 import { fetchAllChannelMediaEnriched } from "./telegramService.js";
 import { completeProgress, initProgress, setProgress, throwIfCancelled } from "./uploadProgressBus.js";
 import {
+  normalizeTopicMediaPrefs,
+  persistSubjectMediaPrefs,
+  resolveTopicMediaPrefs,
+  shouldImportTelegramMedia,
+} from "../utils/telegramImportMediaPrefs.js";
+import {
+  appendSkippedMessageIds,
+  buildTitleKeysBySubjectId,
+  createSubjectImportFilter,
+  evaluateTelegramImportSkip,
+  registerImportedTitleKeys,
+} from "../utils/telegramImportFilters.js";
+import {
+  findImportedContentRowsForProgramme,
+  getProgrammeTelegramScope,
+  topicInProgrammeCourse,
+} from "../utils/telegramProgrammeScope.js";
+import {
   isSubjectKeyBlocked,
   unblockTelegramSubjectsForImport,
 } from "./telegramSubjectBlocklist.js";
@@ -36,35 +54,55 @@ export const groupFlatChannelMediaBySubject = (mediaItems = []) => {
   return [...groups.values()].sort((a, b) => a.title.localeCompare(b.title));
 };
 
-export const fetchFlatChannelSubjectsPreview = async ({ channelId, maxMessages = 3000 }) => {
+export const fetchFlatChannelSubjectsPreview = async ({
+  channelId,
+  programmeId = null,
+  maxMessages = 3000,
+}) => {
   const media = await fetchAllChannelMediaEnriched({ channelId, maxMessages });
   const topics = groupFlatChannelMediaBySubject(media);
 
   const messageIds = media.map((m) => m.messageId);
-  const importedRows = await Content.find({
-    telegramChannelId: String(channelId),
-    telegramMessageId: { $in: messageIds },
-  }).select("_id telegramMessageId");
+  const scope = programmeId ? await getProgrammeTelegramScope(programmeId, channelId) : null;
+  const importedRows = programmeId
+    ? await findImportedContentRowsForProgramme({
+        programmeId,
+        channelId,
+        messageIds,
+        subjectIds: scope?.subjectIds,
+      })
+    : await Content.find({
+        telegramChannelId: String(channelId),
+        telegramMessageId: { $in: messageIds },
+      }).select("_id telegramMessageId");
 
   const importedSet = new Set(importedRows.map((r) => Number(r.telegramMessageId)));
 
-  const enriched = topics.map((topic) => ({
-    id: topic.id,
-    title: topic.title,
-    subjectKey: topic.subjectKey,
-    mediaCount: topic.media.length,
-    importedCount: topic.media.filter((m) => importedSet.has(Number(m.messageId))).length,
-    newCount: topic.media.filter((m) => !importedSet.has(Number(m.messageId))).length,
-    media: topic.media
-      .map((item) => ({
-        ...item,
-        imported: importedSet.has(Number(item.messageId)),
-        contentId:
-          importedRows.find((r) => Number(r.telegramMessageId) === Number(item.messageId))?._id ||
-          null,
-      }))
-      .sort((a, b) => a.messageId - b.messageId),
-  }));
+  const enriched = topics.map((topic) => {
+    const importedCount = topic.media.filter((m) => importedSet.has(Number(m.messageId))).length;
+    const inCourse =
+      programmeId && scope
+        ? topicInProgrammeCourse(scope, topic) || importedCount > 0
+        : importedCount > 0;
+    return {
+      id: topic.id,
+      title: topic.title,
+      subjectKey: topic.subjectKey,
+      mediaCount: topic.media.length,
+      importedCount,
+      inCourse,
+      newCount: topic.media.filter((m) => !importedSet.has(Number(m.messageId))).length,
+      media: topic.media
+        .map((item) => ({
+          ...item,
+          imported: importedSet.has(Number(item.messageId)),
+          contentId:
+            importedRows.find((r) => Number(r.telegramMessageId) === Number(item.messageId))?._id ||
+            null,
+        }))
+        .sort((a, b) => a.messageId - b.messageId),
+    };
+  });
 
   const totalMedia = media.length;
   const totalImported = importedRows.length;
@@ -80,8 +118,8 @@ export const fetchFlatChannelSubjectsPreview = async ({ channelId, maxMessages =
 };
 
 /** Faster flat-channel subject list (fewer messages scanned). */
-export const fetchFlatChannelSubjectsPreviewSummary = async ({ channelId }) => {
-  const result = await fetchFlatChannelSubjectsPreview({ channelId, maxMessages: 500 });
+export const fetchFlatChannelSubjectsPreviewSummary = async ({ channelId, programmeId = null }) => {
+  const result = await fetchFlatChannelSubjectsPreview({ channelId, programmeId, maxMessages: 500 });
   return {
     ...result,
     summaryOnly: true,
@@ -94,8 +132,8 @@ export const fetchFlatChannelSubjectsPreviewSummary = async ({ channelId }) => {
   };
 };
 
-export const fetchFlatChannelTopicMediaPreview = async ({ channelId, topicId }) => {
-  const preview = await fetchFlatChannelSubjectsPreview({ channelId, maxMessages: 3000 });
+export const fetchFlatChannelTopicMediaPreview = async ({ channelId, topicId, programmeId = null }) => {
+  const preview = await fetchFlatChannelSubjectsPreview({ channelId, programmeId, maxMessages: 3000 });
   const topic = preview.topics.find((row) => Number(row.id) === Number(topicId));
   if (!topic) {
     throw new Error("Subject not found in this channel.");
@@ -105,6 +143,7 @@ export const fetchFlatChannelTopicMediaPreview = async ({ channelId, topicId }) 
     media: topic.media,
     mediaCount: topic.mediaCount,
     importedCount: topic.importedCount,
+    inCourse: topic.inCourse,
     newCount: topic.newCount,
     mediaLoaded: true,
   };
@@ -186,7 +225,9 @@ export const importBatchByFlatSubjects = async ({
   uploadId = null,
   existingSubjectsOnly = false,
   allowBlockedRecreate = false,
+  topicMediaPrefs = null,
 }) => {
+  const topicMediaPrefsMap = normalizeTopicMediaPrefs(topicMediaPrefs);
   if (allowBlockedRecreate && Array.isArray(topicIds) && topicIds.length) {
     await unblockTelegramSubjectsForImport({ programmeId, topicIds });
   }
@@ -210,10 +251,10 @@ export const importBatchByFlatSubjects = async ({
   const skipped = [];
   let maxMessageId = 0;
 
-  const allMedia = topics.flatMap((t) => t.media);
-  const mediaTotal = allMedia.filter(
-    (m) => m.mediaType === "pdf" || m.mediaType === "video"
-  ).length;
+  const mediaTotal = topics.reduce((sum, topic) => {
+    const prefs = resolveTopicMediaPrefs(topic.id, topicMediaPrefsMap);
+    return sum + topic.media.filter((m) => shouldImportTelegramMedia(m, prefs)).length;
+  }, 0);
 
   if (uploadId) {
     initProgress(uploadId, {
@@ -246,14 +287,40 @@ export const importBatchByFlatSubjects = async ({
       if (!subject) continue;
     }
     const chapter = await getOrCreateChapterForSubject(subject._id, LESSONS_CHAPTER);
+    const prefs = resolveTopicMediaPrefs(topic.id, topicMediaPrefsMap, subject);
+    await persistSubjectMediaPrefs(subject, prefs);
 
+    const subjectContentRows = await Content.find({ subjectId: subject._id })
+      .select("subjectId title")
+      .lean();
+    const importFilter = createSubjectImportFilter(
+      subject,
+      buildTitleKeysBySubjectId(subjectContentRows),
+      topicMediaPrefsMap
+    );
+    const persistSkippedIds = [];
+
+    let topicSortOrder = 0;
     for (const meta of topic.media) {
       throwIfCancelled(uploadId);
       const messageId = Number(meta.messageId);
       if (!messageId) continue;
+
+      const skipDecision = evaluateTelegramImportSkip(meta, importFilter);
+      if (skipDecision.skip) {
+        if (skipDecision.persistSkip) persistSkippedIds.push(messageId);
+        skipped.push({
+          messageId,
+          fileName: meta.fileName,
+          reason: skipDecision.reason || "Skipped",
+        });
+        continue;
+      }
+
       maxMessageId = Math.max(maxMessageId, messageId);
 
       const existing = await Content.findOne({
+        subjectId: subject._id,
         telegramChannelId: String(channelId),
         telegramMessageId: messageId,
       });
@@ -288,6 +355,7 @@ export const importBatchByFlatSubjects = async ({
         mediaFileIndex:
           meta.mediaType === "pdf" || meta.mediaType === "video" ? mediaIndex++ : 0,
         mediaFilesTotal: mediaTotal,
+        importSortOrder: topicSortOrder++,
       });
 
       const doc = await Content.create(payload);
@@ -296,6 +364,11 @@ export const importBatchByFlatSubjects = async ({
         subjectName: subject.name,
         topicTitle: topic.title,
       });
+      registerImportedTitleKeys(importFilter, meta);
+    }
+
+    if (persistSkippedIds.length) {
+      await appendSkippedMessageIds(subject._id, persistSkippedIds);
     }
   }
 

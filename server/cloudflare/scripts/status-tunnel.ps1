@@ -5,7 +5,7 @@ Write-Host "=== Tunnel Status ===" -ForegroundColor Cyan
 
 $local = Test-LocalApi
 if ($local.ok) {
-    Write-Host "[OK] Local API: http://127.0.0.1:5000/api/health" -ForegroundColor Green
+    Write-Host "[OK] Local API: http://127.0.0.1:5001/api/health" -ForegroundColor Green
 } else {
     Write-Host "[FAIL] Local API not running" -ForegroundColor Red
 }

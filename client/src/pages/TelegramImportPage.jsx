@@ -3,6 +3,8 @@ import toast from "react-hot-toast";
 import {
   FiArrowLeft,
   FiCheck,
+  FiChevronDown,
+  FiChevronUp,
   FiFileText,
   FiLoader,
   FiLogOut,
@@ -18,15 +20,29 @@ import api from "../api/client";
 import Layout from "../components/Layout";
 import OperationProgressOverlay from "../components/OperationProgressOverlay";
 import { buildTelegramPreviewStreamUrl, formatTelegramMediaMeta } from "../utils/media";
+import {
+  buildSelectedItemsFromPlans,
+  countSelectedLessonsInPlan,
+  orderedMediaForTopic,
+  suggestLessonTitle,
+  syncLessonPlanForTopic,
+} from "../utils/telegramLessonPlan";
 import { createUploadId, waitForUploadProgress } from "../utils/uploadProgress";
 
 const mediaDisplayName = (item) => item?.displayName || item?.fileName || "Untitled";
 
+const DEFAULT_TOPIC_MEDIA_PREFS = { includeVideos: true, includePdfs: true };
+
+const topicMediaPrefKey = (topicId) => String(topicId);
+
+const topicInCourse = (topic) => Boolean(topic?.inCourse ?? topic?.importedCount > 0);
+
 const topicStatus = (topic) => {
-  if (topic.importedCount > 0 && topic.newCount === 0) return "upToDate";
-  if (topic.newCount > 0 && topic.importedCount > 0) return "hasUpdates";
+  const inCourse = topicInCourse(topic);
+  if (inCourse && topic.newCount === 0) return "upToDate";
+  if (topic.newCount > 0 && inCourse) return "hasUpdates";
   if (topic.newCount > 0) return "new";
-  if (topic.importedCount > 0) return "upToDate";
+  if (inCourse) return "upToDate";
   return "notInCourse";
 };
 
@@ -52,9 +68,12 @@ const TelegramImportPage = () => {
   const [topicMediaLoading, setTopicMediaLoading] = useState(false);
   const [selectedTopicId, setSelectedTopicId] = useState(null);
   const [selectedToAddIds, setSelectedToAddIds] = useState(new Set());
+  const [topicMediaPrefs, setTopicMediaPrefs] = useState({});
+  const [topicLessonPlans, setTopicLessonPlans] = useState({});
   const [topicSearch, setTopicSearch] = useState("");
   const [mediaFilter, setMediaFilter] = useState("all");
   const [previewFile, setPreviewFile] = useState(null);
+  const [previewError, setPreviewError] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(null);
   const [mobilePanel, setMobilePanel] = useState("topics");
@@ -81,29 +100,46 @@ const TelegramImportPage = () => {
   const loadPreview = useCallback(async () => {
     if (!selectedChannel?.id) return;
     setPreviewLoading(true);
+    setPreviewError("");
     try {
       const { data } = await api.get("/telegram/forum-preview", {
         params: {
           channelId: selectedChannel.id,
           ...(programmeId ? { programmeId } : {}),
         },
-        timeout: 120000,
+        timeout: 180000,
       });
       setPreview(data);
       const topics = data.topics || [];
-      const notInCourse = topics.filter((t) => t.importedCount === 0).map((t) => t.id);
-      setSelectedToAddIds(new Set(notInCourse));
+      if (!topics.length) {
+        setPreviewError("No subjects were returned for this channel. Try Refresh subjects below.");
+      }
+      setSelectedToAddIds(new Set());
+      const prefs = {};
+      for (const topic of topics) {
+        prefs[topicMediaPrefKey(topic.id)] = {
+          includeVideos: topic.importVideos !== false,
+          includePdfs: topic.importPdfs !== false,
+        };
+      }
+      setTopicMediaPrefs(prefs);
+      setTopicLessonPlans({});
       setSelectedTopicId(topics[0]?.id ?? null);
       setPreviewFile(null);
       setMediaFilter("all");
     } catch (error) {
       const status = error.response?.status;
+      const message = error.response?.data?.message || error.message || "Could not load subjects";
+      setPreview(null);
+      setPreviewError(message);
       if (status === 524 || status === 504) {
         toast.error(
-          "Telegram preview timed out (Cloudflare). Retry, or open this page on localhost:5173 for large channels."
+          "Telegram preview timed out. Click Refresh subjects, or use localhost for large channels."
         );
+      } else if (error.code === "ECONNABORTED") {
+        toast.error("Loading subjects timed out. Click Refresh subjects to try again.");
       } else {
-        toast.error(error.response?.data?.message || "Could not load subjects");
+        toast.error(message);
       }
     } finally {
       setPreviewLoading(false);
@@ -122,6 +158,7 @@ const TelegramImportPage = () => {
           params: {
             channelId: selectedChannel.id,
             topicId,
+            ...(programmeId ? { programmeId } : {}),
           },
           timeout: 120000,
         });
@@ -134,6 +171,7 @@ const TelegramImportPage = () => {
                   media: data.media || [],
                   mediaCount: data.mediaCount ?? row.mediaCount,
                   importedCount: data.importedCount ?? row.importedCount,
+                  inCourse: data.inCourse ?? row.inCourse,
                   newCount: data.newCount ?? row.newCount,
                   mediaLoaded: true,
                 }
@@ -153,7 +191,7 @@ const TelegramImportPage = () => {
         setTopicMediaLoading(false);
       }
     },
-    [preview?.topics, selectedChannel?.id]
+    [preview?.topics, selectedChannel?.id, programmeId]
   );
 
   useEffect(() => {
@@ -231,19 +269,39 @@ const TelegramImportPage = () => {
     const topics = preview?.topics || [];
     return {
       total: topics.length,
-      inCourse: topics.filter((t) => t.importedCount > 0).length,
+      inCourse: topics.filter((t) => topicInCourse(t)).length,
       totalNew: preview?.totalNew ?? 0,
-      notInCourse: topics.filter((t) => t.importedCount === 0).length,
-      withUpdates: topics.filter((t) => t.newCount > 0 && t.importedCount > 0).length,
+      notInCourse: topics.filter((t) => !topicInCourse(t)).length,
+      withUpdates: topics.filter((t) => t.newCount > 0 && topicInCourse(t)).length,
     };
   }, [preview]);
 
-  const filteredMedia = useMemo(() => {
-    const media = activeTopic?.media || [];
-    if (mediaFilter === "video") return media.filter((m) => m.mediaType === "video");
-    if (mediaFilter === "pdf") return media.filter((m) => m.mediaType === "pdf");
-    return media;
-  }, [activeTopic?.media, mediaFilter]);
+  const getTopicMediaPref = useCallback(
+    (topicId) => topicMediaPrefs[topicMediaPrefKey(topicId)] || DEFAULT_TOPIC_MEDIA_PREFS,
+    [topicMediaPrefs]
+  );
+
+  const activeTopicPrefs = activeTopic ? getTopicMediaPref(activeTopic.id) : DEFAULT_TOPIC_MEDIA_PREFS;
+
+  const activeLessonPlan = activeTopic
+    ? topicLessonPlans[topicMediaPrefKey(activeTopic.id)]
+    : null;
+
+  const filteredMedia = useMemo(
+    () =>
+      orderedMediaForTopic({
+        media: activeTopic?.media || [],
+        plan: activeLessonPlan,
+        prefs: activeTopicPrefs,
+        mediaFilter,
+      }),
+    [activeTopic?.media, activeLessonPlan, activeTopicPrefs, mediaFilter]
+  );
+
+  const selectableMediaInView = useMemo(
+    () => filteredMedia.filter((row) => !row.imported),
+    [filteredMedia]
+  );
 
   const mediaCounts = useMemo(() => {
     const media = activeTopic?.media || [];
@@ -279,6 +337,142 @@ const TelegramImportPage = () => {
     });
   };
 
+  const addableTopicIds = useMemo(
+    () => (preview?.topics || []).filter((topic) => !topicInCourse(topic)).map((topic) => topic.id),
+    [preview?.topics]
+  );
+
+  const selectAllAddableSubjects = () => {
+    setSelectedToAddIds(new Set(addableTopicIds));
+  };
+
+  const unselectAllAddableSubjects = () => {
+    setSelectedToAddIds(new Set());
+  };
+
+  const setTopicMediaPref = (topicId, field, value) => {
+    setTopicMediaPrefs((prev) => ({
+      ...prev,
+      [topicMediaPrefKey(topicId)]: {
+        ...getTopicMediaPref(topicId),
+        [field]: value,
+      },
+    }));
+  };
+
+  const buildTopicMediaPrefsPayload = (topicIds) => {
+    const payload = {};
+    for (const id of topicIds) {
+      payload[String(id)] = getTopicMediaPref(id);
+    }
+    return payload;
+  };
+
+  const countImportableMedia = (topic, prefs = null) => {
+    const media = topic?.media || [];
+    const p = prefs || getTopicMediaPref(topic?.id);
+    return media.filter(
+      (m) =>
+        (m.mediaType === "video" && p.includeVideos) || (m.mediaType === "pdf" && p.includePdfs)
+    ).length;
+  };
+
+  const validateTopicMediaPrefs = (topicIds) => {
+    const missingType = topicIds.filter((id) => {
+      const p = getTopicMediaPref(id);
+      return !p.includeVideos && !p.includePdfs;
+    });
+    if (missingType.length) {
+      toast.error("Select at least videos or PDFs for each subject");
+      return false;
+    }
+    return true;
+  };
+
+  useEffect(() => {
+    if (!activeTopic?.mediaLoaded || !activeTopic?.media?.length) return;
+    const prefs = getTopicMediaPref(activeTopic.id);
+    setTopicLessonPlans((prev) => {
+      const key = topicMediaPrefKey(activeTopic.id);
+      const next = syncLessonPlanForTopic(activeTopic.media, prefs, prev[key]);
+      const prevPlan = prev[key];
+      if (JSON.stringify(prevPlan) === JSON.stringify(next)) return prev;
+      return { ...prev, [key]: next };
+    });
+  }, [activeTopic?.id, activeTopic?.mediaLoaded, activeTopic?.media, getTopicMediaPref, topicMediaPrefs]);
+
+  const setLessonSelected = (topicId, messageId, selected) => {
+    setTopicLessonPlans((prev) => {
+      const key = topicMediaPrefKey(topicId);
+      const plan = prev[key];
+      if (!plan?.entries[messageId]) return prev;
+      return {
+        ...prev,
+        [key]: {
+          ...plan,
+          entries: {
+            ...plan.entries,
+            [messageId]: { ...plan.entries[messageId], selected },
+          },
+        },
+      };
+    });
+  };
+
+  const setLessonDisplayName = (topicId, messageId, displayName) => {
+    setTopicLessonPlans((prev) => {
+      const key = topicMediaPrefKey(topicId);
+      const plan = prev[key];
+      if (!plan?.entries[messageId]) return prev;
+      return {
+        ...prev,
+        [key]: {
+          ...plan,
+          entries: {
+            ...plan.entries,
+            [messageId]: { ...plan.entries[messageId], displayName },
+          },
+        },
+      };
+    });
+  };
+
+  const moveLessonInPlan = (topicId, messageId, direction) => {
+    setTopicLessonPlans((prev) => {
+      const key = topicMediaPrefKey(topicId);
+      const plan = prev[key];
+      if (!plan) return prev;
+      const idx = plan.order.indexOf(messageId);
+      if (idx < 0) return prev;
+      const target = idx + direction;
+      if (target < 0 || target >= plan.order.length) return prev;
+      const order = [...plan.order];
+      [order[idx], order[target]] = [order[target], order[idx]];
+      return { ...prev, [key]: { ...plan, order } };
+    });
+  };
+
+  const setAllLessonsSelected = (topicId, selected) => {
+    const topic = preview?.topics?.find((row) => row.id === topicId);
+    const prefs = getTopicMediaPref(topicId);
+    if (!topic?.media?.length) return;
+    setTopicLessonPlans((prev) => {
+      const key = topicMediaPrefKey(topicId);
+      const plan = syncLessonPlanForTopic(topic.media, prefs, prev[key]);
+      const entries = { ...plan.entries };
+      for (const id of plan.order) {
+        entries[id] = { ...entries[id], selected };
+      }
+      return { ...prev, [key]: { ...plan, entries } };
+    });
+  };
+
+  const allTopicsHaveLessonPlans = (topicIds) =>
+    topicIds.every((id) => {
+      const topic = preview?.topics?.find((row) => row.id === id);
+      return topic?.mediaLoaded && topicLessonPlans[topicMediaPrefKey(id)];
+    });
+
   const runWithProgressTick = (phase, startPercent, endPercent, intervalMs = 400) => {
     let current = startPercent;
     const timer = setInterval(() => {
@@ -303,6 +497,9 @@ const TelegramImportPage = () => {
       toast.error("Select a batch on the dashboard first");
       return;
     }
+    if (topicIds?.length && !validateTopicMediaPrefs(topicIds)) {
+      return;
+    }
     setBusy(true);
     setProgress({
       active: true,
@@ -320,9 +517,12 @@ const TelegramImportPage = () => {
         if (!subject) {
           throw new Error("Subject not found in course");
         }
+        const prefs = getTopicMediaPref(topicIds[0]);
         const { data } = await api.post("/telegram/update-subject", {
           programmeId,
           subjectId: subject._id,
+          includeVideos: prefs.includeVideos,
+          includePdfs: prefs.includePdfs,
         });
         stopTick();
         await finishAndRefresh(data.message || "Downloaded new lessons");
@@ -357,11 +557,27 @@ const TelegramImportPage = () => {
       ? topicIdsOverride
       : [...selectedToAddIds].filter((id) => {
           const t = preview?.topics?.find((x) => x.id === id);
-          return t && t.importedCount === 0;
+          return t && !topicInCourse(t);
         });
 
     if (!topicIds.length) {
       toast.error("Select at least one subject to add");
+      return;
+    }
+    if (!validateTopicMediaPrefs(topicIds)) {
+      return;
+    }
+
+    const selectedItems = buildSelectedItemsFromPlans(
+      topicIds,
+      preview?.topics,
+      topicLessonPlans,
+      topicMediaPrefKey
+    );
+    const useCuratedImport = selectedItems.length > 0 && allTopicsHaveLessonPlans(topicIds);
+
+    if (allTopicsHaveLessonPlans(topicIds) && selectedItems.length === 0) {
+      toast.error("Select at least one lesson to import");
       return;
     }
 
@@ -388,17 +604,23 @@ const TelegramImportPage = () => {
 
       progressWait = waitForUploadProgress(uploadId, applyProgress);
 
-      const response = await api.post("/telegram/import-batch", {
+      const importBody = {
         channelId: selectedChannel.id,
         channelTitle: selectedChannel.title,
         programmeId,
         importAll: false,
         useForumTopics: true,
         topicIds,
+        topicMediaPrefs: buildTopicMediaPrefsPayload(topicIds),
         autoSync: true,
         uploadId,
         pruneUnselectedTopics: false,
-      });
+      };
+      if (useCuratedImport) {
+        importBody.selectedItems = selectedItems;
+      }
+
+      const response = await api.post("/telegram/import-batch", importBody);
 
       if (response.status === 202) {
         const result = await progressWait;
@@ -476,8 +698,14 @@ const TelegramImportPage = () => {
 
   const addableSelectedCount = [...selectedToAddIds].filter((id) => {
     const t = preview?.topics?.find((x) => x.id === id);
-    return t && t.importedCount === 0;
+    return t && !topicInCourse(t);
   }).length;
+
+  const activeImportableCount = activeTopic
+    ? activeLessonPlan && activeTopic.mediaLoaded
+      ? countSelectedLessonsInPlan(activeLessonPlan)
+      : countImportableMedia(activeTopic, activeTopicPrefs)
+    : 0;
 
   const StatusBadge = ({ topic }) => {
     const status = topicStatus(topic);
@@ -615,6 +843,15 @@ const TelegramImportPage = () => {
                       )}
                     </div>
                     <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:flex-wrap">
+                      <button
+                        type="button"
+                        className="btn-ghost w-full text-sm sm:w-auto"
+                        disabled={busy || previewLoading || !selectedChannel}
+                        onClick={() => loadPreview()}
+                      >
+                        <FiRefreshCw size={14} className={previewLoading ? "animate-spin" : ""} />
+                        Refresh subjects
+                      </button>
                       {stats.totalNew > 0 && (
                         <button
                           type="button"
@@ -630,7 +867,16 @@ const TelegramImportPage = () => {
                         <button
                           type="button"
                           className="btn-secondary w-full text-sm sm:w-auto"
-                          disabled={busy || !programmeId}
+                          disabled={
+                            busy ||
+                            !programmeId ||
+                            [...selectedToAddIds].some((id) => {
+                              const t = preview?.topics?.find((x) => x.id === id);
+                              if (!t || topicInCourse(t)) return false;
+                              const p = getTopicMediaPref(id);
+                              return !p.includeVideos && !p.includePdfs;
+                            })
+                          }
                           onClick={() => handleAddSubjects()}
                         >
                           {busy ? (
@@ -646,9 +892,9 @@ const TelegramImportPage = () => {
 
                   <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-white/5 dark:text-slate-400">
                     <strong className="font-semibold text-slate-800 dark:text-slate-200">How it works:</strong>{" "}
-                    Check subjects you want in your course, click <em>Add to course</em>. After that, new Telegram
-                    uploads are picked up automatically — use <em>Download new lessons</em> anytime, or update from
-                    the dashboard.
+                    Check the subjects you want, then click <em>Add to course</em>. Use{" "}
+                    <em>Select all</em> or <em>Unselect all</em> in the list — nothing is checked by default. After
+                    import, new Telegram uploads sync automatically.
                   </p>
                   {preview?.channelMode === "flat" && (
                     <p className="mt-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800 dark:border-sky-900/40 dark:bg-sky-950/30 dark:text-sky-200">
@@ -695,14 +941,34 @@ const TelegramImportPage = () => {
                         </div>
                         <p className="text-xs text-slate-500">
                           <span className="inline-block h-2 w-2 rounded-sm bg-emerald-200 align-middle dark:bg-emerald-800" />{" "}
-                          Green = already in your batch · check others to add
+                          Green = already in this batch · check others to add to this course
                         </p>
+                        {addableTopicIds.length > 0 ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              className="btn-ghost text-xs"
+                              disabled={busy || addableSelectedCount >= addableTopicIds.length}
+                              onClick={selectAllAddableSubjects}
+                            >
+                              Select all ({addableTopicIds.length})
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-ghost text-xs"
+                              disabled={busy || addableSelectedCount === 0}
+                              onClick={unselectAllAddableSubjects}
+                            >
+                              Unselect all
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
                       <div className="max-h-[50vh] overflow-y-auto lg:max-h-[60vh]">
                         {filteredTopics.map((topic) => {
                           const isActive = selectedTopicId === topic.id;
-                          const canAdd = topic.importedCount === 0;
-                          const inCourse = topic.importedCount > 0;
+                          const canAdd = !topicInCourse(topic);
+                          const inCourse = topicInCourse(topic);
                           const isChecked = selectedToAddIds.has(topic.id);
                           const rowClass = inCourse
                             ? isActive
@@ -756,7 +1022,25 @@ const TelegramImportPage = () => {
                           );
                         })}
                         {!filteredTopics.length && (
-                          <p className="p-6 text-center text-sm text-slate-400">No subjects found in this channel.</p>
+                          <div className="p-6 text-center text-sm text-slate-400">
+                            {previewError ? (
+                              <>
+                                <p className="text-rose-600 dark:text-rose-400">{previewError}</p>
+                                <button
+                                  type="button"
+                                  className="btn-secondary mt-3 text-xs"
+                                  disabled={previewLoading}
+                                  onClick={() => loadPreview()}
+                                >
+                                  <FiRefreshCw size={12} className={previewLoading ? "animate-spin" : ""} /> Try again
+                                </button>
+                              </>
+                            ) : preview ? (
+                              "No subjects found in this channel."
+                            ) : (
+                              "Subjects could not be loaded. Click Refresh subjects above."
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -782,11 +1066,15 @@ const TelegramImportPage = () => {
                                 <StatusBadge topic={activeTopic} />
                               </div>
                             </div>
-                            {activeTopic.newCount > 0 && activeTopic.importedCount > 0 && (
+                            {activeTopic.newCount > 0 && topicInCourse(activeTopic) && (
                               <button
                                 type="button"
                                 className="btn-primary text-xs"
-                                disabled={busy || !programmeId}
+                                disabled={
+                                  busy ||
+                                  !programmeId ||
+                                  (!activeTopicPrefs.includeVideos && !activeTopicPrefs.includePdfs)
+                                }
                                 onClick={() => handleDownloadNew([activeTopic.id])}
                               >
                                 {busy ? (
@@ -797,11 +1085,16 @@ const TelegramImportPage = () => {
                                 Download {activeTopic.newCount} new
                               </button>
                             )}
-                            {activeTopic.importedCount === 0 && (
+                            {!topicInCourse(activeTopic) && (
                               <button
                                 type="button"
                                 className="btn-secondary text-xs"
-                                disabled={busy || !programmeId}
+                                disabled={
+                                  busy ||
+                                  !programmeId ||
+                                  (!activeTopicPrefs.includeVideos && !activeTopicPrefs.includePdfs) ||
+                                  (activeTopic.mediaLoaded && activeImportableCount === 0)
+                                }
                                 onClick={() => handleAddSubjects([activeTopic.id])}
                               >
                                 {busy ? (
@@ -811,6 +1104,65 @@ const TelegramImportPage = () => {
                                 )}{" "}
                                 Add to course
                               </button>
+                            )}
+                          </div>
+
+                          <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                              Import to course
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              Choose videos, PDFs, or both. Future &quot;Download new&quot; syncs use the same choice.
+                            </p>
+                            <div className="mt-2 flex flex-wrap gap-4">
+                              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                                <input
+                                  type="checkbox"
+                                  className="shrink-0"
+                                  checked={activeTopicPrefs.includeVideos}
+                                  disabled={
+                                    busy ||
+                                    (!activeTopicPrefs.includePdfs && activeTopicPrefs.includeVideos)
+                                  }
+                                  onChange={(e) =>
+                                    setTopicMediaPref(activeTopic.id, "includeVideos", e.target.checked)
+                                  }
+                                />
+                                <FiPlay size={14} className="text-teal-600" />
+                                Videos ({mediaCounts.video})
+                              </label>
+                              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                                <input
+                                  type="checkbox"
+                                  className="shrink-0"
+                                  checked={activeTopicPrefs.includePdfs}
+                                  disabled={
+                                    busy ||
+                                    (!activeTopicPrefs.includeVideos && activeTopicPrefs.includePdfs)
+                                  }
+                                  onChange={(e) =>
+                                    setTopicMediaPref(activeTopic.id, "includePdfs", e.target.checked)
+                                  }
+                                />
+                                <FiFileText size={14} className="text-teal-600" />
+                                PDFs ({mediaCounts.pdf})
+                              </label>
+                            </div>
+                            {!activeTopicPrefs.includeVideos && !activeTopicPrefs.includePdfs && (
+                              <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">
+                                Select at least one type to import.
+                              </p>
+                            )}
+                            {activeTopic.mediaLoaded && activeImportableCount > 0 && (
+                              <p className="mt-2 text-xs text-slate-500">
+                                Will import {activeImportableCount} selected lesson
+                                {activeImportableCount === 1 ? "" : "s"} in the order shown below.
+                              </p>
+                            )}
+                            {activeTopic.mediaLoaded && activeImportableCount === 0 && (
+                              <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">
+                                Select at least one lesson in the list below.
+                              </p>
                             )}
                           </div>
 
@@ -870,16 +1222,71 @@ const TelegramImportPage = () => {
                                 Loading lessons from Telegram…
                               </div>
                             )}
-                            {filteredMedia.map((item) => (
+                            {activeTopic?.mediaLoaded && selectableMediaInView.length > 0 && (
+                              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40">
+                                <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                                  Pick lessons, rename titles, and set playback order
+                                </p>
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    className="btn-ghost text-xs"
+                                    disabled={busy}
+                                    onClick={() => setAllLessonsSelected(activeTopic.id, true)}
+                                  >
+                                    Select all
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn-ghost text-xs"
+                                    disabled={busy}
+                                    onClick={() => setAllLessonsSelected(activeTopic.id, false)}
+                                  >
+                                    Clear all
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                            {filteredMedia.map((item, index) => {
+                              const planEntry = activeLessonPlan?.entries[item.messageId];
+                              const orderIndex = activeLessonPlan?.order?.indexOf(item.messageId) ?? -1;
+                              const canReorder = !item.imported && orderIndex >= 0;
+                              const displayTitle =
+                                planEntry?.displayName ??
+                                (item.imported ? mediaDisplayName(item) : suggestLessonTitle(item));
+
+                              return (
                               <div
                                 key={item.messageId}
                                 className={`flex flex-col gap-2 rounded-xl border p-3 sm:flex-row sm:items-start sm:gap-3 ${
                                   item.imported
                                     ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/40 dark:bg-emerald-950/20"
-                                    : "border-slate-200 dark:border-slate-700"
+                                    : planEntry?.selected === false
+                                      ? "border-slate-200 opacity-70 dark:border-slate-700"
+                                      : "border-slate-200 dark:border-slate-700"
                                 }`}
                               >
                                 <div className="flex min-w-0 flex-1 items-start gap-3">
+                                  {!item.imported ? (
+                                    <input
+                                      type="checkbox"
+                                      className="mt-1 shrink-0"
+                                      checked={planEntry?.selected !== false}
+                                      disabled={busy}
+                                      onChange={(e) =>
+                                        setLessonSelected(activeTopic.id, item.messageId, e.target.checked)
+                                      }
+                                    />
+                                  ) : (
+                                    <span className="mt-1 flex h-4 w-4 shrink-0 items-center justify-center text-emerald-600">
+                                      <FiCheck size={14} />
+                                    </span>
+                                  )}
+                                  {!item.imported && canReorder && (
+                                    <span className="mt-0.5 w-5 shrink-0 text-center text-xs font-semibold text-slate-400">
+                                      {orderIndex + 1}
+                                    </span>
+                                  )}
                                   <button
                                     type="button"
                                     className="mt-0.5 shrink-0 text-teal-600"
@@ -889,20 +1296,70 @@ const TelegramImportPage = () => {
                                   >
                                     {item.mediaType === "video" ? <FiPlay size={16} /> : <FiFileText size={16} />}
                                   </button>
-                                  <div className="min-w-0 flex-1">
-                                    <p className="truncate font-medium">{mediaDisplayName(item)}</p>
-                                    <p className="text-xs text-slate-500">{formatTelegramMediaMeta(item)}</p>
+                                  <div className="min-w-0 flex-1 space-y-1">
+                                    {!item.imported ? (
+                                      <input
+                                        className="input w-full text-sm"
+                                        value={displayTitle}
+                                        disabled={busy}
+                                        onChange={(e) =>
+                                          setLessonDisplayName(
+                                            activeTopic.id,
+                                            item.messageId,
+                                            e.target.value
+                                          )
+                                        }
+                                        placeholder="Lesson title in your course"
+                                      />
+                                    ) : (
+                                      <p className="truncate font-medium">{displayTitle}</p>
+                                    )}
+                                    <p className="text-xs text-slate-500">
+                                      {formatTelegramMediaMeta(item)}
+                                      {!item.imported && item.fileName && item.fileName !== displayTitle ? (
+                                        <span className="text-slate-400"> · Telegram: {mediaDisplayName(item)}</span>
+                                      ) : null}
+                                    </p>
                                   </div>
                                 </div>
-                                {item.imported ? (
-                                  <span className="flex shrink-0 items-center gap-1 self-start text-xs font-semibold text-emerald-600 sm:self-center">
-                                    <FiCheck size={12} /> In course
-                                  </span>
-                                ) : (
-                                  <span className="shrink-0 self-start text-xs font-medium text-amber-600 sm:self-center">New</span>
-                                )}
+                                <div className="flex shrink-0 items-center gap-1 self-start sm:self-center">
+                                  {!item.imported && canReorder && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="btn-ghost p-1"
+                                        disabled={busy || orderIndex <= 0}
+                                        onClick={() => moveLessonInPlan(activeTopic.id, item.messageId, -1)}
+                                        aria-label="Move up"
+                                      >
+                                        <FiChevronUp size={16} />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn-ghost p-1"
+                                        disabled={
+                                          busy ||
+                                          orderIndex < 0 ||
+                                          orderIndex >= (activeLessonPlan?.order?.length || 0) - 1
+                                        }
+                                        onClick={() => moveLessonInPlan(activeTopic.id, item.messageId, 1)}
+                                        aria-label="Move down"
+                                      >
+                                        <FiChevronDown size={16} />
+                                      </button>
+                                    </>
+                                  )}
+                                  {item.imported ? (
+                                    <span className="flex items-center gap-1 text-xs font-semibold text-emerald-600">
+                                      <FiCheck size={12} /> In course
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs font-medium text-amber-600">New</span>
+                                  )}
+                                </div>
                               </div>
-                            ))}
+                            );
+                            })}
                             {!filteredMedia.length && !topicMediaLoading && (
                               <p className="text-sm text-slate-400">No lessons in this subject yet.</p>
                             )}

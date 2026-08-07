@@ -155,6 +155,8 @@ const DashboardPage = () => {
   const [renamingSubjectId, setRenamingSubjectId] = useState("");
   const [deletingSubjectId, setDeletingSubjectId] = useState("");
   const [deletingContentId, setDeletingContentId] = useState("");
+  const [reorderingContentId, setReorderingContentId] = useState("");
+  const [togglingLessonCompletedId, setTogglingLessonCompletedId] = useState("");
   const [clearingCourse, setClearingCourse] = useState(false);
   const [updateProgress, setUpdateProgress] = useState(null);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
@@ -167,6 +169,7 @@ const DashboardPage = () => {
     loadingSubjectContents,
     fetchSubjectCourseContents,
     removeCourseContent,
+    patchCourseContent,
   } = useDashboardCourseContents({
     selectedProgrammeId,
     activeCourseSubjectId,
@@ -963,6 +966,28 @@ const DashboardPage = () => {
     }
   };
 
+  const handleReorderContent = async (item, direction) => {
+    if (!item?._id || !activeCourseSubjectId) return;
+    setReorderingContentId(item._id);
+    try {
+      const { data } = await api.patch("/contents/reorder", {
+        subjectId: activeCourseSubjectId,
+        contentId: item._id,
+        direction,
+      });
+      if (data.moved) {
+        await Promise.all([
+          fetchSubjectCourseContents(activeCourseSubjectId),
+          fetchContents(),
+        ]);
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Could not reorder lesson");
+    } finally {
+      setReorderingContentId("");
+    }
+  };
+
   const handleCreateOrUpdateSubject = async (payload) => {
     try {
       if (subjectModal?._id) {
@@ -1212,6 +1237,19 @@ const DashboardPage = () => {
       await Promise.all([fetchContents(), refreshCourseData(), fetchProgress(), fetchChapterStats()]);
     } catch (error) {
       toast.error(error.response?.data?.message || "Could not update progress");
+    }
+  };
+
+  const handleToggleLessonCompleted = async (item) => {
+    setTogglingLessonCompletedId(item._id);
+    try {
+      const { data } = await api.post(`/progress/toggle/${item._id}`);
+      patchCourseContent(item._id, { completed: Boolean(data.completed) });
+      await fetchChapterStats();
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Could not update progress");
+    } finally {
+      setTogglingLessonCompletedId("");
     }
   };
 
@@ -1491,6 +1529,8 @@ const DashboardPage = () => {
             onDeleteSubject={handleDeleteSubjectById}
             onDeleteContent={handleDeleteContentItem}
             onRenameContent={handleRenameContentItem}
+            onReorderContent={handleReorderContent}
+            reorderingContentId={reorderingContentId}
             onRenameSubject={handleRenameSubject}
             onClearCourse={handleClearCourse}
             subjectUpdates={enrichedSubjectUpdates}
@@ -1506,6 +1546,8 @@ const DashboardPage = () => {
             deletingSubjectId={deletingSubjectId}
             deletingContentId={deletingContentId}
             clearingCourse={clearingCourse}
+            onToggleCompleted={handleToggleLessonCompleted}
+            togglingCompletedId={togglingLessonCompletedId}
           />
         )}
 

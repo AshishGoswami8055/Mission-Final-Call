@@ -11,7 +11,7 @@ const studySessionSchema = new mongoose.Schema(
     date: { type: String, required: true, index: true },
     type: {
       type: String,
-      enum: ["video", "reading", "mock", "mission"],
+      enum: ["video", "reading", "mock", "mission", "vocabulary"],
       required: true,
     },
     contentId: { type: mongoose.Schema.Types.ObjectId, ref: "Content", default: null },

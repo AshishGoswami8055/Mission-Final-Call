@@ -4,6 +4,10 @@
   "description": "CDSJourney Course Manager backend",
   "type": "module",
   "main": "src/server.js",
+  "engines": {
+    "node": ">=20",
+    "npm": ">=10"
+  },
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
@@ -21,17 +25,17 @@
     "bcryptjs": "^3.0.3",
     "cloudinary": "^2.10.0",
     "cors": "^2.8.6",
-    "dotenv": "^17.3.1",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "express-validator": "^7.3.1",
+    "express-validator": "^7.3.2",
     "googleapis": "^171.4.0",
-    "helmet": "^8.1.0",
+    "helmet": "^8.3.0",
     "input": "^1.0.1",
     "jsonwebtoken": "^9.0.3",
-    "mongoose": "^9.2.3",
-    "morgan": "^1.10.1",
-    "multer": "^2.1.0",
-    "openai": "^6.25.0",
+    "mongoose": "^9.9.1",
+    "morgan": "^1.11.0",
+    "multer": "^2.2.0",
+    "openai": "^6.49.0",
     "pdf-parse": "^2.4.5",
     "telegram": "^2.26.22",
     "tesseract.js": "^7.0.0",
@@ -39,5 +43,12 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
+  },
+  "allowScripts": {
+    "bufferutil@4.1.0": true,
+    "core-js@2.6.12": true,
+    "es5-ext@0.10.64": true,
+    "tesseract.js@7.0.0": true,
+    "utf-8-validate@5.0.10": true
   }
 }

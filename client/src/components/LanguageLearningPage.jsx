@@ -21,7 +21,17 @@ const emptyForm = {
   meaning: "",
   example: "",
   synonyms: "",
+  antonyms: "",
+  relatedWords: "",
   tags: "",
+  rootWord: "",
+  rootMeaning: "",
+  partOfSpeech: "",
+  mnemonic: "",
+  examTag: "",
+  difficulty: "medium",
+  clozeSentence: "",
+  favorite: false,
   level: "new",
 };
 
@@ -61,6 +71,10 @@ const LanguageLearningPage = ({
   const [dueOnly, setDueOnly] = useState(false);
   const [sort, setSort] = useState("due");
   const [alphaFilter, setAlphaFilter] = useState("");
+  const [difficulty, setDifficulty] = useState("");
+  const [status, setStatus] = useState("");
+  const [rootWord, setRootWord] = useState("");
+  const [examTag, setExamTag] = useState("");
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
 
@@ -106,7 +120,17 @@ const LanguageLearningPage = ({
       meaning: item.meaning || "",
       example: item.example || "",
       synonyms: (item.synonyms || []).join(", "),
+      antonyms: (item.antonyms || []).join(", "),
+      relatedWords: (item.relatedWords || []).join(", "),
       tags: (item.tags || []).join(", "),
+      rootWord: item.rootWord || "",
+      rootMeaning: item.rootMeaning || "",
+      partOfSpeech: item.partOfSpeech || "",
+      mnemonic: item.mnemonic || "",
+      examTag: item.examTag || "",
+      difficulty: item.difficulty || "medium",
+      clozeSentence: item.clozeSentence || "",
+      favorite: Boolean(item.favorite),
       level: item.level || "new",
     });
     setShowModal(true);
@@ -123,6 +147,10 @@ const LanguageLearningPage = ({
     if (search) params.search = search;
     if (level) params.level = level;
     if (alphaFilter) params.alpha = alphaFilter;
+    if (difficulty) params.difficulty = difficulty;
+    if (status) params.status = status;
+    if (rootWord) params.rootWord = rootWord;
+    if (examTag) params.examTag = examTag;
     if (alphaMode) params.all = true;
     const { data } = await api.get("/vocabulary", { params });
     setItems(data.items || []);
@@ -155,7 +183,10 @@ const LanguageLearningPage = ({
   };
 
   useEffect(() => {
-    refresh();
+    const timer = window.setTimeout(() => void refresh(), 0);
+    return () => window.clearTimeout(timer);
+    // The refresh functions intentionally capture the current item type.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemType]);
 
   useEffect(() => {
@@ -169,12 +200,16 @@ const LanguageLearningPage = ({
         setLoading(false);
       }
     };
-    run();
-  }, [search, level, dueOnly, sort, alphaFilter, page, itemType]);
+    const timer = window.setTimeout(() => void run(), 0);
+    return () => window.clearTimeout(timer);
+    // List filters define the request; handlers are intentionally local.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, level, dueOnly, sort, alphaFilter, difficulty, status, rootWord, examTag, page, itemType]);
 
   useEffect(() => {
-    setPage(1);
-  }, [search, level, dueOnly, sort, alphaFilter]);
+    const timer = window.setTimeout(() => setPage(1), 0);
+    return () => window.clearTimeout(timer);
+  }, [search, level, dueOnly, sort, alphaFilter, difficulty, status, rootWord, examTag]);
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -191,7 +226,17 @@ const LanguageLearningPage = ({
         meaning: form.meaning.trim(),
         example: form.example.trim(),
         synonyms: form.synonyms,
+        antonyms: form.antonyms,
+        relatedWords: form.relatedWords,
         tags: form.tags,
+        rootWord: form.rootWord.trim(),
+        rootMeaning: form.rootMeaning.trim(),
+        partOfSpeech: form.partOfSpeech.trim(),
+        mnemonic: form.mnemonic.trim(),
+        examTag: form.examTag.trim(),
+        difficulty: form.difficulty,
+        clozeSentence: form.clozeSentence.trim(),
+        favorite: form.favorite,
         level: form.level,
       };
       if (editingItem?._id) {
@@ -403,7 +448,7 @@ const LanguageLearningPage = ({
           )}
         </section>
 
-        <section className="card grid gap-2 p-3 sm:p-4 md:grid-cols-4">
+        <section className="card grid gap-2 p-3 sm:p-4 md:grid-cols-2 xl:grid-cols-4">
           <select className="input" value={level} onChange={(e) => setLevel(e.target.value)}>
             <option value="">All levels</option>
             <option value="new">New</option>
@@ -415,6 +460,20 @@ const LanguageLearningPage = ({
             <option value="newest">Newest</option>
             <option value="oldest">Oldest</option>
             <option value="word">A-Z</option>
+            <option value="recentlyWrong">Recently wrong</option>
+            <option value="mistakes">Most mistakes</option>
+          </select>
+          <select className="input" value={difficulty} onChange={(e) => setDifficulty(e.target.value)}>
+            <option value="">All difficulties</option>
+            <option value="easy">Easy</option>
+            <option value="medium">Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+          <select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="">All confidence states</option>
+            <option value="weak">Weak</option>
+            <option value="new">New</option>
+            <option value="mastered">Mastered</option>
           </select>
           <select className="input" value={alphaFilter} onChange={(e) => setAlphaFilter(e.target.value)}>
             {alphaOptions.map((option) => (
@@ -423,6 +482,8 @@ const LanguageLearningPage = ({
               </option>
             ))}
           </select>
+          <input className="input" placeholder="Filter root word…" value={rootWord} onChange={(e) => setRootWord(e.target.value)} />
+          <input className="input" placeholder="Filter exam tag…" value={examTag} onChange={(e) => setExamTag(e.target.value)} />
           <label className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 text-sm dark:border-white/[0.06]">
             <input type="checkbox" checked={dueOnly} onChange={(e) => setDueOnly(e.target.checked)} />
             Due only
@@ -582,21 +643,33 @@ const LanguageLearningPage = ({
                 value={form.synonyms}
                 onChange={(e) => setForm((prev) => ({ ...prev, synonyms: e.target.value }))}
               />
-              <input
-                className="input"
-                placeholder="Tags (comma separated)"
-                value={form.tags}
-                onChange={(e) => setForm((prev) => ({ ...prev, tags: e.target.value }))}
-              />
-              <select
-                className="input"
-                value={form.level}
-                onChange={(e) => setForm((prev) => ({ ...prev, level: e.target.value }))}
-              >
-                <option value="new">New</option>
-                <option value="learning">Learning</option>
-                <option value="mastered">Mastered</option>
-              </select>
+              <input className="input" placeholder="Antonyms (comma separated)" value={form.antonyms} onChange={(e) => setForm((prev) => ({ ...prev, antonyms: e.target.value }))} />
+              <input className="input" placeholder="Related / confusing words (comma separated)" value={form.relatedWords} onChange={(e) => setForm((prev) => ({ ...prev, relatedWords: e.target.value }))} />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <input className="input" placeholder="Root word (e.g. chron)" value={form.rootWord} onChange={(e) => setForm((prev) => ({ ...prev, rootWord: e.target.value }))} />
+                <input className="input" placeholder="Root meaning (e.g. time)" value={form.rootMeaning} onChange={(e) => setForm((prev) => ({ ...prev, rootMeaning: e.target.value }))} />
+                <input className="input" placeholder="Part of speech" value={form.partOfSpeech} onChange={(e) => setForm((prev) => ({ ...prev, partOfSpeech: e.target.value }))} />
+                <input className="input" placeholder="Exam tag (CDS/PYQ/theme)" value={form.examTag} onChange={(e) => setForm((prev) => ({ ...prev, examTag: e.target.value }))} />
+              </div>
+              <textarea className="input min-h-20" placeholder="Mnemonic / memory trick" value={form.mnemonic} onChange={(e) => setForm((prev) => ({ ...prev, mnemonic: e.target.value }))} />
+              <textarea className="input min-h-20" placeholder="Cloze sentence (include the word)" value={form.clozeSentence} onChange={(e) => setForm((prev) => ({ ...prev, clozeSentence: e.target.value }))} />
+              <input className="input" placeholder="Tags (comma separated)" value={form.tags} onChange={(e) => setForm((prev) => ({ ...prev, tags: e.target.value }))} />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <select className="input" value={form.difficulty} onChange={(e) => setForm((prev) => ({ ...prev, difficulty: e.target.value }))}>
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                </select>
+                <select className="input" value={form.level} onChange={(e) => setForm((prev) => ({ ...prev, level: e.target.value }))}>
+                  <option value="new">New</option>
+                  <option value="learning">Learning</option>
+                  <option value="mastered">Mastered</option>
+                </select>
+              </div>
+              <label className="flex items-center gap-2 text-sm font-medium text-slate-600 dark:text-slate-300">
+                <input type="checkbox" checked={form.favorite} onChange={(e) => setForm((prev) => ({ ...prev, favorite: e.target.checked }))} />
+                Mark as favorite
+              </label>
               <div className="flex gap-2">
                 <button
                   type="button"

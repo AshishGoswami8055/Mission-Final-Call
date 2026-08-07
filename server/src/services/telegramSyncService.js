@@ -1,9 +1,10 @@
 import TelegramChannelMapping from "../models/TelegramChannelMapping.js";
+import Programme from "../models/Programme.js";
 import Subject from "../models/Subject.js";
 import { filterTopicIdsForSyncWrite } from "./telegramSubjectBlocklist.js";
-import { importBatchByForumTopics } from "./telegramMappingService.js";
+import { importBatchByForumTopics, repairSubjectTelegramLinks } from "./telegramMappingService.js";
 import { importBatchByFlatSubjects } from "./telegramFlatChannelService.js";
-import { getActiveSession } from "./telegramService.js";
+import { getActiveSession, getActiveStreamCount } from "./telegramService.js";
 
 let syncInterval = null;
 let syncRunning = false;
@@ -128,6 +129,10 @@ export const syncChannelMapping = async (mapping) => {
 
 export const syncAllAutoChannels = async () => {
   if (syncRunning) return { skipped: true };
+  if (getActiveStreamCount() > 0) {
+    console.log("[telegram-sync] Skipped — video playback in progress");
+    return { skipped: true, reason: "playback" };
+  }
   syncRunning = true;
   try {
     const mappings = await TelegramChannelMapping.find({
@@ -155,5 +160,40 @@ export const startTelegramAutoSync = (intervalMs = 15 * 60 * 1000) => {
       console.warn("[telegram-sync]", err.message);
     });
   }, intervalMs);
-  console.log(`[telegram-sync] Background lesson download enabled (every ${Math.round(intervalMs / 60000)} min)`);
+  console.log(
+    `[telegram-sync] Background lesson download scheduled (every ${Math.round(intervalMs / 60000)} min, skips while you watch)`
+  );
+};
+
+/** Runs after Telegram warm-connect so startup maintenance never blocks video playback. */
+export const runTelegramStartupMaintenance = async () => {
+  if (process.env.TELEGRAM_AUTO_SYNC === "false") return;
+
+  await pruneAllOrphanedSyncTopics().catch((err) => {
+    console.warn("[telegram-sync] Startup prune failed:", err.message);
+  });
+
+  const skipRepair =
+    process.env.TELEGRAM_STARTUP_REPAIR === "false" ||
+    (process.env.NODE_ENV !== "production" && process.env.TELEGRAM_STARTUP_REPAIR !== "true");
+
+  if (!skipRepair) {
+    const programmes = await Programme.find({}).select("_id");
+    let repaired = 0;
+    for (const programme of programmes) {
+      if (getActiveStreamCount() > 0) {
+        console.log("[telegram-sync] Startup repair paused — playback in progress");
+        break;
+      }
+      const result = await repairSubjectTelegramLinks({ programmeId: programme._id }).catch(() => ({
+        repaired: 0,
+      }));
+      repaired += result.repaired || 0;
+    }
+    if (repaired) {
+      console.log(`[telegram] Repaired stale topic links for ${repaired} subject(s)`);
+    }
+  }
+
+  startTelegramAutoSync(Number(process.env.TELEGRAM_SYNC_INTERVAL_MS) || 15 * 60 * 1000);
 };

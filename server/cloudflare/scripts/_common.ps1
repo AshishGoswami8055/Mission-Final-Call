@@ -38,7 +38,7 @@ function Write-LogLine {
 
 function Test-LocalApi {
     try {
-        $r = Invoke-WebRequest -Uri "http://127.0.0.1:5000/api/health" -UseBasicParsing -TimeoutSec 5
+        $r = Invoke-WebRequest -Uri "http://127.0.0.1:5001/api/health" -UseBasicParsing -TimeoutSec 5
         return @{ ok = ($r.StatusCode -eq 200); body = $r.Content }
     } catch {
         return @{ ok = $false; body = $_.Exception.Message }

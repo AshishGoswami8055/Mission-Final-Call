@@ -3,14 +3,29 @@ import Plyr from "plyr";
 import "plyr/dist/plyr.css";
 import "../styles/plyr-overrides.css";
 import { applyVideoSource } from "../utils/videoScreenshot";
+import { attachTimelineScrubPreview } from "../utils/timelineScrubPreview";
 
 const STALL_RETRY_MS = 18000;
 const MAX_STALL_RETRIES = 2;
 
-/**
- * Plyr wrapper that owns the <video> element imperatively so React never
- * reconciles nodes Plyr moves. Mount once per lesson (key={contentId}).
- */
+const CONTROL_PRESETS = {
+  full: [
+    "play-large",
+    "rewind",
+    "play",
+    "fast-forward",
+    "progress",
+    "current-time",
+    "duration",
+    "mute",
+    "volume",
+    "settings",
+    "pip",
+    "fullscreen",
+  ],
+  minimal: ["play-large", "play", "mute", "volume", "settings", "pip", "fullscreen"],
+};
+
 const CdsPlyrPlayer = ({
   contentId,
   src = "",
@@ -27,9 +42,15 @@ const CdsPlyrPlayer = ({
   onPause,
   onEnded,
   onStalled,
+  controlsPreset = "full",
+  autoPlay = false,
+  scrubPreviewEnabled = false,
 }) => {
   const hostRef = useRef(null);
   const plyrRef = useRef(null);
+  const scrubPreviewEnabledRef = useRef(scrubPreviewEnabled);
+  const scrubPreviewSetupRef = useRef(null);
+  const scrubPreviewHandleRef = useRef(null);
   const internalVideoRef = useRef(null);
   const appliedSrcRef = useRef("");
   const srcRef = useRef(src);
@@ -50,7 +71,16 @@ const CdsPlyrPlayer = ({
     onStalled,
   });
 
+  const autoPlayRef = useRef(autoPlay);
+  autoPlayRef.current = autoPlay;
+
   srcRef.current = src;
+  scrubPreviewEnabledRef.current = scrubPreviewEnabled;
+
+  useEffect(() => {
+    scrubPreviewEnabledRef.current = scrubPreviewEnabled;
+    scrubPreviewSetupRef.current?.();
+  }, [scrubPreviewEnabled, src]);
 
   useEffect(() => {
     onScreenshotRef.current = onScreenshot;
@@ -133,6 +163,11 @@ const CdsPlyrPlayer = ({
         touchProgress(video);
         stallRetriesRef.current = 0;
         eventRefs.current.onLoadedMetadata?.();
+        if (autoPlayRef.current) {
+          void video.play().catch(() => {
+            /* browser may block autoplay until user gesture */
+          });
+        }
       },
       durationchange: () => eventRefs.current.onDurationChange?.(),
       progress: () => {
@@ -170,6 +205,9 @@ const CdsPlyrPlayer = ({
       if (screenshotBtn && onScreenshotClick) {
         screenshotBtn.removeEventListener("click", onScreenshotClick);
       }
+      scrubPreviewHandleRef.current?.destroy();
+      scrubPreviewHandleRef.current = null;
+      scrubPreviewSetupRef.current = null;
       try {
         player?.destroy();
       } catch {
@@ -222,20 +260,7 @@ const CdsPlyrPlayer = ({
         seekTime: 5,
         keyboard: { focused: true, global: true },
         clickToPlay: true,
-        controls: [
-          "play-large",
-          "rewind",
-          "play",
-          "fast-forward",
-          "progress",
-          "current-time",
-          "duration",
-          "mute",
-          "volume",
-          "settings",
-          "pip",
-          "fullscreen",
-        ],
+        controls: CONTROL_PRESETS[controlsPreset] || CONTROL_PRESETS.full,
         settings: ["speed"],
         speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] },
         tooltips: { controls: true, seek: true },
@@ -243,6 +268,20 @@ const CdsPlyrPlayer = ({
         storage: { enabled: false },
       });
       plyrRef.current = player;
+
+      const setupScrubPreview = () => {
+        scrubPreviewHandleRef.current?.destroy();
+        scrubPreviewHandleRef.current = null;
+        if (!scrubPreviewEnabledRef.current || !srcRef.current) return;
+        const container = player?.elements?.container;
+        if (!container) return;
+        scrubPreviewHandleRef.current = attachTimelineScrubPreview({
+          rootEl: container,
+          src: srcRef.current,
+          getDuration: () => player?.duration || 0,
+        });
+      };
+      scrubPreviewSetupRef.current = setupScrubPreview;
 
       const injectScreenshotButton = () => {
         const controls = player?.elements?.controls;
@@ -260,7 +299,10 @@ const CdsPlyrPlayer = ({
         controls.insertBefore(screenshotBtn, fullscreenBtn || null);
       };
 
-      player.on("ready", injectScreenshotButton);
+      player.on("ready", () => {
+        injectScreenshotButton();
+        setupScrubPreview();
+      });
       window.setTimeout(injectScreenshotButton, 0);
     });
 

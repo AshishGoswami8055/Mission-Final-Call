@@ -21,18 +21,19 @@ The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, p
 | **Course organization** | CDS cycle → coaching batch (Programme) → Subject → Chapter → Content (video/PDF) |
 | **Content ingestion** | File upload, URL, YouTube download→Cloudinary (dev), Telegram import (forum/flat channels), Telegram video links (prod) |
 | **Telegram** | GramJS login, channel browse, batch import, auto-sync, stream proxy, optional cloudify to Cloudinary |
-| **Video playback** | **Plyr** player (`CdsPlyrPlayer`), HTML5 local, Cloudinary CDN, Telegram stream, YouTube embed, screenshot notes, resume position, stall watchdog + retry, Telegram live-connection banner |
+| **Video playback** | **Plyr** player (`CdsPlyrPlayer`), HTML5 local, Cloudinary CDN, Telegram stream, YouTube embed, screenshot notes, resume position, stall watchdog + retry, Telegram live-connection banner, **timeline scrub previews** when fully cached or PC-library downloaded |
 | **PDF / PYQ** | Inline viewer, course PDFs on disk, PYQ on Cloudinary, **AI question extract** (`POST /papers/:id/extract`), optional OCR via `ocrmypdf` on upload |
 | **Progress** | Per-content completion, chapter stats, paper attempted tracking |
-| **Dashboard** | Lazy course loading — subject stats from `/chapters/stats`; lesson rows fetched only when a subject is opened; library view paginated (`limit=20`) |
-| **Vocabulary** | Vocabulary / Idioms / One-word substitution with SRS (`again`/`good`/`easy`), CSV/Excel/image OCR import |
+| **Dashboard** | Lazy course loading — subject stats from `/chapters/stats`; lesson rows fetched only when a subject is opened; library view paginated (`limit=20`); **↑↓ lesson reorder**; mark-as-done on lesson rows |
+| **CDS Vocabulary Arena** | Active-practice dashboard; mixed/MCQ/reverse/typing/context/weak/root/exam drills; deterministic SRS; session analytics; root families; CSV/Excel/OCR/text preview import; idioms + one-word substitution share the same corpus |
 | **Study tracker** | Daily minutes, per-subject targets, watch history, exam countdown, celebration overlays |
 | **Daily Mission** (`/mission`) | Auto-generated daily plan: 1 English + 1 Maths + 1 GS video + reading; Sunday mock; AI briefing; discipline score; streaks |
 | **Analytics** | Study intelligence (`/history/intelligence`), weekly charts, mock trends, video streak (60 min/day goal) |
-| **Local PC library** | Download videos to `uploads/_local_library/` for smooth playback (local server only) |
-| **Playback cache** | Server-side Telegram stream cache for smoother seeking |
+| **Local PC library** | Download videos to `{LOCAL_MEDIA_ROOT}/_local_library/` for smooth playback (local server only) |
+| **Stream cache** | Auto disk cache while streaming Telegram on localhost (`{LOCAL_MEDIA_ROOT}/_stream_cache/`, `TELEGRAM_STREAM_CACHE=1`, play-first — no blocking on cache miss) |
+| **Playback cache** | Server-side Telegram stream cache for smoother seeking (`_playback_cache/`) |
 | **Cloudinary multi-account** | Per-subject cloud mapping, **`/cloudinary` storage dashboard** (usage, remaining space, console links), automatic asset delete on content/paper removal, PYQ on dedicated cloud |
-| **Telegram UX** | Live connection check on video refresh, “Check for updates” with progress overlay, optimized batch update scan (`fetchNewChannelMediaSince`) |
+| **Telegram UX** | Live connection check on video refresh, “Check for updates” with progress overlay, optimized batch update scan (`fetchNewChannelMediaSince`), **curated import** (pick lessons per topic), **duplicate/skip-aware updates** (no false “N new” for intentionally skipped duplicates) |
 | **Admin auth** | Single JWT-protected admin (auto-seeded from env) |
 
 ## Target Users
@@ -75,7 +76,7 @@ The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, p
 | Spreadsheet | xlsx (vocab import) |
 | Security | helmet, cors, express-validator |
 | Logging | morgan |
-| Testing | Node.js built-in test runner — `npm test` in `server/` (auth, Cloudinary cleanup, mission scoring, Telegram helpers); GitHub Actions CI |
+| Testing | Node.js built-in test runner — `npm test` in `server/` (auth, Cloudinary cleanup, mission scoring, Telegram helpers, **contentSort**, **telegramImportFilters**); GitHub Actions CI |
 
 ## Database
 
@@ -119,10 +120,11 @@ d:\1. Projects\CDS JOURNEY OTA\
 │       ├── constants/streak.js   # VIDEO_STREAK_GOAL_MINUTES = 60
 │       ├── context/              # AuthContext, StudyContext, ThemeContext
 │       ├── hooks/                # useDashboardCourseContents, useTelegramPlaybackStatus, useWorkspaceCapabilities
-│       ├── components/           # Reusable UI (Layout, CdsPlyrPlayer, TelegramConnectionStatus, modals, mission/*, streak/*)
-│       ├── pages/                # Route-level pages (incl. CloudinaryStoragePage)
+│       ├── components/           # Reusable UI (Layout, CdsPlyrPlayer, SubjectLessonAccordion, TelegramConnectionStatus, VideoCacheStatusBar, modals, mission/*, streak/*)
+│       ├── pages/                # Route-level pages (incl. CloudinaryStoragePage, LocalMediaStoragePage)
+│       ├── config/navItems.js    # Sidebar nav (incl. PC Media Storage — localOnly)
 │       ├── styles/               # plyr-overrides.css (teal Plyr theme + screenshot button)
-│       └── utils/                # media.js, videoScreenshot.js, uploadProgress, screenshotNotes, etc.
+│       └── utils/                # media.js, contentSort.js, videoScreenshot.js, timelineScrubPreview.js, telegramLessonPlan.js, uploadProgress, screenshotNotes, etc.
 │
 ├── server/                       # Express backend (MVC)
 │   ├── package.json
@@ -141,13 +143,14 @@ d:\1. Projects\CDS JOURNEY OTA\
 │       ├── models/               # Mongoose schemas
 │       ├── routes/               # Express routers
 │       ├── services/             # Business logic (Telegram, Cloudinary, mission, cleanup, etc.)
-│       └── utils/                # Helpers (content, chapters, cloudinaryAsset, slugify, buckets)
+│       └── utils/                # Helpers (content, contentSort, telegramImportFilters, chapters, cloudinaryAsset, slugify, buckets)
 │
-└── uploads/                      # Local media root (sibling of server/, not inside it)
+└── uploads/                      # Default local media root (override with LOCAL_MEDIA_ROOT env)
     ├── _tmp_videos/              # Multer scratch before YouTube→Cloudinary or delete
     ├── _tmp_papers/              # Multer scratch before PYQ→Cloudinary
     ├── _local_library/           # PC library downloads (meta.json + video files)
-    ├── _playback_cache/          # Telegram stream cache files
+    ├── _stream_cache/            # Auto Telegram stream cache while watching (localhost)
+    ├── _playback_cache/          # Manual/on-demand Telegram playback cache files
     ├── CDS 2 2026/               # Default active cycle folder
     │   └── <BatchSlug>/subjects/<Subject>/pdfs/<file>.pdf
     └── papers/PYQ/<year>/        # Legacy on-disk PYQ (boot migration only)
@@ -157,9 +160,16 @@ d:\1. Projects\CDS JOURNEY OTA\
 
 | File | Role |
 |------|------|
-| `client/src/utils/media.js` | **`resolveContentSrc()`**, `preferSameOriginMediaUrl()`, `resolveVideoPlaybackUrl()` — canonical playback URLs (Vite proxy `/api`) |
+| `client/src/utils/contentSort.js` | **`sortSubjectContents()`** — shared lesson order (dashboard, Play all, player playlist); uses `importSortOrder` then `telegramMessageId` |
+| `client/src/utils/timelineScrubPreview.js` | YouTube-style hover thumbnails on progress bar when video is fully stream-cached or PC-library downloaded |
+| `client/src/components/SubjectLessonAccordion.jsx` | Subject lesson list — Videos/PDFs tabs, mark done, rename, delete, **↑↓ reorder** |
+| `client/src/pages/LocalMediaStoragePage.jsx` | `/settings/pc-media` — LOCAL_MEDIA_ROOT path, disk usage for library/stream/playback caches |
+| `server/src/utils/contentSort.js` | Server mirror of client sort (reorder API, merge playlists) |
+| `server/src/utils/telegramImportFilters.js` | Duplicate title detection, user-skipped Telegram message IDs, update-count filtering |
+| `server/src/config/mediaStorage.js` | `LOCAL_MEDIA_ROOT`, paths for `_local_library`, `_stream_cache`, `_playback_cache` |
 | `client/src/utils/videoScreenshot.js` | Frame capture for Plyr; `applyVideoCrossOrigin`, `applyVideoSource`, `resolvePlyrVideoElement` |
 | `client/src/components/CdsPlyrPlayer.jsx` | Plyr wrapper — imperative `<video>` (avoids React StrictMode DOM conflicts); stall watchdog |
+| `client/src/utils/media.js` | **`resolveContentSrc()`**, `preferSameOriginMediaUrl()`, `resolveVideoPlaybackUrl()` — canonical playback URLs (Vite proxy `/api`) |
 | `client/src/hooks/useDashboardCourseContents.js` | Lazy per-subject course content + `subjectStats` from chapter stats |
 | `client/src/hooks/useTelegramPlaybackStatus.js` | Telegram session polling for stream playback |
 | `client/src/hooks/useWorkspaceCapabilities.js` | Feature flags from `GET /workspace/capabilities` |
@@ -288,7 +298,18 @@ TelegramImportPage: phone → OTP → optional 2FA
   → Creates/updates Subject, Chapter, Content
   → If TELEGRAM_VIDEO_CLOUDIFY=1: GramJS download → compress → Cloudinary
      Else: sourceType=telegram with telegramMessageId for stream playback
+  → **Curated import:** client sends `selectedItems[]`; unselected topic media → `Subject.telegramSkippedMessageIds`
+  → **Update check:** `getProgrammeSubjectUpdates()` filters skipped IDs + duplicate titles (same lesson uploaded twice)
   → Background syncAllAutoChannels() every TELEGRAM_SYNC_INTERVAL_MS
+```
+
+## Lesson reorder flow
+
+```
+SubjectLessonAccordion ↑/↓ button
+  → PATCH /api/contents/reorder { subjectId, contentId, direction }
+  → contentController.reorderContent — sort siblings via sortSubjectContents(), swap, bulkWrite importSortOrder 0..n
+  → Dashboard refetches subject contents; order applies to Play all + video player playlist
 ```
 
 ## Progress toggle flow
@@ -384,6 +405,8 @@ TelegramChannelMapping (channelId + programmeId — sync config)
 ### Subject (`Subject.js`)
 - `name`, `programmeId`, `description`
 - Telegram: `telegramTopicId`, `telegramSubjectKey`, `telegramChannelId`
+- Import prefs: `telegramImportVideos`, `telegramImportPdfs` (default true)
+- **`telegramSkippedMessageIds[]`** — Telegram message IDs intentionally skipped during curated import (never re-offered as updates)
 - Unique: `{ name, programmeId }`
 
 ### Chapter (`Chapter.js`)
@@ -397,7 +420,8 @@ TelegramChannelMapping (channelId + programmeId — sync config)
 - `sourceType`: `upload` | `url` | `cloudinary` | `telegram`
 - Video fields: `filePath`, `videoUrl`, `videoSourceType` (`local`|`telegram`), `publicId`, `cloudType`, `duration`, `thumbnail`
 - Telegram metadata: `telegramSource`, `telegramChannelId`, `telegramMessageId`, `telegramFileName`, `telegramMimeType`, `telegramFileSize`, `telegramTopicId`
-- `importSortOrder`, `uploadedAt`, `url`
+- **`importSortOrder`** — manual lesson order (dashboard ↑↓ reorder, Play all, merge playlists); falls back to `telegramMessageId` when null
+- `uploadedAt`, `url`
 
 ### SubjectCloudMapping (`SubjectCloudMapping.js`)
 - `subjectId` (unique), `cloudType` (e.g. `cloud1`)
@@ -429,9 +453,19 @@ TelegramChannelMapping (channelId + programmeId — sync config)
 - **Service exists; HTTP routes not wired**
 
 ### Vocabulary (`Vocabulary.js`)
-- `userId`, `type` (`vocabulary`|`idiom`|`one_word`), `word`, `meaning`, `example`, `synonyms[]`, `tags[]`
-- SRS: `level`, `easeFactor`, `intervalDays`, `reviewCount`, `lastReviewedAt`, `nextReviewAt`
+- Core: `userId`, `type` (`vocabulary`|`idiom`|`one_word`), `word`, `meaning`, `example`, `synonyms[]`, `antonyms[]`, `relatedWords[]`, `tags[]`
+- CDS enrichment: `rootWord`, `rootMeaning`, `partOfSpeech`, `mnemonic`, `examTag`, `difficulty`, `clozeSentence`, `source`, `origin`, `frequencyHint`
+- Organization: `archived`, `favorite`
+- SRS: `level`, `easeFactor`, `intervalDays`, `reviewCount`, `correctCount`, `wrongCount`, `confidence`, `lastReviewedAt`, `lastWrongAt`, `masteredAt`, `nextReviewAt`, `updatedByMode`, `lastPracticeMode`
 - Unique: `{ userId, type, word }`
+
+### VocabularyReviewLog (`VocabularyReviewLog.js`)
+- One row per answer/review: `userId`, `vocabularyId`, optional `sessionId`, `mode`, `questionType`, `result`, `correct`, `responseTimeMs`, `selectedAnswer`
+- Powers accuracy trends, mode performance, category strength and daily vocabulary streak
+
+### VocabularyPracticeSession (`VocabularyPracticeSession.js`)
+- Persistent drill: `userId`, `mode`, `type`, timing/exam flags, private question snapshots, answers, counters, weak words and SRS update count
+- Status: `active` | `completed` | `abandoned`; supports reload/resume and server-authoritative answer validation
 
 ### DailyMission (`DailyMission.js`)
 - `userId`, `date` (YYYY-MM-DD string), `missionType` (`daily`|`sunday_mock`), `status`
@@ -446,7 +480,7 @@ TelegramChannelMapping (channelId + programmeId — sync config)
 - Unique: `{ userId, date }`
 
 ### StudySession (`StudySession.js`)
-- `userId`, `date`, `type` (`video`|`reading`|`mock`|`mission`)
+- `userId`, `date`, `type` (`video`|`reading`|`mock`|`mission`|`vocabulary`)
 - `contentId`, `paperId`, `missionId`, `subjectId`, `subjectName`, `slot`
 - `durationMinutes`, `startedAt`, `endedAt`, `meta`
 
@@ -545,6 +579,8 @@ Base URL: `http://localhost:5000/api` (dev) or `VITE_API_URL` (prod).
 | GET | `/` | Yes | List with filters: `subjectId`, `chapterId`, `type`, `search`, `sort`, `page`, `limit`, `programmeId` |
 | POST | `/` | Yes | Create content (multipart `file` optional); `sourceType`: `upload`\|`url`\|`youtube_download`; optional `uploadDestination`: `local`\|`youtube` |
 | POST | `/bulk-upload` | Yes | Up to 100 files; auto-create chapters from filenames |
+| PATCH | `/reorder` | Yes | Move lesson up/down within subject; body `{ subjectId, contentId, direction: "up"|"down" }` — sets `importSortOrder` on all siblings of same type |
+| GET | `/:id/stream-cache` | Yes | Stream cache status (localhost; `assertLocalLibrary`) |
 | GET | `/:id/playback-cache` | Yes | Cache status for content |
 | POST | `/:id/playback-cache` | Yes | Start Telegram playback cache download |
 | DELETE | `/:id/playback-cache` | Yes | Remove cache |
@@ -587,15 +623,26 @@ Base URL: `http://localhost:5000/api` (dev) or `VITE_API_URL` (prod).
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/stats` | Counts by level |
-| GET | `/practice` | Due cards for practice; query `type`, `limit` |
-| POST | `/import` | CSV/Excel/image OCR import (multipart) |
-| POST | `/import-text` | Structured text paste import |
-| GET | `/` | List; query `type`, `search`, `level`, pagination |
+| GET | `/dashboard` | Arena counts, due/weak/mastered, consistency and recent sessions |
+| GET | `/analytics` | 90-day trends, mode/category performance, misses and queue health |
+| GET | `/weak-words` | Priority-ranked weak words; query `type`, `limit` |
+| GET | `/root-families` | Root family groups; query `search`, `limit` |
+| POST | `/session/start` | Start persistent practice session; body includes `mode`, `type`, `questionCount`, timing/root options |
+| GET | `/session/:sessionId` | Resume active session (answers remain server-private) |
+| POST | `/session/:sessionId/reveal` | Reveal answer for reverse recall |
+| POST | `/session/:sessionId/answer` | Validate answer, apply SRS, write review log, return explanation + next question |
+| POST | `/session/:sessionId/finish` | Final report + StudySession mission/analytics log |
+| POST | `/import-preview` | Parse CSV/Excel/OCR/text and return row statuses/errors without writing |
+| POST | `/import-commit` | Commit valid preview rows; case-insensitive upsert |
+| GET | `/stats` | Legacy-compatible counts by level |
+| GET | `/practice` | Legacy-compatible due cards; query `type`, `limit` |
+| POST | `/import` | Legacy-compatible direct CSV/Excel/image OCR import (uses Arena parser) |
+| POST | `/import-text` | Legacy-compatible direct structured text import |
+| GET | `/` | Search/list; filters include type, text, level/status, due, root, difficulty, exam tag, favorite, recently wrong |
 | POST | `/` | Create entry |
 | PUT | `/:id` | Update |
 | DELETE | `/:id` | Delete |
-| POST | `/:id/review` | SRS review: body `{ result: "again"|"good"|"easy" }` |
+| POST | `/:id/review` | Legacy-compatible SRS review; now also logs mode/response time |
 
 ## Cloud Mappings (`/api/cloud-mappings`)
 
@@ -633,6 +680,15 @@ Base URL: `http://localhost:5000/api` (dev) or `VITE_API_URL` (prod).
 | POST | `/update-subject` | Apply Telegram updates to one subject |
 | POST | `/update-batch` | Apply batch updates |
 | GET | `/stream/:messageId` | **Stream auth** — byte-range video stream; query `channelId`, `token` |
+
+## Settings / local media (`/api/settings`)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/local-media` | Current `LOCAL_MEDIA_ROOT`, disk usage breakdown |
+| PUT | `/local-media` | Update media root path |
+| GET | `/stream-cache` | Stream cache stats (`_stream_cache`) |
+| DELETE | `/stream-cache` | Clear stream cache |
 
 ## Mission (`/api/mission`)
 
@@ -757,12 +813,14 @@ CDS cycle (cds-1-2026, cds-2-2026)
 
 ### Services
 - `telegramService.js` — GramJS client, login, channel list, media download, streaming, **`checkTelegramConnectionLive()`**, **`fetchNewChannelMediaSince()`** (fast update scan)
-- `telegramMappingService.js` — forum topic import, **`getProgrammeSubjectUpdates()`** (optimized minId scan)
+- `telegramMappingService.js` — forum topic import, **`getProgrammeSubjectUpdates()`** (minId scan + skip/duplicate filter), **`importSelectedForumMessages()`** (curated import)
 - `telegramFlatChannelService.js` — flat channel import (caption metadata grouping)
+- `telegramImportFilters.js` (utils) — **`normalizeLessonTitleKey()`**, duplicate detection, **`telegramSkippedMessageIds`** persistence
+- `telegramImportMediaPrefs.js` (utils) — per-topic video/PDF import toggles
 - `telegramVideoImportService.js` — download → compress → Cloudinary
 - `telegramPdfImportService.js` — PDF import from channels
 - `telegramSyncService.js` — background auto-sync interval
-- `telegramStreamCacheService.js` — disk cache for smoother streaming
+- `telegramStreamCacheService.js` — **`_stream_cache`** disk cache; play-first streaming (direct on miss, background warmup)
 - `telegramSubjectBlocklist.js` — blocked topics/keys after user delete
 
 ### Deployment isolation
@@ -827,25 +885,47 @@ CDS cycle (cds-1-2026, cds-2-2026)
 - **Reading streak:** consecutive reading-complete days
 - **Video streak:** 60 min/day video watch (`StudySession` type=video aggregates)
 
-## Vocabulary SRS
+## CDS Vocabulary Arena
 
-Review outcomes:
-- **again** → interval 1 day, ease −0.2, level `new`
-- **good** → SM-2 style interval, ease +0.02
-- **easy** → longer interval, ease +0.08, may reach `mastered`
+### Frontend
+- Default `/vocabulary` is `VocabularyDashboardPage` (active practice first); old library CRUD is secondary at `/vocabulary/learn`
+- Pages: dashboard, practice setup, persistent session, roots, import preview, analytics
+- Reusable UI under `client/src/components/vocabulary/`; data hooks under `client/src/hooks/useVocabulary*.js`
+- Keyboard: MCQ `1–4`, Enter submit, Space reveal, `N` next, `R` Again
+- Legacy `/idioms` and `/one-word-substitution` remain compatible via `LanguageLearningPage`
 
-Practice endpoint returns due items (`nextReviewAt <= now`) or recent fallback.
+### Question/session services
+- `vocabularyQuestionService.js`: balanced distractors; definition↔word, synonym, antonym, idiom, one-word, context, root, homonym/confusing-word questions
+- `vocabularySessionService.js`: server-private answers, persistent progress, timed drills, final weak-category/review recommendations
+- `vocabularyArenaService.js`: dashboard, weak scoring, root groups, analytics
+- `vocabularyImportService.js`: shared parser/validator/upsert for both new preview flow and legacy import endpoints
+
+### Explainable SRS (`vocabularySrsService.js`)
+- **Again / wrong** → interval 1 day, ease −0.25, confidence −24, level `new`, weak priority increases
+- **Good** → deterministic interval × ease (minimum +1 day), ease +0.02, confidence +8/+12 based on response time
+- **Easy** → longer interval × (ease +0.35), ease +0.08, confidence +15/+20; mastered at ≥14 days and ≥70 confidence
+- Limits: ease `1.3–3.0`, interval `1–180` days, confidence `0–100`
+- Weak rank combines mistakes, error rate, low confidence, overdue days and recent misses
+- Every Arena answer updates the item immediately and writes `VocabularyReviewLog`; completed drills write `StudySession(type=vocabulary)` and surface in Today's Target
 
 ## Local PC library (`localLibraryService.js`)
 
 - Only when `NODE_ENV !== "production"` OR `LOCAL_LIBRARY_ENABLED=1`
-- Downloads Cloudinary, local, or Telegram-stream videos to `uploads/_local_library/`
+- Downloads Cloudinary, local, or Telegram-stream videos to `{LOCAL_MEDIA_ROOT}/_local_library/`
 - Metadata in `{contentId}.meta.json`
 - Subject-level bulk download via `POST /subjects/:id/local-library`
 
+## Stream cache (`telegramStreamCacheService.js`)
+
+- Localhost / `LOCAL_LIBRARY_ENABLED=1` only; dir `{LOCAL_MEDIA_ROOT}/_stream_cache/`
+- Enabled via `TELEGRAM_STREAM_CACHE=1` (default on when local media enabled)
+- **Play-first:** streams directly from Telegram on cache miss; background warmup deferred (~20s)
+- Per-content status: `GET /api/contents/:id/stream-cache`
+- Global stats/clear: `GET|DELETE /api/settings/stream-cache`
+
 ## Playback cache (`videoPlaybackCacheService.js`)
 
-- Server-side cache for Telegram streams under `uploads/_playback_cache/`
+- Server-side cache for Telegram streams under `{LOCAL_MEDIA_ROOT}/_playback_cache/`
 - `PLAYBACK_CACHE_MAX_MB` (default 512), warn ratio configurable
 
 ## Upload progress bus
@@ -905,10 +985,12 @@ Practice endpoint returns due items (`nextReviewAt <= now`) or recent fallback.
 | `TELEGRAM_SYNC_INTERVAL_MS` | Auto-sync interval (default 900000 = 15 min) |
 | `TELEGRAM_AUTO_SYNC` | `false` to disable background sync |
 | `TELEGRAM_VIDEO_CLOUDIFY` | `0` = stream-only import (no Cloudinary push) |
-| `TELEGRAM_STREAM_CACHE` | `0` disables stream disk cache |
+| `TELEGRAM_STREAM_CACHE` | `0` disables `_stream_cache` auto caching |
 | `TELEGRAM_STREAM_CHUNK_KB` | Stream chunk size (default 2048 KB) |
 | `TELEGRAM_STREAM_WAIT_MS` | Stream wait timeout (default 45000) |
 | `TELEGRAM_STREAM_TAIL_MB` | Tail buffer for seeking (default 8 MB) |
+| `TELEGRAM_STREAM_WARMUP_DEFER_MS` | Delay before background cache warmup after play starts (default ~20000) |
+| `LOCAL_MEDIA_ROOT` | Override media root (e.g. `C:\Users\...\CDS UPLOAD`); holds `_local_library`, `_stream_cache`, `_playback_cache` |
 | `VIDEO_COMPRESS_ALWAYS` | `0` skips compression when not needed |
 | `VIDEO_COMPRESS_HEIGHT` | Target height (default 720) |
 | `VIDEO_COMPRESS_CRF` | ffmpeg CRF (default 23) |
@@ -1039,6 +1121,7 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 - **Cloudinary Free plan usage API** — may omit byte limit; server uses **25 GB fallback** for progress bar %
 - **In-memory upload progress** — lost on server restart
 - **Telegram auto-sync** — requires active session + mapped `syncTopicIds`/`syncSubjectKeys`; silently skips if no session
+- **Telegram duplicate “N new”** — if titles differ between duplicate uploads, may still show updates; use curated import skip list or rename lessons for match
 - **Legacy disk PYQ** — boot migration may move old files; new uploads go to Cloudinary only
 - **PYQ `cdsSlot` filter** — title regex `/CDS\s*1\b/i` or `/CDS\s*2\b/i`
 - **README.md** — partially stale vs actual architecture (mentions local-only uploads, missing mission/Telegram features)
@@ -1076,8 +1159,10 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 8. **Subject delete** — must use cleanup services to avoid orphaned Cloudinary assets (URL-only legacy rows now parsed via `cloudinaryAsset.js`).
 9. **Adding CDS cycle** — update both `client/src/config/courses.js` and `server/src/config/cdsCourses.js`.
 10. **Custom hooks** — live in `client/src/hooks/`; prefer extracting from mega-pages when adding features.
-11. **Multer limit** — 5 GB per file; bulk content max 100 files per request.
-12. **Cloudinary usage dashboard** — needs Admin API read or `CLOUDINARY_<KEY>_USAGE_*` env vars per account.
+11. **Lesson order** — use `sortSubjectContents()` everywhere; persist via `importSortOrder` (`PATCH /contents/reorder`).
+12. **Telegram curated import** — unselected messages → `Subject.telegramSkippedMessageIds`; duplicates filtered by title in update checks.
+13. **Multer limit** — 5 GB per file; bulk content max 100 files per request.
+14. **Cloudinary usage dashboard** — needs Admin API read or `CLOUDINARY_<KEY>_USAGE_*` env vars per account.
 
 ## Frontend routes (`App.jsx`)
 
@@ -1086,6 +1171,7 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | `/login` | Public login |
 | `/` | Dashboard (batch/subject/content hub; lazy course content load) |
 | `/cloudinary` | **Cloudinary storage** — usage, remaining space, console links |
+| `/settings/pc-media` | **PC Media Storage** — `LOCAL_MEDIA_ROOT`, library/stream/playback cache usage (localhost only) |
 | `/mission` | Daily mission command center |
 | `/import/telegram` | Telegram import wizard |
 | `/video/:id` | Video player (Plyr + Telegram status banner + stall retry) |
@@ -1094,7 +1180,14 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | `/papers`, `/paper/:id` | PYQ list + viewer |
 | `/history` | Watch history |
 | `/history/intelligence` | Study intelligence & analytics |
-| `/vocabulary`, `/idioms`, `/one-word-substitution` | Language learning (shared `LanguageLearningPage` pattern) |
+| `/vocabulary` | **CDS Vocabulary Arena** dashboard (active-practice default) |
+| `/vocabulary/practice` | Drill mode/type/count selector |
+| `/vocabulary/session/:sessionId` | Persistent active/timed drill + explanation + report |
+| `/vocabulary/roots` | Root word family explorer and mini-drills |
+| `/vocabulary/analytics` | Accuracy, modes, categories, misses, review queue |
+| `/vocabulary/import` | CSV/Excel/OCR/text preview + row-safe commit |
+| `/vocabulary/learn` | Secondary vocabulary library CRUD/search/filter |
+| `/idioms`, `/one-word-substitution` | Legacy-compatible focused libraries; Arena includes both types in mixed/exam drills |
 
 ## localStorage keys (client)
 
@@ -1126,9 +1219,15 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | Cloudinary delete on remove | `contentCleanupService.js`, `paperCleanupService.js`, `cloudinaryAsset.js`, `cloudinaryUploadService.js` |
 | Change PDF disk layout | `uploadMiddleware.js`, `uploadOrganizationService.js` |
 | Add Cloudinary account | Env vars only (`CLOUDINARY_CLOUDS` + per-key vars) |
-| Telegram import / updates | `telegramMappingService.js`, `telegramVideoImportService.js`, `TelegramImportPage.jsx` |
+| Telegram import / updates | `telegramMappingService.js`, `telegramImportFilters.js`, `telegramVideoImportService.js`, `TelegramImportPage.jsx` |
+| Lesson order / reorder | `SubjectLessonAccordion.jsx`, `contentSort.js` (client + server), `PATCH /contents/reorder` |
+| PC media / stream cache | `LocalMediaStoragePage.jsx`, `mediaStorage.js`, `telegramStreamCacheService.js`, `mediaStorageController.js` |
+| Vocabulary Arena UI | `Vocabulary*Page.jsx`, `components/vocabulary/*`, `hooks/useVocabulary*.js` |
+| Vocabulary questions/sessions | `vocabularyQuestionService.js`, `vocabularySessionService.js`, `VocabularyPracticeSession.js`, `VocabularyReviewLog.js` |
+| Vocabulary SRS/weak rank | `vocabularySrsService.js` (legacy review controller delegates here) |
+| Vocabulary import | `vocabularyImportService.js`, `VocabularyImportPage.jsx` |
 | Wire paper chapter detail | `paperRoutes.js` + `chapterDetailService.js` |
-| Change SRS algorithm | `vocabularyController.js` → `reviewVocabulary` |
+| Change Vocabulary Arena analytics | `vocabularyArenaService.js`, `VocabularyAnalyticsPage.jsx` |
 | Study time tracking | `useStudy().addStudyMinutes()` in `StudyContext.jsx` |
 | Purge all media | `node server/scripts/purgeAllMedia.js` |
 | Mission scoring | `missionGenerationService.js` → `scoreVideo` |
@@ -1146,13 +1245,28 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | **SRS** | Spaced repetition system for vocabulary |
 | **GramJS** | JavaScript Telegram client library (`telegram` npm package) |
 | **PC library** | Local smooth-playback download feature (`_local_library/`) |
+| **Stream cache** | Auto disk cache while watching Telegram streams (`_stream_cache/`) |
+| **Curated import** | Pick specific Telegram lessons; unselected → `telegramSkippedMessageIds` |
+| **importSortOrder** | Numeric lesson order; set by import or manual ↑↓ reorder |
 
 ---
 
-# Recent Changes Log (chat sessions — 2026-07-01)
+# Recent Changes Log (chat sessions — 2026-08-06)
 
 | Area | Change |
 |------|--------|
+| **CDS Vocabulary Arena** | Replaced `/vocabulary` flashcard-first screen with premium dashboard and active mixed/MCQ/reverse/typing/context/weak/root/exam drills |
+| **Vocabulary sessions** | Persistent server-authoritative sessions + review logs; timer, keyboard controls, explanations, final accuracy/weak-category/review report |
+| **Exam SRS** | Shared deterministic `vocabularySrsService`; confidence + correct/wrong history + overdue/recent-miss weak ranking; legacy review remains compatible |
+| **Vocabulary analytics** | 14-day accuracy, practice modes, category strengths/weaknesses, most missed and queue health |
+| **Vocabulary import** | CSV/Excel/OCR/text preview, extended CDS fields, row errors, duplicate detection and safe valid-row commit |
+| **Root explorer** | Searchable root families + family mini-practice |
+| **Mission integration** | Today's Target displays due/weak Vocabulary directive; completed drills log `StudySession(type=vocabulary)` |
+| **Telegram updates (duplicate fix)** | `telegramImportFilters.js` — skip duplicate titles + user-skipped message IDs; no false “N new” badges; update import won't re-add duplicates |
+| **Lesson reorder** | `PATCH /api/contents/reorder`; ↑↓ buttons in `SubjectLessonAccordion`; shared `contentSort.js` (client + server) |
+| **Stream cache (localhost)** | `telegramStreamCacheService` wired to stream route; play-first (no block on cache miss); `_stream_cache` under `LOCAL_MEDIA_ROOT` |
+| **PC Media Storage page** | `/settings/pc-media` — configure root path, view library/stream/playback cache usage |
+| **Timeline scrub preview** | Hover thumbnails on progress bar when fully cached or PC-library downloaded (`timelineScrubPreview.js`) |
 | **Video player** | Replaced custom controls with **Plyr** (`CdsPlyrPlayer.jsx`); F=fullscreen, arrows ±5s, screenshot button + S key |
 | **React crash fix** | Imperative `<video>` inside Plyr wrapper — avoids StrictMode `removeChild` errors |
 | **Screenshot** | `videoScreenshot.js` — conditional `crossOrigin`, same-origin `/api` URLs via Vite proxy |
@@ -1167,4 +1281,4 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 
 ---
 
-*Last comprehensive audit: 2026-07-01 (includes video/Telegram/Cloudinary session changes). Repository path: `d:\1. Projects\CDS JOURNEY OTA`.*
+*Last comprehensive audit: 2026-08-06 (includes CDS Vocabulary Arena, Telegram duplicate filtering, lesson reorder, stream cache, PC media storage). Repository path: `d:\1. Projects\CDS JOURNEY OTA`.*

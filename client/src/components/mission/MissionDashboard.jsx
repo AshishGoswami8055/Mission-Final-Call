@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
-import { FiBarChart2, FiRefreshCw } from "react-icons/fi";
+import { FiArrowRight, FiBarChart2, FiBookOpen, FiRefreshCw } from "react-icons/fi";
 import { Link, useNavigate } from "react-router-dom";
 import api from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
@@ -47,7 +47,8 @@ const MissionDashboard = () => {
   }, []);
 
   useEffect(() => {
-    load();
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
 
   const applyPlanUpdate = (data) => {
@@ -274,6 +275,30 @@ const MissionDashboard = () => {
 
           <aside className="space-y-5">
             <VideoStreakBadge />
+            <Link
+              to={
+                (payload?.vocabulary?.weak || 0) > 0
+                  ? "/vocabulary/weak"
+                  : `/vocabulary/practice?mode=${payload?.vocabulary?.recommendedMode || "mixed"}`
+              }
+              className="group block rounded-2xl border border-indigo-500/20 bg-indigo-500/10 p-4 transition hover:border-indigo-500/40 hover:bg-indigo-500/15"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white">
+                  <FiBookOpen />
+                </span>
+                <FiArrowRight className="text-indigo-500 transition group-hover:translate-x-1" />
+              </div>
+              <p className="mt-4 text-xs font-black uppercase tracking-[0.16em] text-indigo-600 dark:text-indigo-300">
+                English recall mission
+              </p>
+              <p className="mt-1 font-display text-xl font-black text-slate-950 dark:text-white">
+                {payload?.vocabulary?.dueToday || 0} due · {payload?.vocabulary?.weak || 0} weak
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                {payload?.vocabulary?.streak || 0}-day vocabulary streak
+              </p>
+            </Link>
             <AiDailyBriefing briefing={aiBriefing} onRefresh={refreshAi} refreshing={refreshingAi} compact />
             <div id="reading-timer-section">
               <ReadingTimer reading={reading} busy={busy} compact {...readingActions} />

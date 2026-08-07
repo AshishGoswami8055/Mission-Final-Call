@@ -14,11 +14,17 @@ import Vocabulary from "./models/Vocabulary.js";
 import { migrateProgrammesAndSubjects } from "./services/programmeMigrationService.js";
 import { cleanupBrokenYoutubeTempFiles, organizeContentUploadsBySubject } from "./services/uploadOrganizationService.js";
 import { organizePaperUploadsByYear } from "./services/paperOrganizationService.js";
-import { startTelegramAutoSync, pruneAllOrphanedSyncTopics } from "./services/telegramSyncService.js";
-import { repairSubjectTelegramLinks } from "./services/telegramMappingService.js";
-import Programme from "./models/Programme.js";
+import { runTelegramStartupMaintenance } from "./services/telegramSyncService.js";
 import TelegramSession from "./models/TelegramSession.js";
-import { getTelegramDeploymentKey } from "./services/telegramService.js";
+import {
+  getTelegramDeploymentKey,
+  getTelegramMessageMedia,
+  startTelegramKeepAlive,
+  warmTelegramConnection,
+  withTelegramLock,
+} from "./services/telegramService.js";
+import { initTelegramStreamCache } from "./services/telegramStreamCacheService.js";
+import { ensureLocalMediaDirs } from "./config/mediaStorage.js";
 
 dotenv.config();
 reloadCloudRegistry();
@@ -102,26 +108,20 @@ const start = async () => {
     );
   }
 
-  app.listen(PORT, HOST, async () => {
+  app.listen(PORT, HOST, () => {
     logStartupNetwork();
     console.log(`[server] Ready on ${HOST}:${PORT}`);
-    if (process.env.TELEGRAM_AUTO_SYNC !== "false") {
-      await pruneAllOrphanedSyncTopics().catch((err) => {
-        console.warn("[telegram-sync] Startup prune failed:", err.message);
+
+    ensureLocalMediaDirs();
+    initTelegramStreamCache((params) => withTelegramLock(() => getTelegramMessageMedia(params)));
+    void warmTelegramConnection();
+    startTelegramKeepAlive();
+
+    setImmediate(() => {
+      runTelegramStartupMaintenance().catch((err) => {
+        console.warn("[telegram-sync] Startup maintenance failed:", err.message);
       });
-      const programmes = await Programme.find({}).select("_id");
-      let repaired = 0;
-      for (const programme of programmes) {
-        const result = await repairSubjectTelegramLinks({ programmeId: programme._id }).catch(() => ({
-          repaired: 0,
-        }));
-        repaired += result.repaired || 0;
-      }
-      if (repaired) {
-        console.log(`[telegram] Repaired stale topic links for ${repaired} subject(s)`);
-      }
-      startTelegramAutoSync(Number(process.env.TELEGRAM_SYNC_INTERVAL_MS) || 15 * 60 * 1000);
-    }
+    });
   });
 };
 

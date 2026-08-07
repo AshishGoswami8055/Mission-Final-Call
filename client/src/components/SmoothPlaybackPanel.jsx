@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import toast from "react-hot-toast";
+import { Link } from "react-router-dom";
 import {
   FiAlertTriangle,
   FiCheck,
+  FiExternalLink,
   FiHardDrive,
   FiLoader,
   FiTrash2,
@@ -126,7 +128,13 @@ const SmoothPlaybackPanel = ({
                   : "Download this lecture to your PC for fast, smooth playback."}
           </p>
           <p className="mt-1 hidden text-xs text-slate-500 dark:text-slate-500 md:block">
-            Study time still syncs to your account — visible on production too.
+            Study time still syncs to your account — visible on production too.{" "}
+            <Link
+              to="/settings/pc-media#stream-cache"
+              className="inline-flex items-center gap-0.5 text-sky-600 hover:underline dark:text-sky-400"
+            >
+              Stream cache location <FiExternalLink size={11} />
+            </Link>
           </p>
         </div>
 

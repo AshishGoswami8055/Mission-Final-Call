@@ -1,15 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { pipeline } from "node:stream/promises";
 import Content from "../models/Content.js";
 import { downloadTelegramMediaToFile } from "./telegramService.js";
 import { isTelegramStreamContent } from "../utils/contentPlayback.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const uploadRoot = path.resolve(__dirname, "..", "..", "..", "uploads");
-export const PLAYBACK_CACHE_DIR = path.join(uploadRoot, "_playback_cache");
+import {
+  ensureLocalMediaDirs,
+  getPlaybackCacheDir,
+  PROJECT_UPLOADS_ROOT,
+  resolveMediaAbsolutePath,
+  toMediaWebPath,
+} from "../config/mediaStorage.js";
 
 const DEFAULT_MAX_BYTES = 512 * 1024 * 1024;
 const DEFAULT_WARN_RATIO = 0.75;
@@ -22,7 +23,7 @@ export const getWarnRatio = () => {
   return Math.min(0.95, Math.max(0.5, n));
 };
 
-const metaPathFor = (contentId) => path.join(PLAYBACK_CACHE_DIR, `${contentId}.meta.json`);
+const metaPathFor = (contentId) => path.join(getPlaybackCacheDir(), `${contentId}.meta.json`);
 
 const safeExt = (fileName = "", mimeType = "") => {
   const fromName = path.extname(String(fileName)).toLowerCase();
@@ -43,7 +44,7 @@ const readMeta = (contentId) => {
 };
 
 const writeMeta = (meta) => {
-  fs.mkdirSync(PLAYBACK_CACHE_DIR, { recursive: true });
+  ensureLocalMediaDirs();
   fs.writeFileSync(metaPathFor(meta.contentId), JSON.stringify(meta, null, 2));
 };
 
@@ -71,8 +72,9 @@ const dirSizeBytes = (dirPath) => {
 };
 
 export const getPlaybackCacheStorageStats = () => {
-  fs.mkdirSync(PLAYBACK_CACHE_DIR, { recursive: true });
-  const usedBytes = dirSizeBytes(PLAYBACK_CACHE_DIR);
+  ensureLocalMediaDirs();
+  const cacheDir = getPlaybackCacheDir();
+  const usedBytes = dirSizeBytes(cacheDir);
   const maxBytes = getMaxCacheBytes();
   const usedPercent = maxBytes > 0 ? Math.round((usedBytes / maxBytes) * 100) : 0;
   const warnRatio = getWarnRatio();
@@ -111,7 +113,7 @@ export const getPlaybackCacheStatus = (contentId) => {
   const job = getActiveJob(contentId);
 
   if (meta?.filePath) {
-    const absolute = path.join(uploadRoot, meta.filePath.replace(/^\/uploads\/?/, ""));
+    const absolute = resolveMediaAbsolutePath(meta.filePath);
     if (fs.existsSync(absolute)) {
       return {
         cached: true,
@@ -150,11 +152,11 @@ export const getPlaybackCacheStatus = (contentId) => {
 
 const evictOldestCaches = (requiredBytes = 0) => {
   const maxBytes = getMaxCacheBytes();
-  let used = dirSizeBytes(PLAYBACK_CACHE_DIR);
+  let used = dirSizeBytes(getPlaybackCacheDir());
   if (used + requiredBytes <= maxBytes) return;
 
   const metas = fs
-    .readdirSync(PLAYBACK_CACHE_DIR)
+    .readdirSync(getPlaybackCacheDir())
     .filter((n) => n.endsWith(".meta.json"))
     .map((n) => readMeta(n.replace(".meta.json", "")))
     .filter(Boolean)
@@ -163,14 +165,14 @@ const evictOldestCaches = (requiredBytes = 0) => {
   for (const meta of metas) {
     if (used + requiredBytes <= maxBytes) break;
     removePlaybackCache(meta.contentId);
-    used = dirSizeBytes(PLAYBACK_CACHE_DIR);
+    used = dirSizeBytes(getPlaybackCacheDir());
   }
 };
 
 export const removePlaybackCache = (contentId) => {
   const meta = readMeta(contentId);
   if (meta?.filePath) {
-    const absolute = path.join(uploadRoot, meta.filePath.replace(/^\/uploads\/?/, ""));
+    const absolute = resolveMediaAbsolutePath(meta.filePath);
     try {
       if (fs.existsSync(absolute)) fs.unlinkSync(absolute);
     } catch {
@@ -248,7 +250,7 @@ const runDownloadJob = async (content) => {
 
   const ext = safeExt(content.telegramFileName, content.telegramMimeType);
   const relativePath = `_playback_cache/${contentId}${ext}`;
-  const destPath = path.join(PLAYBACK_CACHE_DIR, `${contentId}${ext}`);
+  const destPath = path.join(getPlaybackCacheDir(), `${contentId}${ext}`);
 
   const job = {
     status: "downloading",
@@ -276,7 +278,7 @@ const runDownloadJob = async (content) => {
     } else if (content.sourceType === "cloudinary" && content.videoUrl) {
       await downloadRemoteUrlToFile(content.videoUrl, destPath, onProgress);
     } else if (content.sourceType === "upload" && content.filePath) {
-      const source = path.join(uploadRoot, String(content.filePath).replace(/^\/uploads\/?/, ""));
+      const source = path.join(PROJECT_UPLOADS_ROOT, String(content.filePath).replace(/^\/uploads\/?/, ""));
       if (!fs.existsSync(source)) throw new Error("Source video file not found on server.");
       fs.mkdirSync(path.dirname(destPath), { recursive: true });
       fs.copyFileSync(source, destPath);

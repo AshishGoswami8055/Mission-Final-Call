@@ -1,23 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  FiCheckCircle,
   FiChevronDown,
+  FiChevronUp,
+  FiCircle,
   FiEdit2,
   FiFileText,
   FiLoader,
   FiPlayCircle,
   FiTrash2,
   FiVideo,
-  FiZap,
 } from "react-icons/fi";
 import { Link } from "react-router-dom";
 import api from "../api/client";
 import LessonVideoDownload from "./LessonVideoDownload";
-import {
-  filterRecentlyAdded,
-  getContentDateLabels,
-  NEW_CONTENT_DAYS,
-} from "../utils/contentDates";
+import { getContentDateLabels } from "../utils/contentDates";
 import { canLocalLibraryDownload, isLocalFrontend, isTelegramLinkVideo } from "../utils/media";
+
+import { sortSubjectContents } from "../utils/contentSort";
 
 const BADGE_CLASS =
   "ml-2 inline-flex shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300";
@@ -28,32 +28,7 @@ const NewBadge = ({ item }) => {
   return <span className={BADGE_CLASS}>New</span>;
 };
 
-const sortContents = (items, chapterOrder) => {
-  return [...items].sort((a, b) => {
-    const aSort = a.importSortOrder;
-    const bSort = b.importSortOrder;
-    if (aSort != null && bSort != null && aSort !== bSort) return aSort - bSort;
-    if (aSort != null && bSort == null) return -1;
-    if (aSort == null && bSort != null) return 1;
-
-    const aMsg = Number(a.telegramMessageId) || 0;
-    const bMsg = Number(b.telegramMessageId) || 0;
-    if (aMsg && bMsg && aMsg !== bMsg) return aMsg - bMsg;
-
-    const ca = chapterOrder.get(a.chapterId?._id || a.chapterId) ?? 999;
-    const cb = chapterOrder.get(b.chapterId?._id || b.chapterId) ?? 999;
-    if (ca !== cb) return ca - cb;
-    return String(a.title).localeCompare(String(b.title));
-  });
-};
-
-const sortByNewestAdded = (items) =>
-  [...items].sort((a, b) => {
-    const ta = new Date(a.createdAt || 0).getTime();
-    const tb = new Date(b.createdAt || 0).getTime();
-    if (tb !== ta) return tb - ta;
-    return String(a.title).localeCompare(String(b.title));
-  });
+const sortContents = (items, chapters) => sortSubjectContents(items, chapters);
 
 const LessonList = ({
   items,
@@ -66,6 +41,10 @@ const LessonList = ({
   pcCachedIds = new Set(),
   showDownload = false,
   onPcCached,
+  onToggleCompleted,
+  togglingCompletedId = null,
+  onReorderContent,
+  reorderingContentId = null,
   emptyMessage,
 }) => {
   const [renamingId, setRenamingId] = useState(null);
@@ -128,7 +107,11 @@ const LessonList = ({
             : { to: route };
 
           return (
-            <RowTag key={item._id} {...rowProps} className="mobile-lesson-row">
+            <RowTag
+              key={item._id}
+              {...rowProps}
+              className={`mobile-lesson-row ${item.completed ? "opacity-80" : ""}`}
+            >
               <span
                 className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
                   rowType === "video"
@@ -148,6 +131,9 @@ const LessonList = ({
                   {posted ? ` · ${posted}` : ""}
                 </span>
               </span>
+              {item.completed ? (
+                <FiCheckCircle size={16} className="shrink-0 text-emerald-500" aria-label="Done" />
+              ) : null}
               <FiChevronDown size={16} className="-rotate-90 shrink-0 text-slate-400" />
             </RowTag>
           );
@@ -168,7 +154,11 @@ const LessonList = ({
         return (
           <div
             key={item._id}
-            className="overflow-hidden rounded-xl border border-slate-200/90 bg-white dark:border-white/10 dark:bg-[#1a1a1a]"
+            className={`overflow-hidden rounded-xl border bg-white dark:bg-[#1a1a1a] ${
+              item.completed
+                ? "border-emerald-200/80 dark:border-emerald-900/40"
+                : "border-slate-200/90 dark:border-white/10"
+            }`}
           >
             <div className="flex items-start gap-2 px-3 py-3 sm:gap-3 sm:px-4 sm:py-3.5">
               <button
@@ -222,7 +212,9 @@ const LessonList = ({
                   ) : (
                     <>
                       <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">
-                        <span className="truncate">{index + 1}. {item.title}</span>
+                        <span className={`truncate ${item.completed ? "text-emerald-800 dark:text-emerald-200" : ""}`}>
+                          {index + 1}. {item.title}
+                        </span>
                         <NewBadge item={item} />
                       </span>
                       <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-slate-500 dark:text-slate-400">
@@ -240,13 +232,80 @@ const LessonList = ({
               </button>
 
               {renamingId !== item._id && (
-                <div className="flex shrink-0 flex-wrap items-start justify-end gap-1 sm:gap-1.5">
+                <div className="flex shrink-0 items-start gap-0.5 sm:gap-1">
+                  {onToggleCompleted && (
+                    <button
+                      type="button"
+                      aria-label={item.completed ? "Mark as not done" : "Mark as done"}
+                      title={item.completed ? "Completed — click to undo" : "Mark as done"}
+                      disabled={togglingCompletedId === item._id}
+                      className={`rounded-lg p-2 transition ${
+                        item.completed
+                          ? "text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+                          : "text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10 dark:hover:text-slate-200"
+                      }`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onToggleCompleted(item);
+                      }}
+                    >
+                      {togglingCompletedId === item._id ? (
+                        <FiLoader size={15} className="animate-spin" />
+                      ) : item.completed ? (
+                        <FiCheckCircle size={15} />
+                      ) : (
+                        <FiCircle size={15} />
+                      )}
+                    </button>
+                  )}
                   {canDownload && (
                     <LessonVideoDownload
                       contentId={item._id}
                       initiallyCached={onPc}
                       onCached={onPcCached}
                     />
+                  )}
+                  {onReorderContent && (
+                    <div className="flex flex-col">
+                      <button
+                        type="button"
+                        aria-label={`Move ${item.title} up`}
+                        title="Move up"
+                        disabled={
+                          index === 0 ||
+                          reorderingContentId === item._id ||
+                          Boolean(reorderingContentId)
+                        }
+                        className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-white/10 dark:hover:text-slate-200"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onReorderContent(item, "up");
+                        }}
+                      >
+                        {reorderingContentId === item._id ? (
+                          <FiLoader size={13} className="animate-spin" />
+                        ) : (
+                          <FiChevronUp size={15} />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Move ${item.title} down`}
+                        title="Move down"
+                        disabled={
+                          index === items.length - 1 ||
+                          reorderingContentId === item._id ||
+                          Boolean(reorderingContentId)
+                        }
+                        className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-white/10 dark:hover:text-slate-200"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onReorderContent(item, "down");
+                        }}
+                      >
+                        <FiChevronDown size={15} />
+                      </button>
+                    </div>
                   )}
                   {onRenameContent && (
                     <button
@@ -328,9 +387,13 @@ const SubjectLessonAccordion = ({
   onDeleteContent,
   onRenameContent,
   deletingContentId = null,
+  onToggleCompleted,
+  togglingCompletedId = null,
+  onReorderContent,
+  reorderingContentId = null,
 }) => {
   const [expandedId, setExpandedId] = useState(null);
-  const [activeTab, setActiveTab] = useState("new");
+  const [activeTab, setActiveTab] = useState("videos");
   const [pcCachedIds, setPcCachedIds] = useState(new Set());
   const showDownload = isLocalFrontend();
 
@@ -338,28 +401,19 @@ const SubjectLessonAccordion = ({
     setPcCachedIds((prev) => new Set([...prev, String(contentId)]));
   }, []);
 
-  const chapterOrder = useMemo(() => {
-    const map = new Map(chapters.map((c, idx) => [c._id, idx]));
-    return map;
-  }, [chapters]);
-
   const videos = useMemo(
-    () => sortContents(contents.filter((c) => c.type === "video"), chapterOrder),
-    [contents, chapterOrder]
+    () => sortContents(contents.filter((c) => c.type === "video"), chapters),
+    [contents, chapters]
   );
   const pdfs = useMemo(
-    () => sortContents(contents.filter((c) => c.type === "pdf"), chapterOrder),
-    [contents, chapterOrder]
-  );
-  const newItems = useMemo(
-    () => sortByNewestAdded(filterRecentlyAdded(contents, NEW_CONTENT_DAYS)),
-    [contents]
+    () => sortContents(contents.filter((c) => c.type === "pdf"), chapters),
+    [contents, chapters]
   );
 
   useEffect(() => {
-    setActiveTab(newItems.length ? "new" : videos.length ? "videos" : "pdfs");
+    setActiveTab(videos.length ? "videos" : "pdfs");
     setExpandedId(null);
-  }, [subjectId, newItems.length, videos.length, pdfs.length]);
+  }, [subjectId, videos.length, pdfs.length]);
 
   useEffect(() => {
     if (!showDownload || !subjectId) {
@@ -390,31 +444,16 @@ const SubjectLessonAccordion = ({
   }
 
   const tabs = [
-    {
-      id: "new",
-      label: `New (${NEW_CONTENT_DAYS}d)`,
-      count: newItems.length,
-      icon: FiZap,
-      accent: "bg-emerald-600",
-    },
     { id: "videos", label: "Videos", count: videos.length, icon: FiPlayCircle, accent: "bg-sky-700" },
     { id: "pdfs", label: "PDFs", count: pdfs.length, icon: FiFileText, accent: "bg-amber-600" },
   ];
 
   const currentTab =
-    activeTab === "new" && !newItems.length
-      ? videos.length
+    activeTab === "videos" && !videos.length
+      ? "pdfs"
+      : activeTab === "pdfs" && !pdfs.length
         ? "videos"
-        : "pdfs"
-      : activeTab === "videos" && !videos.length
-        ? newItems.length
-          ? "new"
-          : "pdfs"
-        : activeTab === "pdfs" && !pdfs.length
-          ? newItems.length
-            ? "new"
-            : "videos"
-          : activeTab;
+        : activeTab;
 
   const listProps = {
     expandedId,
@@ -425,6 +464,10 @@ const SubjectLessonAccordion = ({
     pcCachedIds,
     showDownload,
     onPcCached: handlePcCached,
+    onToggleCompleted,
+    togglingCompletedId,
+    onReorderContent,
+    reorderingContentId,
   };
 
   return (
@@ -433,8 +476,7 @@ const SubjectLessonAccordion = ({
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const disabled = tab.count === 0;
-          const mobileLabel =
-            tab.id === "new" ? "New" : tab.id === "videos" ? "Videos" : "PDFs";
+          const mobileLabel = tab.id === "videos" ? "Videos" : "PDFs";
           return (
             <button
               key={tab.id}
@@ -464,13 +506,7 @@ const SubjectLessonAccordion = ({
         })}
       </div>
 
-      {currentTab === "new" ? (
-        <LessonList
-          items={newItems}
-          emptyMessage={`Nothing added in the last ${NEW_CONTENT_DAYS} days. Check the Videos tab for older lessons.`}
-          {...listProps}
-        />
-      ) : currentTab === "videos" ? (
+      {currentTab === "videos" ? (
         <LessonList items={videos} type="video" {...listProps} />
       ) : (
         <LessonList items={pdfs} type="pdf" {...listProps} />

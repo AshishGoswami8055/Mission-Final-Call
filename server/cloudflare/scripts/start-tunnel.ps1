@@ -32,11 +32,11 @@ if ($Mode -eq "named") {
     }
     $ErrorActionPreference = $prevEap
 } else {
-    Write-LogLine "QUICK tunnel -> http://127.0.0.1:5000"
+    Write-LogLine "QUICK tunnel -> http://127.0.0.1:5001"
     $script:TunnelUrlShown = $false
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    & $cloudflared tunnel --url http://127.0.0.1:5000 --loglevel info 2>&1 | ForEach-Object {
+    & $cloudflared tunnel --url http://127.0.0.1:5001 --loglevel info 2>&1 | ForEach-Object {
         Write-LogLine $_
         if ($_ -match "(https://[a-z0-9-]+\.trycloudflare\.com)") {
             $publicUrl = $Matches[1]

@@ -31,11 +31,15 @@ import {
   logoutTelegram,
   resetTelegramSessionClient,
   startTelegramLogin,
-  streamTelegramMedia,
   telegramErrorText,
   verifyTelegramOtp,
   verifyTelegramPassword,
+  withTelegramLock,
 } from "../services/telegramService.js";
+import {
+  initTelegramStreamCache,
+  streamTelegramMediaWithCache,
+} from "../services/telegramStreamCacheService.js";
 import { syncAllAutoChannels, syncChannelMapping } from "../services/telegramSyncService.js";
 import { failProgress, initProgress, requestCancel } from "../services/uploadProgressBus.js";
 
@@ -85,7 +89,8 @@ export const telegramVerifyPassword = async (req, res) => {
 
 export const telegramSessionStatus = async (req, res) => {
   try {
-    const status = await checkTelegramConnectionLive();
+    const force = req.query.force === "1" || req.query.force === "true";
+    const status = await checkTelegramConnectionLive({ force });
     res.json({
       ...status,
       deploymentKey: getTelegramDeploymentKey(),
@@ -176,7 +181,14 @@ export const telegramStream = async (req, res) => {
   }
 
   try {
-    await streamTelegramMedia({ channelId, messageId, req, res });
+    const getMediaLocked = (params) => withTelegramLock(() => getTelegramMessageMedia(params));
+    await streamTelegramMediaWithCache({
+      channelId,
+      messageId,
+      req,
+      res,
+      getMedia: getMediaLocked,
+    });
   } catch (error) {
     if (!res.headersSent) {
       const base = telegramErrorText(error) || "Stream failed";
@@ -256,6 +268,7 @@ export const telegramImportBatch = async (req, res) => {
       uploadId = null,
       selectedItems = null,
       pruneUnselectedTopics = false,
+      topicMediaPrefs = null,
     } = req.body;
 
     const hasSelectedItems = Array.isArray(selectedItems) && selectedItems.length > 0;
@@ -272,7 +285,26 @@ export const telegramImportBatch = async (req, res) => {
       await unblockTelegramSubjectsForImport({ programmeId, topicIds });
     }
 
-    if (hasSelectedItems && useForumTopics) {
+    if (hasSelectedItems) {
+      const mapping = await fetchChannelMapping({ channelId, programmeId });
+      let channelMode = mapping?.channelMode || "forum";
+      if (!mapping?.channelMode) {
+        if (
+          Array.isArray(topicIds) &&
+          topicIds.length &&
+          topicIds.every((id) => Number(id) >= 900_000_000)
+        ) {
+          channelMode = "flat";
+        } else {
+          try {
+            const topics = await fetchForumTopicsForChannel(channelId);
+            if (!topics.length) channelMode = "flat";
+          } catch {
+            channelMode = "flat";
+          }
+        }
+      }
+
       const runSelectedImport = () =>
         importSelectedForumMessages({
           channelId,
@@ -281,6 +313,8 @@ export const telegramImportBatch = async (req, res) => {
           selectedItems,
           autoSync,
           uploadId,
+          topicMediaPrefs,
+          channelMode,
         });
 
       if (uploadId) {
@@ -324,6 +358,7 @@ export const telegramImportBatch = async (req, res) => {
             pruneUnselectedTopics:
               hasTopicFilter && !importAll && pruneUnselectedTopics !== false,
             allowBlockedRecreate: true,
+            topicMediaPrefs,
           });
           return { mode: "forum_topics", result };
         }
@@ -339,6 +374,7 @@ export const telegramImportBatch = async (req, res) => {
           topicIds: hasTopicFilter ? topicIds : null,
           uploadId,
           allowBlockedRecreate: true,
+          topicMediaPrefs,
         });
         return { mode: "flat_subjects", result };
       };
@@ -486,12 +522,25 @@ export const telegramBatchUpdates = async (req, res) => {
 
 export const telegramUpdateSubject = async (req, res) => {
   try {
-    const { programmeId, subjectId, uploadId } = req.body;
+    const { programmeId, subjectId, uploadId, includeVideos, includePdfs } = req.body;
     if (!programmeId || !mongoose.Types.ObjectId.isValid(programmeId)) {
       return res.status(400).json({ message: "programmeId is required." });
     }
     if (!subjectId || !mongoose.Types.ObjectId.isValid(subjectId)) {
       return res.status(400).json({ message: "subjectId is required." });
+    }
+    if (includeVideos !== undefined || includePdfs !== undefined) {
+      const Subject = (await import("../models/Subject.js")).default;
+      const patch = {};
+      if (includeVideos !== undefined) {
+        patch.telegramImportVideos = includeVideos !== false;
+      }
+      if (includePdfs !== undefined) {
+        patch.telegramImportPdfs = includePdfs !== false;
+      }
+      if (Object.keys(patch).length) {
+        await Subject.updateOne({ _id: subjectId, programmeId }, { $set: patch });
+      }
     }
     const run = () => updateProgrammeSubjects({ programmeId, subjectId, uploadId });
     if (uploadId) {
@@ -537,12 +586,22 @@ export const telegramForumPreview = async (req, res) => {
       return res.status(400).json({ message: "channelId is required." });
     }
     const useFull = String(full || "").toLowerCase() === "true";
-    const preview = useFull
-      ? await fetchForumTopicsPreview({ channelId })
-      : await fetchForumTopicsPreviewSummary({ channelId });
+    const previewProgrammeId =
+      programmeId && mongoose.Types.ObjectId.isValid(programmeId) ? programmeId : null;
+    let preview = useFull
+      ? await fetchForumTopicsPreview({ channelId, programmeId: previewProgrammeId })
+      : await fetchForumTopicsPreviewSummary({ channelId, programmeId: previewProgrammeId });
     let mapping = null;
-    if (programmeId && mongoose.Types.ObjectId.isValid(programmeId)) {
-      mapping = await fetchChannelMapping({ channelId, programmeId });
+    if (previewProgrammeId) {
+      mapping = await fetchChannelMapping({ channelId, programmeId: previewProgrammeId });
+      const { enrichTopicsWithImportPrefs } = await import("../utils/telegramImportMediaPrefs.js");
+      preview = {
+        ...preview,
+        topics: await enrichTopicsWithImportPrefs(preview.topics || [], {
+          programmeId: previewProgrammeId,
+          channelId,
+        }),
+      };
     }
     res.json({
       ...preview,
@@ -558,10 +617,12 @@ export const telegramForumPreview = async (req, res) => {
 
 export const telegramTopicMedia = async (req, res) => {
   try {
-    const { channelId, topicId } = req.query;
+    const { channelId, topicId, programmeId } = req.query;
     if (!channelId || !topicId) {
       return res.status(400).json({ message: "channelId and topicId are required." });
     }
+    const previewProgrammeId =
+      programmeId && mongoose.Types.ObjectId.isValid(programmeId) ? programmeId : null;
 
     const { isVirtualFlatTopicId } = await import("../utils/telegramFlatChannel.js");
     let detail;
@@ -569,9 +630,17 @@ export const telegramTopicMedia = async (req, res) => {
       const { fetchFlatChannelTopicMediaPreview } = await import(
         "../services/telegramFlatChannelService.js"
       );
-      detail = await fetchFlatChannelTopicMediaPreview({ channelId, topicId });
+      detail = await fetchFlatChannelTopicMediaPreview({
+        channelId,
+        topicId,
+        programmeId: previewProgrammeId,
+      });
     } else {
-      detail = await fetchTopicMediaPreview({ channelId, topicId });
+      detail = await fetchTopicMediaPreview({
+        channelId,
+        topicId,
+        programmeId: previewProgrammeId,
+      });
     }
 
     res.json(detail);
@@ -603,7 +672,8 @@ export const telegramPreviewBatch = async (req, res) => {
     const messages = await fetchAllChannelMedia({ channelId });
     const importedMap = await getImportedContentMap(
       channelId,
-      messages.map((m) => m.messageId)
+      messages.map((m) => m.messageId),
+      programmeId
     );
     const subjects = await Subject.find({ programmeId });
 

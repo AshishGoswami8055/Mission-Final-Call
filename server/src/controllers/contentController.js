@@ -14,6 +14,7 @@ import {
   applyTelegramVideoLink,
   parseChapterAndTitleFromFilename,
 } from "../utils/contentHelpers.js";
+import { sortSubjectContents } from "../utils/contentSort.js";
 import { getUploadFolderForCourseId } from "../config/cdsCourses.js";
 import { downloadYouTubeVideo } from "../services/youtubeDownloadService.js";
 import { destroyContentAssets } from "../services/contentCleanupService.js";
@@ -47,9 +48,13 @@ import {
   isLocalLibraryEnabled,
   isLocalLibraryEligibleContent,
   removeLocalLibraryFile,
+  replaceLocalLibraryFile,
   startLocalLibraryDownload,
 } from "../services/localLibraryService.js";
+import { ensureBrowserPlayableAbsolute } from "../services/browserPlayableVideoService.js";
+import { streamLocalFile } from "../utils/streamLocalFile.js";
 import { formatBytesLabel, isTelegramStreamContent } from "../utils/contentPlayback.js";
+import { getStreamCacheStatusByMessage } from "../services/telegramStreamCacheService.js";
 import { streamTelegramMedia } from "../services/telegramService.js";
 import { toCloudinaryDownloadUrl } from "../services/subjectDownloadService.js";
 import {
@@ -771,6 +776,62 @@ export const updateContent = async (req, res) => {
   res.json(mapContent(populated));
 };
 
+/** Move a lesson up or down within its subject (videos and PDFs ordered separately). */
+export const reorderContent = async (req, res) => {
+  const { subjectId, contentId, direction } = req.body || {};
+  if (!subjectId || !contentId) {
+    return res.status(400).json({ message: "subjectId and contentId are required." });
+  }
+  if (direction !== "up" && direction !== "down") {
+    return res.status(400).json({ message: 'direction must be "up" or "down".' });
+  }
+
+  const anchor = await Content.findById(contentId);
+  if (!anchor) return res.status(404).json({ message: "Lesson not found." });
+  if (String(anchor.subjectId) !== String(subjectId)) {
+    return res.status(400).json({ message: "Lesson does not belong to this subject." });
+  }
+
+  const subject = await Subject.findById(subjectId);
+  if (!subject) return res.status(404).json({ message: "Subject not found." });
+
+  const chapters = await Chapter.find({ subjectId }).sort({ createdAt: 1 }).lean();
+  const siblings = await Content.find({ subjectId, type: anchor.type }).lean();
+  const sorted = sortSubjectContents(siblings, chapters);
+
+  const index = sorted.findIndex((row) => String(row._id) === String(contentId));
+  if (index < 0) return res.status(404).json({ message: "Lesson not found in subject." });
+
+  const targetIndex = direction === "up" ? index - 1 : index + 1;
+  if (targetIndex < 0 || targetIndex >= sorted.length) {
+    return res.json({ message: "Already at the edge of the list.", moved: false, items: [] });
+  }
+
+  const reordered = [...sorted];
+  [reordered[index], reordered[targetIndex]] = [reordered[targetIndex], reordered[index]];
+
+  await Content.bulkWrite(
+    reordered.map((row, order) => ({
+      updateOne: {
+        filter: { _id: row._id },
+        update: { $set: { importSortOrder: order } },
+      },
+    }))
+  );
+
+  const populated = await Content.find({
+    _id: { $in: reordered.map((row) => row._id) },
+  })
+    .populate("subjectId", "name")
+    .populate("chapterId", "chapterName")
+    .lean();
+
+  const byId = new Map(populated.map((row) => [String(row._id), row]));
+  const items = reordered.map((row) => mapContent(byId.get(String(row._id)) || row));
+
+  res.json({ message: "Order updated.", moved: true, items });
+};
+
 /** Upload an existing Telegram-stream video to Cloudinary for smooth CDN playback. */
 export const cloudifyContent = async (req, res) => {
   const content = await Content.findById(req.params.id);
@@ -928,6 +989,37 @@ export const getContentLocalLibrary = async (req, res) => {
   }
 };
 
+export const getContentStreamCache = async (req, res) => {
+  try {
+    const content = await Content.findById(req.params.id);
+    if (!content) return res.status(404).json({ message: "Content not found" });
+
+    if (!isTelegramStreamContent(content)) {
+      return sendNoCacheJson(res, {
+        eligible: false,
+        cached: false,
+        complete: false,
+        cachedPercent: 0,
+        message: "Stream cache applies to Telegram-stream videos only.",
+      });
+    }
+
+    const status = getStreamCacheStatusByMessage({
+      channelId: content.telegramChannelId,
+      messageId: content.telegramMessageId,
+    });
+
+    sendNoCacheJson(res, {
+      ...status,
+      contentId: String(content._id),
+      cachedLabel: formatBytesLabel(status.cachedBytes),
+      totalLabel: formatBytesLabel(status.totalSize),
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Could not read stream cache status" });
+  }
+};
+
 export const startContentLocalLibrary = async (req, res) => {
   try {
     const content = await Content.findById(req.params.id);
@@ -971,6 +1063,65 @@ export const deleteContentLocalLibrary = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ message: error.message || "Could not remove from PC library" });
+  }
+};
+
+export const replaceContentLocalLibrary = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "No video file selected." });
+    }
+
+    const status = await replaceLocalLibraryFile(req.params.id, {
+      uploadedPath: req.file.path,
+      originalName: req.file.originalname,
+      mimeType: req.file.mimetype,
+    });
+
+    sendNoCacheJson(res, {
+      ...status,
+      eligible: true,
+      replaced: true,
+      sizeLabel: status.sizeBytes ? formatBytesLabel(status.sizeBytes) : null,
+      storage: {
+        ...status.storage,
+        usedLabel: formatBytesLabel(status.storage.usedBytes),
+        maxLabel: status.storage.maxBytes > 0 ? formatBytesLabel(status.storage.maxBytes) : null,
+        freeLabel:
+          status.storage.freeBytes != null ? formatBytesLabel(status.storage.freeBytes) : null,
+      },
+    });
+  } catch (error) {
+    if (req.file?.path) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch {
+        /* ignore */
+      }
+    }
+    res.status(400).json({ message: error.message || "Could not replace PC library file" });
+  }
+};
+
+export const streamBrowserPlayableVideo = async (req, res) => {
+  try {
+    if (!isLocalLibraryEnabled()) {
+      return res.status(403).json({ message: "PC library playback is only available on localhost." });
+    }
+
+    const absolute = await ensureBrowserPlayableAbsolute(req.params.id);
+    streamLocalFile({
+      req,
+      res,
+      absolutePath: absolute,
+      contentType: "video/mp4",
+      fileName: `${req.params.id}_browser.mp4`,
+      asAttachment: false,
+    });
+  } catch (error) {
+    if (!res.headersSent) {
+      res.status(400).json({ message: error.message || "Could not prepare video for playback" });
+    }
   }
 };
 

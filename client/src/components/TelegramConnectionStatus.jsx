@@ -57,11 +57,13 @@ const TelegramConnectionStatus = ({
         <FiAlertTriangle className="mt-0.5 shrink-0" size={16} />
         <div className="min-w-0 flex-1 space-y-2">
           <p className="font-medium">
-            {connected ? "Telegram session found but not responding" : "Telegram is not connected"}
+            {connected ? "Telegram status check timed out" : "Telegram is not connected"}
           </p>
           <p className={`text-xs ${isDark ? "text-amber-200/90" : "text-amber-800/90"}`}>
-            {error ||
-              "Videos streamed from Telegram may buffer forever until you log in and the server reconnects."}
+            {connected
+              ? "Your session is saved and playback can still work. If video stalls, use Smooth playback below or click Recheck."
+              : error ||
+                "Videos streamed from Telegram may buffer forever until you log in and the server reconnects."}
           </p>
           <div className="flex flex-wrap gap-2">
             <Link to="/import/telegram" className="btn-secondary text-xs">

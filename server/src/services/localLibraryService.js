@@ -3,13 +3,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Content from "../models/Content.js";
 import { downloadTelegramMediaToFile, waitForPlaybackIdle } from "./telegramService.js";
+import { invalidateSubjectMergedVideo } from "./subjectMergeService.js";
+import { invalidateBrowserPlayableCache } from "./browserPlayableVideoService.js";
 import { isTelegramStreamContent } from "../utils/contentPlayback.js";
 import { isCacheEligibleContent } from "./videoPlaybackCacheService.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const uploadRoot = path.resolve(__dirname, "..", "..", "..", "uploads");
-export const LOCAL_LIBRARY_DIR = path.join(uploadRoot, "_local_library");
+import {
+  ensureLocalMediaDirs,
+  getLocalLibraryDir,
+  getLocalMediaRoot,
+  resolveMediaAbsolutePath,
+  toMediaWebPath,
+} from "../config/mediaStorage.js";
 
 /** PC library only — disabled on production Render unless explicitly enabled. */
 export const isLocalLibraryEnabled = () =>
@@ -26,7 +31,7 @@ const getWarnRatio = () => {
   return Math.min(0.95, Math.max(0.5, n));
 };
 
-const metaPathFor = (contentId) => path.join(LOCAL_LIBRARY_DIR, `${contentId}.meta.json`);
+const metaPathFor = (contentId) => path.join(getLocalLibraryDir(), `${contentId}.meta.json`);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -49,7 +54,7 @@ const readMeta = (contentId) => {
 };
 
 const writeMeta = (meta) => {
-  fs.mkdirSync(LOCAL_LIBRARY_DIR, { recursive: true });
+  ensureLocalMediaDirs();
   fs.writeFileSync(metaPathFor(meta.contentId), JSON.stringify(meta, null, 2));
 };
 
@@ -77,8 +82,9 @@ const dirSizeBytes = (dirPath) => {
 };
 
 export const getLocalLibraryStorageStats = () => {
-  fs.mkdirSync(LOCAL_LIBRARY_DIR, { recursive: true });
-  const usedBytes = dirSizeBytes(LOCAL_LIBRARY_DIR);
+  ensureLocalMediaDirs();
+  const libraryDir = getLocalLibraryDir();
+  const usedBytes = dirSizeBytes(libraryDir);
   const maxBytes = getMaxLibraryBytes();
   const usedPercent = maxBytes > 0 ? Math.round((usedBytes / maxBytes) * 100) : 0;
   const warnRatio = getWarnRatio();
@@ -95,7 +101,7 @@ export const getLocalLibraryStorageStats = () => {
     warnPercent: Math.round(warnRatio * 100),
     level,
     unlimited: maxBytes <= 0,
-    locationLabel: LOCAL_LIBRARY_DIR,
+    locationLabel: getLocalMediaRoot(),
   };
 };
 
@@ -113,7 +119,7 @@ export const getLocalLibraryStatus = (contentId) => {
   const job = getActiveJob(contentId);
 
   if (meta?.filePath) {
-    const absolute = path.join(uploadRoot, meta.filePath.replace(/^\/uploads\/?/, ""));
+    const absolute = resolveMediaAbsolutePath(meta.filePath);
     if (fs.existsSync(absolute)) {
       return {
         cached: true,
@@ -213,8 +219,8 @@ const runDownloadJob = async (content) => {
   const contentId = String(content._id);
   const ext = safeExt(content.telegramFileName, content.telegramMimeType);
   const fileName = `${contentId}${ext}`;
-  const destPath = path.join(LOCAL_LIBRARY_DIR, fileName);
-  const webPath = `/uploads/_local_library/${fileName}`;
+  const destPath = path.join(getLocalLibraryDir(), fileName);
+  const webPath = toMediaWebPath("_local_library", fileName);
 
   const job = {
     status: "downloading",
@@ -248,9 +254,9 @@ const runDownloadJob = async (content) => {
         onProgress,
       });
     } else if (content.sourceType === "upload" && content.filePath) {
-      const source = path.join(uploadRoot, String(content.filePath).replace(/^\/uploads\/?/, ""));
-      if (!fs.existsSync(source)) throw new Error("Source video file not found.");
-      fs.mkdirSync(LOCAL_LIBRARY_DIR, { recursive: true });
+      const source = resolveMediaAbsolutePath(content.filePath);
+      if (!source || !fs.existsSync(source)) throw new Error("Source video file not found.");
+      ensureLocalMediaDirs();
       fs.copyFileSync(source, destPath);
       job.percent = 100;
     } else {
@@ -480,16 +486,135 @@ export const getSubjectLocalLibraryStatus = (subjectId) => {
 export const removeLocalLibraryFile = (contentId) => {
   const meta = readMeta(contentId);
   if (meta?.filePath) {
-    const absolute = path.join(uploadRoot, meta.filePath.replace(/^\/uploads\/?/, ""));
+    const absolute = resolveMediaAbsolutePath(meta.filePath);
     try {
       if (fs.existsSync(absolute)) fs.unlinkSync(absolute);
     } catch {
       /* ignore */
     }
+  } else if (fs.existsSync(getLocalLibraryDir())) {
+    for (const name of fs.readdirSync(getLocalLibraryDir())) {
+      if (!name.startsWith(`${String(contentId)}.`)) continue;
+      try {
+        fs.unlinkSync(path.join(getLocalLibraryDir(), name));
+      } catch {
+        /* ignore */
+      }
+    }
   }
   deleteMeta(contentId);
   activeJobs.delete(String(contentId));
+  invalidateBrowserPlayableCache(String(contentId));
   return getLocalLibraryStorageStats();
+};
+
+/** Point this lesson at a video file already on your PC (uploaded via Replace). */
+export const replaceLocalLibraryFile = async (contentId, { uploadedPath, originalName, mimeType }) => {
+  if (!isLocalLibraryEnabled()) {
+    throw new Error("PC library is only available on the local study server.");
+  }
+
+  const content = await Content.findById(contentId);
+  if (!content) {
+    if (uploadedPath && fs.existsSync(uploadedPath)) {
+      try {
+        fs.unlinkSync(uploadedPath);
+      } catch {
+        /* ignore */
+      }
+    }
+    throw new Error("Content not found");
+  }
+  if (!isCacheEligibleContent(content)) {
+    if (uploadedPath && fs.existsSync(uploadedPath)) {
+      try {
+        fs.unlinkSync(uploadedPath);
+      } catch {
+        /* ignore */
+      }
+    }
+    throw new Error("This video type cannot use the PC library.");
+  }
+
+  if (!uploadedPath || !fs.existsSync(uploadedPath)) {
+    throw new Error("No video file received.");
+  }
+
+  const ext = safeExt(originalName, mimeType);
+  const fileName = `${String(contentId)}${ext}`;
+  const absolute = path.join(getLocalLibraryDir(), fileName);
+
+  const meta = readMeta(contentId);
+  if (meta?.filePath) {
+    const oldAbsolute = resolveMediaAbsolutePath(meta.filePath);
+    if (fs.existsSync(oldAbsolute) && path.resolve(oldAbsolute) !== path.resolve(uploadedPath)) {
+      try {
+        fs.unlinkSync(oldAbsolute);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  if (fs.existsSync(getLocalLibraryDir())) {
+    for (const name of fs.readdirSync(getLocalLibraryDir())) {
+      if (!name.startsWith(`${String(contentId)}.`)) continue;
+      const full = path.join(getLocalLibraryDir(), name);
+      if (path.resolve(full) === path.resolve(uploadedPath)) continue;
+      try {
+        fs.unlinkSync(full);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  deleteMeta(contentId);
+  activeJobs.delete(String(contentId));
+
+  if (path.resolve(uploadedPath) !== path.resolve(absolute)) {
+    ensureLocalMediaDirs();
+    fs.renameSync(uploadedPath, absolute);
+  }
+
+  const sizeBytes = fs.statSync(absolute).size;
+  if (sizeBytes < 1024) {
+    try {
+      fs.unlinkSync(absolute);
+    } catch {
+      /* ignore */
+    }
+    throw new Error("Selected file is too small or invalid.");
+  }
+
+  const maxBytes = getMaxLibraryBytes();
+  if (maxBytes > 0 && sizeBytes > maxBytes) {
+    try {
+      fs.unlinkSync(absolute);
+    } catch {
+      /* ignore */
+    }
+    throw new Error("Video exceeds PC library size limit.");
+  }
+
+  const webPath = toMediaWebPath("_local_library", fileName);
+  writeMeta({
+    contentId: String(contentId),
+    filePath: webPath,
+    sizeBytes,
+    downloadedAt: new Date().toISOString(),
+    lastAccessAt: new Date().toISOString(),
+    title: content.title,
+    source: "replaced",
+    originalFileName: originalName || path.basename(uploadedPath),
+  });
+
+  if (content.subjectId) {
+    invalidateSubjectMergedVideo(String(content.subjectId));
+  }
+  invalidateBrowserPlayableCache(String(contentId));
+
+  return getLocalLibraryStatus(contentId);
 };
 
 export const resolveLocalLibraryPlayUrl = (contentId) => {
@@ -500,9 +625,9 @@ export const resolveLocalLibraryPlayUrl = (contentId) => {
 
 /** All content IDs with a ready file on the PC library. */
 export const listReadyLocalLibraryContentIds = () => {
-  if (!isLocalLibraryEnabled() || !fs.existsSync(LOCAL_LIBRARY_DIR)) return [];
+  if (!isLocalLibraryEnabled() || !fs.existsSync(getLocalLibraryDir())) return [];
   const ids = [];
-  for (const name of fs.readdirSync(LOCAL_LIBRARY_DIR)) {
+  for (const name of fs.readdirSync(getLocalLibraryDir())) {
     if (!name.endsWith(".meta.json")) continue;
     const contentId = name.slice(0, -".meta.json".length);
     const status = getLocalLibraryStatus(contentId);

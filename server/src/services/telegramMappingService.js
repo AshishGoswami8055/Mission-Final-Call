@@ -24,6 +24,19 @@ import {
   throwIfCancelled,
 } from "./uploadProgressBus.js";
 import {
+  normalizeTopicMediaPrefs,
+  persistSubjectMediaPrefs,
+  resolveTopicMediaPrefs,
+  shouldImportTelegramMedia,
+} from "../utils/telegramImportMediaPrefs.js";
+import {
+  appendSkippedMessageIds,
+  buildTitleKeysBySubjectId,
+  createSubjectImportFilter,
+  evaluateTelegramImportSkip,
+  registerImportedTitleKeys,
+} from "../utils/telegramImportFilters.js";
+import {
   filterSubjectKeysForSyncWrite,
   filterTopicIdsForSyncWrite,
   isTopicBlocked,
@@ -35,6 +48,12 @@ import {
   inferFlatChannelSubjectKey,
   subjectKeyToVirtualTopicId,
 } from "../utils/telegramFlatChannel.js";
+import {
+  findExistingTelegramContentInProgramme,
+  findImportedContentRowsForProgramme,
+  getProgrammeTelegramScope,
+  topicInProgrammeCourse,
+} from "../utils/telegramProgrammeScope.js";
 
 const normalizeKey = (value = "") =>
   String(value || "")
@@ -104,12 +123,18 @@ export const resolveSubjectForImport = async ({ programmeId, fileName, subjects,
   return null;
 };
 
-export const getImportedContentMap = async (channelId, messageIds = []) => {
+export const getImportedContentMap = async (channelId, messageIds = [], programmeId = null) => {
   if (!messageIds.length) return new Map();
-  const rows = await Content.find({
-    telegramChannelId: String(channelId),
-    telegramMessageId: { $in: messageIds },
-  }).select("_id telegramMessageId title subjectId chapterId");
+  const rows = programmeId
+    ? await findImportedContentRowsForProgramme({
+        programmeId,
+        channelId,
+        messageIds,
+      })
+    : await Content.find({
+        telegramChannelId: String(channelId),
+        telegramMessageId: { $in: messageIds },
+      }).select("_id telegramMessageId title subjectId chapterId");
 
   const map = new Map();
   for (const row of rows) {
@@ -159,10 +184,16 @@ export const importTelegramMessages = async ({
     if (!messageId) continue;
     maxMessageId = Math.max(maxMessageId, messageId);
 
-    const existing = await Content.findOne({
-      telegramChannelId: String(channelId),
-      telegramMessageId: messageId,
-    });
+    const existing = programmeId
+      ? await findExistingTelegramContentInProgramme({
+          programmeId,
+          channelId,
+          messageId,
+        })
+      : await Content.findOne({
+          telegramChannelId: String(channelId),
+          telegramMessageId: messageId,
+        });
     if (existing) {
       skipped.push({
         messageId,
@@ -539,19 +570,28 @@ const buildImportedLookup = (importedRows = []) => {
 };
 
 /** Fast preview: topic list + DB import counts only (avoids Cloudflare 524 timeouts). */
-export const fetchForumTopicsPreviewSummary = async ({ channelId }) => {
+export const fetchForumTopicsPreviewSummary = async ({ channelId, programmeId = null }) => {
   let forumTopics = [];
   try {
-    forumTopics = await fetchForumTopicsForChannel(channelId);
+    forumTopics = await fetchForumTopicsForChannel(channelId, { skipDiscovery: true });
   } catch {
     forumTopics = [];
   }
 
+  const scope = programmeId ? await getProgrammeTelegramScope(programmeId, channelId) : null;
+
   if (forumTopics.length > 0) {
-    const importedRows = await Content.find({
-      telegramChannelId: String(channelId),
-      telegramTopicId: { $ne: null },
-    }).select("_id telegramMessageId telegramTopicId");
+    const importedRows = programmeId
+      ? await findImportedContentRowsForProgramme({
+          programmeId,
+          channelId,
+          subjectIds: scope?.subjectIds,
+          requireTopicId: true,
+        })
+      : await Content.find({
+          telegramChannelId: String(channelId),
+          telegramTopicId: { $ne: null },
+        }).select("_id telegramMessageId telegramTopicId");
 
     const importedByTopic = new Map();
     for (const row of importedRows) {
@@ -562,11 +602,15 @@ export const fetchForumTopicsPreviewSummary = async ({ channelId }) => {
 
     const enriched = forumTopics.map((topic) => {
       const importedCount = importedByTopic.get(Number(topic.id)) || 0;
+      const inCourse = programmeId
+        ? topicInProgrammeCourse(scope, topic) || importedCount > 0
+        : importedCount > 0;
       return {
         id: topic.id,
         title: topic.title,
         mediaCount: importedCount,
         importedCount,
+        inCourse,
         newCount: 0,
         media: [],
         mediaLoaded: false,
@@ -574,6 +618,7 @@ export const fetchForumTopicsPreviewSummary = async ({ channelId }) => {
     });
 
     const totalImported = enriched.reduce((sum, t) => sum + t.importedCount, 0);
+    const inCourseCount = enriched.filter((t) => t.inCourse).length;
 
     return {
       isForum: true,
@@ -582,23 +627,32 @@ export const fetchForumTopicsPreviewSummary = async ({ channelId }) => {
       totalMedia: totalImported,
       totalImported,
       totalNew: 0,
+      inCourseCount,
       summaryOnly: true,
     };
   }
 
   const { fetchFlatChannelSubjectsPreviewSummary } = await import("./telegramFlatChannelService.js");
-  return fetchFlatChannelSubjectsPreviewSummary({ channelId });
+  return fetchFlatChannelSubjectsPreviewSummary({ channelId, programmeId });
 };
 
 /** Load lessons for one subject/topic (lazy, after summary preview). */
-export const fetchTopicMediaPreview = async ({ channelId, topicId }) => {
+export const fetchTopicMediaPreview = async ({ channelId, topicId, programmeId = null }) => {
   const mediaItems = await fetchMediaInTopic({ channelId, topicId: Number(topicId) });
   const messageIds = mediaItems.map((m) => m.messageId);
 
-  const importedRows = await Content.find({
-    telegramChannelId: String(channelId),
-    telegramMessageId: { $in: messageIds },
-  }).select("_id telegramMessageId telegramTopicId");
+  const scope = programmeId ? await getProgrammeTelegramScope(programmeId, channelId) : null;
+  const importedRows = programmeId
+    ? await findImportedContentRowsForProgramme({
+        programmeId,
+        channelId,
+        messageIds,
+        subjectIds: scope?.subjectIds,
+      })
+    : await Content.find({
+        telegramChannelId: String(channelId),
+        telegramMessageId: { $in: messageIds },
+      }).select("_id telegramMessageId telegramTopicId");
 
   const { isImportedInTopic, findImportedRow } = buildImportedLookup(importedRows);
   const tid = Number(topicId);
@@ -615,24 +669,44 @@ export const fetchTopicMediaPreview = async ({ channelId, topicId }) => {
     .sort((a, b) => a.messageId - b.messageId);
 
   const importedCount = media.filter((m) => isImportedInTopic(tid, m.messageId)).length;
+  const inCourse =
+    programmeId && scope
+      ? topicInProgrammeCourse(scope, { id: tid }) || importedCount > 0
+      : importedCount > 0;
+
+  let newCount = media.length - importedCount;
+  if (programmeId && scope) {
+    const subject = scope.subjectByTopicId.get(tid);
+    if (subject) {
+      const contentRows = await Content.find({ subjectId: subject._id }).select("subjectId title").lean();
+      const filter = createSubjectImportFilter(subject, buildTitleKeysBySubjectId(contentRows));
+      newCount = media.filter((row) => {
+        if (row.imported) return false;
+        return !evaluateTelegramImportSkip(row, filter).skip;
+      }).length;
+    }
+  }
 
   return {
     id: tid,
     media,
     mediaCount: media.length,
     importedCount,
-    newCount: media.length - importedCount,
+    inCourse,
+    newCount,
     mediaLoaded: true,
   };
 };
 
-export const fetchForumTopicsPreview = async ({ channelId }) => {
+export const fetchForumTopicsPreview = async ({ channelId, programmeId = null }) => {
   let forumTopics = [];
   try {
-    forumTopics = await fetchForumTopicsForChannel(channelId);
+    forumTopics = await fetchForumTopicsForChannel(channelId, { skipDiscovery: true });
   } catch {
     forumTopics = [];
   }
+
+  const scope = programmeId ? await getProgrammeTelegramScope(programmeId, channelId) : null;
 
   if (forumTopics.length > 0) {
     const allMessageIds = [];
@@ -643,31 +717,46 @@ export const fetchForumTopicsPreview = async ({ channelId }) => {
       return { ...topic, media, mediaCount: media.length };
     });
 
-    const importedRows = await Content.find({
-      telegramChannelId: String(channelId),
-      telegramMessageId: { $in: allMessageIds },
-    }).select("_id telegramMessageId telegramTopicId");
+    const importedRows = programmeId
+      ? await findImportedContentRowsForProgramme({
+          programmeId,
+          channelId,
+          messageIds: allMessageIds,
+          subjectIds: scope?.subjectIds,
+        })
+      : await Content.find({
+          telegramChannelId: String(channelId),
+          telegramMessageId: { $in: allMessageIds },
+        }).select("_id telegramMessageId telegramTopicId");
 
     const { isImportedInTopic, findImportedRow } = buildImportedLookup(importedRows);
 
-    const enriched = topicMedia.map((topic) => ({
-      id: topic.id,
-      title: topic.title,
-      mediaCount: topic.mediaCount,
-      importedCount: topic.media.filter((m) => isImportedInTopic(topic.id, m.messageId)).length,
-      newCount: topic.media.filter((m) => !isImportedInTopic(topic.id, m.messageId)).length,
-      media: topic.media
-        .map((item) => {
-          const row = findImportedRow(topic.id, item.messageId);
-          return {
-            ...item,
-            imported: Boolean(row),
-            contentId: row?._id || null,
-          };
-        })
-        .sort((a, b) => a.messageId - b.messageId),
-      mediaLoaded: true,
-    }));
+    const enriched = topicMedia.map((topic) => {
+      const importedCount = topic.media.filter((m) => isImportedInTopic(topic.id, m.messageId)).length;
+      const inCourse =
+        programmeId && scope
+          ? topicInProgrammeCourse(scope, topic) || importedCount > 0
+          : importedCount > 0;
+      return {
+        id: topic.id,
+        title: topic.title,
+        mediaCount: topic.mediaCount,
+        importedCount,
+        inCourse,
+        newCount: topic.media.filter((m) => !isImportedInTopic(topic.id, m.messageId)).length,
+        media: topic.media
+          .map((item) => {
+            const row = findImportedRow(topic.id, item.messageId);
+            return {
+              ...item,
+              imported: Boolean(row),
+              contentId: row?._id || null,
+            };
+          })
+          .sort((a, b) => a.messageId - b.messageId),
+        mediaLoaded: true,
+      };
+    });
 
     const totalMedia = enriched.reduce((sum, t) => sum + t.mediaCount, 0);
     const totalImported = enriched.reduce((sum, t) => sum + t.importedCount, 0);
@@ -683,7 +772,7 @@ export const fetchForumTopicsPreview = async ({ channelId }) => {
   }
 
   const { fetchFlatChannelSubjectsPreview } = await import("./telegramFlatChannelService.js");
-  return fetchFlatChannelSubjectsPreview({ channelId });
+  return fetchFlatChannelSubjectsPreview({ channelId, programmeId });
 };
 
 export const importBatchByForumTopics = async ({
@@ -697,7 +786,9 @@ export const importBatchByForumTopics = async ({
   pruneUnselectedTopics = false,
   existingSubjectsOnly = false,
   allowBlockedRecreate = false,
+  topicMediaPrefs = null,
 }) => {
+  const topicMediaPrefsMap = normalizeTopicMediaPrefs(topicMediaPrefs);
   if (allowBlockedRecreate && Array.isArray(topicIds) && topicIds.length) {
     await unblockTelegramSubjectsForImport({ programmeId, topicIds });
   }
@@ -731,9 +822,11 @@ export const importBatchByForumTopics = async ({
     const mediaItems = await fetchMediaInTopic({ channelId, topicId: topic.id });
     mediaByTopicId.set(topic.id, mediaItems);
   }
-  const mediaTotal = [...mediaByTopicId.values()]
-    .flat()
-    .filter((m) => m.mediaType === "pdf" || m.mediaType === "video").length;
+  const mediaTotal = topics.reduce((sum, topic) => {
+    const prefs = resolveTopicMediaPrefs(topic.id, topicMediaPrefsMap);
+    const items = mediaByTopicId.get(topic.id) || [];
+    return sum + items.filter((m) => shouldImportTelegramMedia(m, prefs)).length;
+  }, 0);
 
   if (uploadId) {
     initProgress(uploadId, {
@@ -768,17 +861,42 @@ export const importBatchByForumTopics = async ({
 
     const chapter = await getOrCreateChapterForSubject(subject._id, LESSONS_CHAPTER);
     const mediaItems = mediaByTopicId.get(topic.id) || [];
+    const prefs = resolveTopicMediaPrefs(topic.id, topicMediaPrefsMap, subject);
+    await persistSubjectMediaPrefs(subject, prefs);
 
+    const subjectContentRows = await Content.find({ subjectId: subject._id })
+      .select("subjectId title")
+      .lean();
+    const importFilter = createSubjectImportFilter(
+      subject,
+      buildTitleKeysBySubjectId(subjectContentRows),
+      topicMediaPrefsMap
+    );
+    const persistSkippedIds = [];
+
+    let topicSortOrder = 0;
     for (const meta of mediaItems) {
       throwIfCancelled(uploadId);
       const messageId = Number(meta.messageId);
       if (!messageId) continue;
+
+      const skipDecision = evaluateTelegramImportSkip(meta, importFilter);
+      if (skipDecision.skip) {
+        if (skipDecision.persistSkip) persistSkippedIds.push(messageId);
+        skipped.push({
+          messageId,
+          fileName: meta.fileName,
+          reason: skipDecision.reason || "Skipped",
+        });
+        continue;
+      }
+
       maxMessageId = Math.max(maxMessageId, messageId);
 
       const existing = await Content.findOne({
+        subjectId: subject._id,
         telegramChannelId: String(channelId),
         telegramMessageId: messageId,
-        telegramTopicId: Number(topic.id),
       });
       if (existing) {
         skipped.push({ messageId, fileName: meta.fileName, reason: "Already imported" });
@@ -811,6 +929,7 @@ export const importBatchByForumTopics = async ({
         mediaFileIndex:
           meta.mediaType === "pdf" || meta.mediaType === "video" ? mediaIndex++ : 0,
         mediaFilesTotal: mediaTotal,
+        importSortOrder: topicSortOrder++,
       });
 
       const doc = await Content.create(payload);
@@ -820,6 +939,11 @@ export const importBatchByForumTopics = async ({
         subjectName: subject.name,
         topicTitle: topic.title,
       });
+      registerImportedTitleKeys(importFilter, meta);
+    }
+
+    if (persistSkippedIds.length) {
+      await appendSkippedMessageIds(subject._id, persistSkippedIds);
     }
   }
 
@@ -870,13 +994,17 @@ export const importSelectedForumMessages = async ({
   selectedItems = [],
   autoSync = true,
   uploadId = null,
+  topicMediaPrefs = null,
+  channelMode = "forum",
 }) => {
   if (!Array.isArray(selectedItems) || !selectedItems.length) {
     throw new Error("No files selected for import.");
   }
 
-  const topics = await fetchForumTopicsForChannel(channelId);
+  const topicMediaPrefsMap = normalizeTopicMediaPrefs(topicMediaPrefs);
+  const topics = await fetchForumTopicsForChannel(channelId).catch(() => []);
   const topicById = new Map(topics.map((t) => [Number(t.id), t]));
+  const prefsPersistedForTopic = new Set();
 
   const created = [];
   const skipped = [];
@@ -893,7 +1021,7 @@ export const importSelectedForumMessages = async ({
         ...meta,
         topicId,
         topicTitle: item.topicTitle || topicById.get(topicId)?.title || "Subject",
-        preferredTitle: String(item.displayName || "").trim() || null,
+        preferredTitle: String(item.displayName || item.title || "").trim() || null,
       });
     } catch {
       skipped.push({ messageId, reason: "Could not fetch message" });
@@ -919,16 +1047,6 @@ export const importSelectedForumMessages = async ({
     const topicId = Number(meta.topicId);
     maxMessageId = Math.max(maxMessageId, messageId);
 
-    const existing = await Content.findOne({
-      telegramChannelId: String(channelId),
-      telegramMessageId: messageId,
-      telegramTopicId: Number(topicId),
-    });
-    if (existing) {
-      skipped.push({ messageId, fileName: meta.fileName, reason: "Already imported" });
-      continue;
-    }
-
     const subject = await getOrCreateSubjectForTopic({
       programmeId,
       channelId,
@@ -940,6 +1058,23 @@ export const importSelectedForumMessages = async ({
       skipped.push({ messageId, fileName: meta.fileName, reason: "Subject blocked or unavailable" });
       continue;
     }
+
+    const prefs = resolveTopicMediaPrefs(topicId, topicMediaPrefsMap, subject);
+    if (!prefsPersistedForTopic.has(topicId)) {
+      await persistSubjectMediaPrefs(subject, prefs);
+      prefsPersistedForTopic.add(topicId);
+    }
+
+    const existing = await Content.findOne({
+      subjectId: subject._id,
+      telegramChannelId: String(channelId),
+      telegramMessageId: messageId,
+    });
+    if (existing) {
+      skipped.push({ messageId, fileName: meta.fileName, reason: "Already imported" });
+      continue;
+    }
+
     const chapter = await getOrCreateChapterForSubject(subject._id, LESSONS_CHAPTER);
     const title =
       meta.preferredTitle ||
@@ -992,7 +1127,7 @@ export const importSelectedForumMessages = async ({
     importedCount: created.length,
     syncTopicIds: selectedTopicIds,
     replaceSyncTopicIds: false,
-    channelMode: "forum",
+    channelMode: channelMode === "flat" ? "flat" : "forum",
   });
 
   if (uploadId) {
@@ -1001,6 +1136,38 @@ export const importSelectedForumMessages = async ({
       filesTotal: metas.length,
       fileIndex: metas.length,
     });
+  }
+
+  const selectedIdsByTopic = new Map();
+  for (const item of selectedItems) {
+    const topicId = Number(item.topicId);
+    const messageId = Number(item.messageId);
+    if (!topicId || !messageId) continue;
+    if (!selectedIdsByTopic.has(topicId)) selectedIdsByTopic.set(topicId, new Set());
+    selectedIdsByTopic.get(topicId).add(messageId);
+  }
+
+  for (const [topicId, selectedSet] of selectedIdsByTopic) {
+    const subject = await Subject.findOne({
+      programmeId,
+      telegramChannelId: String(channelId),
+      telegramTopicId: Number(topicId),
+    });
+    if (!subject) continue;
+
+    let mediaItems = [];
+    try {
+      mediaItems = await fetchMediaInTopic({ channelId, topicId: Number(topicId) });
+    } catch {
+      continue;
+    }
+
+    const skippedIds = mediaItems
+      .map((row) => Number(row.messageId))
+      .filter((messageId) => messageId && !selectedSet.has(messageId));
+    if (skippedIds.length) {
+      await appendSkippedMessageIds(subject._id, skippedIds);
+    }
   }
 
   return {
@@ -1135,7 +1302,9 @@ export const getProgrammeSubjectUpdates = async ({ programmeId }) => {
     programmeId,
     telegramChannelId: { $ne: null },
     $or: [{ telegramTopicId: { $ne: null } }, { telegramSubjectKey: { $ne: null } }],
-  }).select("_id name telegramTopicId telegramSubjectKey telegramChannelId programmeId");
+  }).select(
+    "_id name telegramTopicId telegramSubjectKey telegramChannelId programmeId telegramImportVideos telegramImportPdfs telegramSkippedMessageIds"
+  );
 
   if (!batchSubjects.length) {
     return {
@@ -1149,6 +1318,12 @@ export const getProgrammeSubjectUpdates = async ({ programmeId }) => {
   }
 
   const mappingByChannel = new Map(mappings.map((row) => [String(row.channelId), row]));
+  const programmeSubjectIds = batchSubjects.map((sub) => sub._id);
+  const titleKeysBySubjectId = buildTitleKeysBySubjectId(
+    await Content.find({ subjectId: { $in: programmeSubjectIds } })
+      .select("subjectId title")
+      .lean()
+  );
 
   const subjectsByChannel = new Map();
   for (const sub of batchSubjects) {
@@ -1178,9 +1353,12 @@ export const getProgrammeSubjectUpdates = async ({ programmeId }) => {
       continue;
     }
 
-    // Newest imported message id for this channel — Telegram only returns
-    // messages after this, so an up-to-date channel responds instantly.
-    const newestImported = await Content.findOne({ telegramChannelId: channelId })
+    // Newest imported message id for this batch on this channel.
+    const programmeSubjectIds = channelSubjects.map((sub) => sub._id);
+    const newestImported = await Content.findOne({
+      telegramChannelId: channelId,
+      subjectId: { $in: programmeSubjectIds },
+    })
       .sort({ telegramMessageId: -1 })
       .select("telegramMessageId")
       .lean();
@@ -1199,6 +1377,7 @@ export const getProgrammeSubjectUpdates = async ({ programmeId }) => {
       const importedRows = await Content.find({
         telegramChannelId: channelId,
         telegramMessageId: { $in: candidateIds },
+        subjectId: { $in: programmeSubjectIds },
       })
         .select("telegramMessageId")
         .lean();
@@ -1207,10 +1386,27 @@ export const getProgrammeSubjectUpdates = async ({ programmeId }) => {
     }
 
     const isFlatChannel = mapping.channelMode === "flat";
+    const subjectByTopicId = new Map(
+      channelSubjects
+        .filter((sub) => sub.telegramTopicId != null)
+        .map((sub) => [Number(sub.telegramTopicId), sub])
+    );
+    const subjectByKey = new Map(
+      channelSubjects
+        .filter((sub) => sub.telegramSubjectKey)
+        .map((sub) => [sub.telegramSubjectKey, sub])
+    );
+    const filterBySubjectId = new Map(
+      channelSubjects.map((sub) => [
+        String(sub._id),
+        createSubjectImportFilter(sub, titleKeysBySubjectId),
+      ])
+    );
 
     // Bucket new media by topic (forum) or inferred subject key (flat).
     const countsByTopic = new Map();
     const countsByKey = new Map();
+    const duplicateSkipsToPersist = new Map();
     const bump = (bucket, mapRef, mediaType) => {
       const row = mapRef.get(bucket) || { total: 0, video: 0, pdf: 0 };
       row.total += 1;
@@ -1220,6 +1416,27 @@ export const getProgrammeSubjectUpdates = async ({ programmeId }) => {
     };
 
     for (const media of newMedia) {
+      let subject = null;
+      if (isFlatChannel) {
+        const key = inferFlatChannelSubjectKey(media);
+        subject = key ? subjectByKey.get(key) : null;
+      } else {
+        const tid = Number(media.topicId) || 0;
+        subject = tid ? subjectByTopicId.get(tid) : null;
+      }
+      if (!subject) continue;
+
+      const filter = filterBySubjectId.get(String(subject._id));
+      const skipDecision = filter ? evaluateTelegramImportSkip(media, filter) : { skip: true };
+      if (skipDecision.skip) {
+        if (skipDecision.persistSkip) {
+          const sid = String(subject._id);
+          if (!duplicateSkipsToPersist.has(sid)) duplicateSkipsToPersist.set(sid, []);
+          duplicateSkipsToPersist.get(sid).push(Number(media.messageId));
+        }
+        continue;
+      }
+
       if (isFlatChannel) {
         const key = inferFlatChannelSubjectKey(media);
         if (key) bump(key, countsByKey, media.mediaType);
@@ -1227,6 +1444,10 @@ export const getProgrammeSubjectUpdates = async ({ programmeId }) => {
         const tid = Number(media.topicId) || 0;
         if (tid) bump(tid, countsByTopic, media.mediaType);
       }
+    }
+
+    for (const [subjectId, messageIds] of duplicateSkipsToPersist) {
+      await appendSkippedMessageIds(subjectId, messageIds);
     }
 
     for (const sub of channelSubjects) {
