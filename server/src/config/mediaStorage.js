@@ -67,6 +67,15 @@ export const getPlaybackCacheDir = () => path.join(getLocalMediaRoot(), "_playba
 /** Progressive byte cache while streaming Telegram videos (rewind without re-fetch). */
 export const getStreamCacheDir = () => path.join(getLocalMediaRoot(), "_stream_cache");
 
+/** True when `targetPath` resolves inside the configured local media root. */
+export const isPathUnderLocalMediaRoot = (targetPath) => {
+  const root = path.resolve(getLocalMediaRoot());
+  const resolved = path.resolve(String(targetPath || ""));
+  if (resolved === root) return true;
+  const rel = path.relative(root, resolved);
+  return Boolean(rel) && !rel.startsWith("..") && !path.isAbsolute(rel);
+};
+
 export const ensureLocalMediaDirs = (root = getLocalMediaRoot()) => {
   fs.mkdirSync(root, { recursive: true });
   for (const subdir of LOCAL_MEDIA_SUBDIRS) {
@@ -86,11 +95,15 @@ export const toMediaWebPath = (subdir, fileName = "") => {
   return `/uploads/${safeSubdir}/${safeName}`.replace(/\/+/g, "/");
 };
 
-/** Resolve /uploads/_local_library/... (and other local media paths) on the configured drive. */
+/** Resolve /uploads/... on the configured PC media drive or project uploads folder. */
 export const resolveMediaAbsolutePath = (webPath = "") => {
   const clean = String(webPath || "").replace(/^\/uploads\/?/, "");
   if (isLocalMediaWebPath(`/uploads/${clean}`)) {
     return path.join(getLocalMediaRoot(), clean);
+  }
+  if (isUsingCustomLocalMediaRoot()) {
+    const customAbsolute = path.join(getLocalMediaRoot(), clean);
+    if (fs.existsSync(customAbsolute)) return customAbsolute;
   }
   return path.join(PROJECT_UPLOADS_ROOT, clean);
 };

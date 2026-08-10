@@ -9,17 +9,30 @@ import {
   getSubjectLibraryVideos,
 } from "../services/subjectDownloadService.js";
 import {
-  buildSubjectMergedVideo,
-  downloadSubjectMergeParts,
-  getMergedVideoAbsolutePath,
-  getMergedVideoDownloadName,
-  getSubjectMergedVideoStatus,
-  getSubjectFullVideoPlaylist,
-  stitchSubjectMergedVideo,
-} from "../services/subjectMergeService.js";
+  getFullCourseAbsolutePath,
+  getFullCourseDownloadName,
+  getSubjectFullCourseStatus,
+  linkSubjectFullCourseFromPath,
+  registerSubjectFullCourse,
+  revealSubjectFullCourse,
+} from "../services/subjectFullCourseService.js";
 import { getActiveSession } from "../services/telegramService.js";
 import { formatBytesLabel, isTelegramStreamContent } from "../utils/contentPlayback.js";
 import { streamLocalFile } from "../utils/streamLocalFile.js";
+import fs from "node:fs";
+import path from "node:path";
+
+const videoContentType = (absolutePath = "") => {
+  const ext = path.extname(String(absolutePath)).toLowerCase();
+  const types = {
+    ".mp4": "video/mp4",
+    ".m4v": "video/mp4",
+    ".webm": "video/webm",
+    ".mkv": "video/x-matroska",
+    ".mov": "video/quicktime",
+  };
+  return types[ext] || "video/mp4";
+};
 
 const assertLocalLibrary = (_req, res, next) => {
   if (!isLocalLibraryEnabled()) {
@@ -121,102 +134,26 @@ export { assertLocalLibrary as assertSubjectLocalLibrary };
 
 export const getSubjectMergedVideoStatusHandler = async (req, res) => {
   try {
-    const status = await getSubjectMergedVideoStatus(req.params.id);
+    const status = await getSubjectFullCourseStatus(req.params.id);
     if (!status) return res.status(404).json({ message: "Subject not found" });
     res.json(status);
   } catch (error) {
-    res.status(500).json({ message: error.message || "Could not read merge status" });
-  }
-};
-
-export const getSubjectFullVideoPlaylistHandler = async (req, res) => {
-  try {
-    const playlist = await getSubjectFullVideoPlaylist(req.params.id, {
-      apiBase: resolveApiBase(req),
-      token: resolveAuthToken(req),
-    });
-    if (!playlist) return res.status(404).json({ message: "Subject not found" });
-    res.json(playlist);
-  } catch (error) {
-    res.status(500).json({ message: error.message || "Could not build full course playlist" });
-  }
-};
-
-export const startSubjectMergedVideoHandler = async (req, res) => {
-  try {
-    const { uploadId } = req.body || {};
-    const subjectId = req.params.id;
-
-    const run = () => buildSubjectMergedVideo(subjectId, uploadId);
-
-    if (uploadId) {
-      res.status(202).json({ uploadId, message: "Building full subject video…" });
-      run().catch((error) => {
-        console.error("[subject-merge]", error.message || error);
-      });
-      return;
-    }
-
-    const result = await run();
-    res.json(result);
-  } catch (error) {
-    res.status(400).json({ message: error.message || "Could not build merged video" });
-  }
-};
-
-const startAsyncMergeJob = (res, uploadId, message, run) => {
-  if (uploadId) {
-    res.status(202).json({ uploadId, message });
-    run().catch((error) => {
-      console.error("[subject-merge]", error.message || error);
-    });
-    return true;
-  }
-  return false;
-};
-
-export const downloadSubjectMergePartsHandler = async (req, res) => {
-  try {
-    const { uploadId } = req.body || {};
-    const subjectId = req.params.id;
-    const run = () => downloadSubjectMergeParts(subjectId, uploadId);
-
-    if (startAsyncMergeJob(res, uploadId, "Downloading all chapters…", run)) return;
-
-    const result = await run();
-    res.json(result);
-  } catch (error) {
-    res.status(400).json({ message: error.message || "Could not download chapters" });
-  }
-};
-
-export const stitchSubjectMergedVideoHandler = async (req, res) => {
-  try {
-    const { uploadId } = req.body || {};
-    const subjectId = req.params.id;
-    const run = () => stitchSubjectMergedVideo(subjectId, uploadId);
-
-    if (startAsyncMergeJob(res, uploadId, "Stitching chapters into one video…", run)) return;
-
-    const result = await run();
-    res.json(result);
-  } catch (error) {
-    res.status(400).json({ message: error.message || "Could not stitch merged video" });
+    res.status(500).json({ message: error.message || "Could not read full course status" });
   }
 };
 
 export const streamSubjectMergedVideoHandler = async (req, res) => {
   try {
-    const absolute = await getMergedVideoAbsolutePath(req.params.id);
+    const absolute = await getFullCourseAbsolutePath(req.params.id);
     if (!absolute) {
-      return res.status(404).json({ message: "Merged video not ready. Build it first." });
+      return res.status(404).json({ message: "No full course video linked. Use Replace full course first." });
     }
-    const fileName = await getMergedVideoDownloadName(req.params.id);
+    const fileName = await getFullCourseDownloadName(req.params.id);
     streamLocalFile({
       req,
       res,
       absolutePath: absolute,
-      contentType: "video/mp4",
+      contentType: videoContentType(absolute),
       fileName,
       asAttachment: false,
     });
@@ -227,24 +164,60 @@ export const streamSubjectMergedVideoHandler = async (req, res) => {
   }
 };
 
-export const downloadSubjectMergedVideoHandler = async (req, res) => {
+export const revealSubjectMergedVideoHandler = async (req, res) => {
   try {
-    const absolute = await getMergedVideoAbsolutePath(req.params.id);
-    if (!absolute) {
-      return res.status(404).json({ message: "Merged video not ready. Build it first." });
-    }
-    const fileName = await getMergedVideoDownloadName(req.params.id);
-    streamLocalFile({
-      req,
-      res,
-      absolutePath: absolute,
-      contentType: "video/mp4",
-      fileName,
-      asAttachment: true,
+    const result = await revealSubjectFullCourse(req.params.id);
+    res.json({
+      ...result,
+      message: result.revealed === "file" ? "Opened in File Explorer." : result.message,
     });
   } catch (error) {
-    if (!res.headersSent) {
-      res.status(500).json({ message: error.message || "Download failed" });
+    res.status(400).json({ message: error.message || "Could not open file location" });
+  }
+};
+
+export const replaceSubjectMergedVideoHandler = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "No video file selected." });
     }
+
+    const status = await registerSubjectFullCourse(req.params.id, {
+      uploadedPath: req.file.path,
+      originalName: req.file.originalname,
+    });
+
+    res.json({
+      ...status,
+      replaced: true,
+      message: "Full course video linked from your PC.",
+    });
+  } catch (error) {
+    if (req.file?.path) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch {
+        /* ignore */
+      }
+    }
+    res.status(400).json({ message: error.message || "Could not link full course video" });
+  }
+};
+
+export const linkLocalFullCourseHandler = async (req, res) => {
+  try {
+    const { filePath, originalName } = req.body || {};
+    if (!String(filePath || "").trim()) {
+      return res.status(400).json({ message: "Paste the full path to your MP4 file." });
+    }
+
+    const status = await linkSubjectFullCourseFromPath(req.params.id, filePath, { originalName });
+    res.json({
+      ...status,
+      linked: true,
+      message: "Full course video linked — no upload needed.",
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Could not link full course video" });
   }
 };

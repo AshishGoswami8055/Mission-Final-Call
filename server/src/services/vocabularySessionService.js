@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import Vocabulary from "../models/Vocabulary.js";
 import VocabularyPracticeSession from "../models/VocabularyPracticeSession.js";
 import VocabularyReviewLog from "../models/VocabularyReviewLog.js";
@@ -9,6 +10,7 @@ import {
   sanitizeQuestion,
   validateQuestionAnswer,
 } from "./vocabularyQuestionService.js";
+import { generateCdsPyqQuestions, isCdsPyqPracticeMode, loadRecentCdsPyqFingerprints } from "./vocabularyCdsPyqService.js";
 import {
   applySrsReview,
   deriveReviewResult,
@@ -104,7 +106,7 @@ const buildItemFilter = (userId, options) => {
       $options: "i",
     };
   }
-  if (options.examMode || options.mode === "exam") {
+  if (options.examMode || options.mode === "exam" || isCdsPyqPracticeMode(options.mode)) {
     filter.$and = [
       {
         $or: [
@@ -144,20 +146,40 @@ export const startVocabularySession = async (userId, options = {}) => {
     throw error;
   }
 
-  const questions = generateVocabularyQuestions({
-    items: candidates,
-    pool,
-    mode,
-    limit: Math.min(questionCount, candidates.length),
-  });
+  let questions;
+  let pyqSource = null;
+  const sessionSeed = `${userId}:${Date.now()}:${crypto.randomUUID()}:${questionCount}:${mode}`;
+  if (isCdsPyqPracticeMode(mode)) {
+    const avoidFingerprints = await loadRecentCdsPyqFingerprints(userId);
+    const generated = await generateCdsPyqQuestions({
+      items: candidates.length >= 8 ? candidates : pool,
+      limit: questionCount,
+      mode,
+      sessionSeed,
+      avoidFingerprints,
+      preferAi: options.preferAi !== false,
+    });
+    questions = generated.questions;
+    pyqSource = generated.source;
+  } else {
+    questions = generateVocabularyQuestions({
+      items: candidates,
+      pool,
+      mode,
+      limit: Math.min(questionCount, candidates.length),
+    });
+  }
+
   const session = await VocabularyPracticeSession.create({
     userId,
     mode,
     type: ["vocabulary", "idiom", "one_word"].includes(options.type)
       ? options.type
       : "all",
-    examMode: Boolean(options.examMode || mode === "exam"),
-    timed: Boolean(options.timed || mode === "timed" || mode === "exam"),
+    examMode: Boolean(options.examMode || mode === "exam" || isCdsPyqPracticeMode(mode)),
+    timed: Boolean(
+      options.timed || mode === "timed" || mode === "exam" || isCdsPyqPracticeMode(mode)
+    ),
     durationSeconds: Math.max(0, Number(options.durationSeconds) || 0),
     questionCount: questions.length,
     questions,
@@ -165,7 +187,10 @@ export const startVocabularySession = async (userId, options = {}) => {
   });
 
   return {
-    session: buildSessionSummary(session),
+    session: {
+      ...buildSessionSummary(session),
+      ...(pyqSource ? { pyqSource } : {}),
+    },
     question: sanitizeQuestion(questions[0]),
   };
 };
@@ -265,36 +290,35 @@ export const answerVocabularyQuestion = async (userId, sessionId, input = {}) =>
     requestedResult: input.result,
     responseTimeMs,
   });
-  const item = await Vocabulary.findOne({
-    _id: question.vocabularyId,
-    userId,
-  });
-  if (!item) {
-    const error = new Error("Vocabulary item no longer exists.");
-    error.statusCode = 404;
-    throw error;
+  const item = question.vocabularyId
+    ? await Vocabulary.findOne({
+        _id: question.vocabularyId,
+        userId,
+      })
+    : null;
+
+  if (item) {
+    await applySrsReview(item, {
+      result,
+      correct,
+      responseTimeMs,
+      mode: session.mode,
+    });
+    await VocabularyReviewLog.create({
+      userId,
+      vocabularyId: item._id,
+      sessionId: session._id,
+      mode: session.mode,
+      questionType: question.questionType,
+      result,
+      correct,
+      responseTimeMs,
+      selectedAnswer,
+    });
   }
 
-  await applySrsReview(item, {
-    result,
-    correct,
-    responseTimeMs,
-    mode: session.mode,
-  });
-  await VocabularyReviewLog.create({
-    userId,
-    vocabularyId: item._id,
-    sessionId: session._id,
-    mode: session.mode,
-    questionType: question.questionType,
-    result,
-    correct,
-    responseTimeMs,
-    selectedAnswer,
-  });
-
   session.answers.push({
-    vocabularyId: item._id,
+    vocabularyId: item?._id || question.vocabularyId || undefined,
     questionType: question.questionType,
     selectedAnswer,
     correct,
@@ -306,10 +330,14 @@ export const answerVocabularyQuestion = async (userId, sessionId, input = {}) =>
   if (correct) session.correctAnswers += 1;
   else session.wrongAnswers += 1;
   if (skipped) session.skippedQuestions += 1;
-  if (!correct && !session.weakWordsSeen.some((id) => String(id) === String(item._id))) {
+  if (
+    item &&
+    !correct &&
+    !session.weakWordsSeen.some((id) => String(id) === String(item._id))
+  ) {
     session.weakWordsSeen.push(item._id);
   }
-  session.reviewUpdatesApplied += 1;
+  if (item) session.reviewUpdatesApplied += 1;
   session.currentIndex += 1;
   session.averageResponseTime =
     session.answers.reduce((sum, answer) => sum + answer.responseTimeMs, 0) /
@@ -332,9 +360,9 @@ export const answerVocabularyQuestion = async (userId, sessionId, input = {}) =>
     result,
     correctAnswer: question.correctAnswer,
     explanation: question.explanation,
-    nextReviewAt: item.nextReviewAt,
-    nextIntervalDays: item.intervalDays,
-    confidence: item.confidence,
+    nextReviewAt: item?.nextReviewAt || null,
+    nextIntervalDays: item?.intervalDays || null,
+    confidence: item?.confidence || null,
     session: sessionPayload,
     nextQuestion: nextQuestion ? sanitizeQuestion(nextQuestion) : null,
   };

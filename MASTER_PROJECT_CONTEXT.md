@@ -23,9 +23,12 @@ The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, p
 | **Telegram** | GramJS login, channel browse, batch import, auto-sync, stream proxy, optional cloudify to Cloudinary |
 | **Video playback** | **Plyr** player (`CdsPlyrPlayer`), HTML5 local, Cloudinary CDN, Telegram stream, YouTube embed, screenshot notes, resume position, stall watchdog + retry, Telegram live-connection banner, **timeline scrub previews** when fully cached or PC-library downloaded |
 | **PDF / PYQ** | Inline viewer, course PDFs on disk, PYQ on Cloudinary, **AI question extract** (`POST /papers/:id/extract`), optional OCR via `ocrmypdf` on upload |
-| **Progress** | Per-content completion, chapter stats, paper attempted tracking |
-| **Dashboard** | Lazy course loading — subject stats from `/chapters/stats`; lesson rows fetched only when a subject is opened; library view paginated (`limit=20`); **↑↓ lesson reorder**; mark-as-done on lesson rows |
-| **CDS Vocabulary Arena** | Active-practice dashboard; mixed/MCQ/reverse/typing/context/weak/root/exam drills; deterministic SRS; session analytics; root families; CSV/Excel/OCR/text preview import; idioms + one-word substitution share the same corpus |
+| **Progress** | Per-content completion, chapter stats, paper attempted tracking, **mark entire subject complete** (bulk toggle-all) |
+| **Dashboard** | Lazy course loading — subject stats from `/chapters/stats`; lesson rows fetched only when a subject is opened; library view paginated (`limit=20`); **↑↓ lesson reorder**; mark-as-done on lesson rows; **mark entire subject complete** (bulk progress) |
+| **Full course video** | Per-subject **linked MP4** (manual edit, no auto-stitch); **Link from path** for 20GB+ files; **Play full course** via byte-range stream API; **Locate in Explorer**; no quality loss (direct file stream) |
+| **CDS Vocabulary Arena** | Active-practice dashboard; **CDS PYQ (AI)** paper-style MCQs (default practice mode); mixed/MCQ/reverse/typing/context/weak/root/exam drills; deterministic SRS; session analytics; root families; CSV/Excel/OCR/text preview import; idioms + one-word substitution share the same corpus |
+| **Telegram Import UX** | Curated topic media; PDF **View** (new tab) + **Save** (full PC download); filenames from Telegram document name; filename search; lesson-list scroll layout |
+| **PC Media Storage** | Configure `LOCAL_MEDIA_ROOT`; stream-cache inventory (**videos only**); **Locate / Show in folder** via File Explorer (localhost PowerShell reveal) |
 | **Study tracker** | Daily minutes, per-subject targets, watch history, exam countdown, celebration overlays |
 | **Daily Mission** (`/mission`) | Auto-generated daily plan: 1 English + 1 Maths + 1 GS video + reading; Sunday mock; AI briefing; discipline score; streaks |
 | **Analytics** | Study intelligence (`/history/intelligence`), weekly charts, mock trends, video streak (60 min/day goal) |
@@ -70,13 +73,13 @@ The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, p
 | CDN | Cloudinary v2 (multi-account registry) |
 | Telegram | GramJS (`telegram` npm package) |
 | Google | googleapis — YouTube OAuth + **direct upload** (`uploadDestination: "youtube"` when OAuth connected) |
-| AI | OpenAI Node SDK — paper extract/analysis, **video AI overview + Ask**, daily mission briefing |
+| AI | OpenAI Node SDK — paper extract/analysis, **video AI overview + Ask**, daily mission briefing, **CDS Vocabulary PYQ MCQ generation** (`vocabularyCdsPyqService`) |
 | PDF | pdf-parse, optional ocrmypdf CLI |
 | OCR | tesseract.js (vocab image import), `eng.traineddata` at `server/eng.traineddata` |
 | Spreadsheet | xlsx (vocab import) |
 | Security | helmet, cors, express-validator |
 | Logging | morgan |
-| Testing | Node.js built-in test runner — `npm test` in `server/` (auth, Cloudinary cleanup, mission scoring, Telegram helpers, **contentSort**, **telegramImportFilters**); GitHub Actions CI |
+| Testing | Node.js built-in test runner — `npm test` in `server/` (auth, Cloudinary cleanup, mission scoring, Telegram helpers, **contentSort**, **telegramImportFilters**, **vocabularyQuestions**, **vocabularyCdsPyq**); GitHub Actions CI |
 
 ## Database
 
@@ -106,7 +109,7 @@ d:\1. Projects\CDS JOURNEY OTA\
 │
 ├── client/                       # React frontend
 │   ├── package.json
-│   ├── vite.config.js            # Dev proxy: /api, /uploads → localhost:5000
+│   ├── vite.config.js            # Dev proxy: /api, /uploads → localhost:5001
 │   ├── vercel.json               # Client-specific Vercel config
 │   ├── index.html
 │   ├── public/                   # favicon.svg, vite.svg
@@ -120,11 +123,11 @@ d:\1. Projects\CDS JOURNEY OTA\
 │       ├── constants/streak.js   # VIDEO_STREAK_GOAL_MINUTES = 60
 │       ├── context/              # AuthContext, StudyContext, ThemeContext
 │       ├── hooks/                # useDashboardCourseContents, useTelegramPlaybackStatus, useWorkspaceCapabilities
-│       ├── components/           # Reusable UI (Layout, CdsPlyrPlayer, SubjectLessonAccordion, TelegramConnectionStatus, VideoCacheStatusBar, modals, mission/*, streak/*)
-│       ├── pages/                # Route-level pages (incl. CloudinaryStoragePage, LocalMediaStoragePage)
+│       ├── components/           # Reusable UI (Layout, CdsPlyrPlayer, SubjectPlayAllPremium, SubjectLessonAccordion, …)
+│       ├── pages/                # Route-level pages (incl. SubjectFullVideoPage, CloudinaryStoragePage, LocalMediaStoragePage)
 │       ├── config/navItems.js    # Sidebar nav (incl. PC Media Storage — localOnly)
 │       ├── styles/               # plyr-overrides.css (teal Plyr theme + screenshot button)
-│       └── utils/                # media.js, contentSort.js, videoScreenshot.js, timelineScrubPreview.js, telegramLessonPlan.js, uploadProgress, screenshotNotes, etc.
+│       └── utils/                # media.js, contentSort.js, subjectFullCourse.js, videoScreenshot.js, timelineScrubPreview.js, …
 │
 ├── server/                       # Express backend (MVC)
 │   ├── package.json
@@ -149,6 +152,7 @@ d:\1. Projects\CDS JOURNEY OTA\
     ├── _tmp_videos/              # Multer scratch before YouTube→Cloudinary or delete
     ├── _tmp_papers/              # Multer scratch before PYQ→Cloudinary
     ├── _local_library/           # PC library downloads (meta.json + video files)
+    ├── _merged_subjects/         # Full-course link meta ({subjectId}.meta.json); linked MP4 may live anywhere under LOCAL_MEDIA_ROOT
     ├── _stream_cache/            # Auto Telegram stream cache while watching (localhost)
     ├── _playback_cache/          # Manual/on-demand Telegram playback cache files
     ├── CDS 2 2026/               # Default active cycle folder
@@ -162,14 +166,26 @@ d:\1. Projects\CDS JOURNEY OTA\
 |------|------|
 | `client/src/utils/contentSort.js` | **`sortSubjectContents()`** — shared lesson order (dashboard, Play all, player playlist); uses `importSortOrder` then `telegramMessageId` |
 | `client/src/utils/timelineScrubPreview.js` | YouTube-style hover thumbnails on progress bar when video is fully stream-cached or PC-library downloaded |
+| `client/src/components/SubjectPlayAllPremium.jsx` | Subject banner — **Link from path**, Replace (≤8 GB), Locate, Play full course, mark subject complete |
+| `client/src/pages/SubjectFullVideoPage.jsx` | Full-subject single-file player (`/subject/:subjectId/full-video`) — streams linked MP4 via API |
+| `client/src/api/client.js` | Axios + **`getStreamBackendBaseUrl()`** — full-course `<video>` must hit Express, not Vite :5173 |
+| `client/src/utils/subjectFullCourse.js` | `getFullCourseStreamUrl()` (always backend stream API), link/replace/status helpers |
+| `server/src/controllers/subjectDownloadController.js` | Full-course status, stream, link-local, replace, reveal handlers |
+| `server/src/services/subjectFullCourseService.js` | Link meta (`linkedSourcePath`), reveal in Explorer, stream path resolution — **no ffmpeg merge** |
+| `server/src/middlewares/mediaStaticMiddleware.js` | Subdir handlers + **`createLocalMediaRootStaticHandler`** (files at CDS UPLOAD root, e.g. `Complete Indian Geography.mp4`) |
+| `server/src/utils/streamLocalFile.js` | HTTP Range streaming incl. **suffix ranges** (`bytes=-N`) for huge MP4 metadata |
 | `client/src/components/SubjectLessonAccordion.jsx` | Subject lesson list — Videos/PDFs tabs, mark done, rename, delete, **↑↓ reorder** |
 | `client/src/pages/LocalMediaStoragePage.jsx` | `/settings/pc-media` — LOCAL_MEDIA_ROOT path, disk usage for library/stream/playback caches |
-| `server/src/utils/contentSort.js` | Server mirror of client sort (reorder API, merge playlists) |
+| `server/src/utils/contentSort.js` | Server mirror of client sort (reorder API) |
 | `server/src/utils/telegramImportFilters.js` | Duplicate title detection, user-skipped Telegram message IDs, update-count filtering |
-| `server/src/config/mediaStorage.js` | `LOCAL_MEDIA_ROOT`, paths for `_local_library`, `_stream_cache`, `_playback_cache` |
+| `server/src/config/mediaStorage.js` | `LOCAL_MEDIA_ROOT`, paths for `_local_library`, `_merged_subjects`, `_stream_cache`, `_playback_cache` |
 | `client/src/utils/videoScreenshot.js` | Frame capture for Plyr; `applyVideoCrossOrigin`, `applyVideoSource`, `resolvePlyrVideoElement` |
 | `client/src/components/CdsPlyrPlayer.jsx` | Plyr wrapper — imperative `<video>` (avoids React StrictMode DOM conflicts); stall watchdog |
-| `client/src/utils/media.js` | **`resolveContentSrc()`**, `preferSameOriginMediaUrl()`, `resolveVideoPlaybackUrl()` — canonical playback URLs (Vite proxy `/api`) |
+| `client/src/utils/media.js` | **`resolveContentSrc()`**, `preferSameOriginMediaUrl()`, `resolveVideoPlaybackUrl()`, **`downloadTelegramMediaToPc()`** (full attachment download + PDF integrity checks) — canonical playback/download URLs |
+| `client/src/utils/vocabularyArena.js` | Practice mode catalog — **`cds_pyq` first**; timed duration helpers |
+| `client/src/components/vocabulary/CdsPyqBody.jsx` | Paper-style stems: underlined sentences, match lists, confusable word sets |
+| `server/src/services/vocabularyCdsPyqService.js` | OpenAI CDS English PYQ MCQ generator + deterministic fallback (7 formats) |
+| `server/src/utils/revealInFileManager.js` | Localhost **Locate** — PowerShell `Start-Process explorer.exe` for spaced paths |
 | `client/src/hooks/useDashboardCourseContents.js` | Lazy per-subject course content + `subjectStats` from chapter stats |
 | `client/src/hooks/useTelegramPlaybackStatus.js` | Telegram session polling for stream playback |
 | `client/src/hooks/useWorkspaceCapabilities.js` | Feature flags from `GET /workspace/capabilities` |
@@ -321,6 +337,41 @@ ContentCard "Mark complete" → POST /api/progress/toggle/:contentId
   → Dashboard refetches chapter stats via GET /api/chapters/stats
 ```
 
+## Subject bulk-complete flow
+
+```
+SubjectPlayAllPremium "Mark entire subject complete"
+  → POST /api/progress/subject/:subjectId/toggle-all
+  → progressController.toggleSubjectCompleted — marks all Content in subject (or clears all if already 100%)
+  → Dashboard patches local course contents + chapter stats
+```
+
+## Full course video flow (linked MP4 — no merge)
+
+```
+User links edited full-subject MP4:
+  Option A — Link from path (recommended for 20GB+): paste Windows path
+    → POST /api/subjects/:id/merged-video/link-local { filePath }
+    → subjectFullCourseService.linkSubjectFullCourseFromPath
+    → Writes {subjectId}.meta.json with linkedSourcePath (no copy unless Replace upload)
+  Option B — Replace full course (browser upload, max ~8 GB Multer limit)
+    → POST /api/subjects/:id/merged-video/replace (multipart)
+    → Saves to {LOCAL_MEDIA_ROOT}/_merged_subjects/{subjectId}_full_course.mp4
+
+Play full course:
+  SubjectPlayAllPremium → navigate /subject/:subjectId/full-video
+  → GET /api/subjects/:id/merged-video (status: ready, sizeBytes, originalFileName)
+  → getFullCourseStreamUrl(subjectId) → http://127.0.0.1:5001/api/subjects/:id/merged-video/stream?token=
+     (MUST hit backend directly — NOT Vite :5173; NOT broken /uploads/ path for root-level CDS UPLOAD files)
+  → protectStream + streamLocalFile with HTTP Range (incl. suffix ranges for moov on huge files)
+  → CdsPlyrPlayer crossOriginMode=none, preload=metadata, scrub preview off
+
+Locate:
+  → POST /api/subjects/:id/merged-video/reveal → revealInFileManager(linkedSourcePath)
+```
+
+**Removed (2026-08-10):** ffmpeg chapter stitch/merge, virtual multi-chapter playlist player, "Download full video" build button — too slow; user supplies one edited MP4 instead.
+
 ## Mission daily flow
 
 ```
@@ -420,7 +471,7 @@ TelegramChannelMapping (channelId + programmeId — sync config)
 - `sourceType`: `upload` | `url` | `cloudinary` | `telegram`
 - Video fields: `filePath`, `videoUrl`, `videoSourceType` (`local`|`telegram`), `publicId`, `cloudType`, `duration`, `thumbnail`
 - Telegram metadata: `telegramSource`, `telegramChannelId`, `telegramMessageId`, `telegramFileName`, `telegramMimeType`, `telegramFileSize`, `telegramTopicId`
-- **`importSortOrder`** — manual lesson order (dashboard ↑↓ reorder, Play all, merge playlists); falls back to `telegramMessageId` when null
+- **`importSortOrder`** — manual lesson order (dashboard ↑↓ reorder, Play all, video player playlist); falls back to `telegramMessageId` when null
 - `uploadedAt`, `url`
 
 ### SubjectCloudMapping (`SubjectCloudMapping.js`)
@@ -464,7 +515,8 @@ TelegramChannelMapping (channelId + programmeId — sync config)
 - Powers accuracy trends, mode performance, category strength and daily vocabulary streak
 
 ### VocabularyPracticeSession (`VocabularyPracticeSession.js`)
-- Persistent drill: `userId`, `mode`, `type`, timing/exam flags, private question snapshots, answers, counters, weak words and SRS update count
+- Persistent drill: `userId`, `mode` (includes **`cds_pyq`**), `type`, timing/exam flags, private question snapshots, answers, counters, weak words and SRS update count
+- Answer `vocabularyId` is **optional** (AI PYQ items may invent confusable pairs not in the bank; SRS applies only when a linked word exists)
 - Status: `active` | `completed` | `abandoned`; supports reload/resume and server-authoritative answer validation
 
 ### DailyMission (`DailyMission.js`)
@@ -511,7 +563,9 @@ TelegramChannelMapping (channelId + programmeId — sync config)
 
 # API Documentation
 
-Base URL: `http://localhost:5000/api` (dev) or `VITE_API_URL` (prod).
+Base URL: `/api` via Vite proxy in dev (→ `http://127.0.0.1:5001`), or `VITE_API_URL` / same-origin `/api` in prod.
+
+**Note:** `server.js` defaults `PORT` to **5000**; this repo's `vite.config.js` proxies to **5001** — set `PORT=5001` in `server/.env` so dev proxy and `getStreamBackendBaseUrl()` stay aligned.
 
 **Auth:** Unless noted, routes require `Authorization: Bearer <JWT>`.
 
@@ -557,6 +611,11 @@ Base URL: `http://localhost:5000/api` (dev) or `VITE_API_URL` (prod).
 | GET | `/:id/local-library` | PC library status for subject (local server only) |
 | GET | `/:id/local-library/cached` | Cached content IDs in local library |
 | POST | `/:id/local-library` | Start bulk download to PC library |
+| GET | `/:id/merged-video` | Full-course link status (`ready`, `linkedSourcePath` meta, `sizeBytes`, `originalFileName`) |
+| GET | `/:id/merged-video/stream` | **Stream auth** — byte-range stream of linked full-course MP4; query `token` |
+| POST | `/:id/merged-video/reveal` | Localhost — open linked file or `_merged_subjects` folder in Explorer |
+| POST | `/:id/merged-video/replace` | Localhost — browser upload link (Multer; ≤8 GB default limit) |
+| POST | `/:id/merged-video/link-local` | Localhost — link existing file by absolute path (any size; no upload) |
 
 ## Chapters (`/api/chapters`)
 
@@ -617,6 +676,7 @@ Base URL: `http://localhost:5000/api` (dev) or `VITE_API_URL` (prod).
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/toggle/:contentId` | Toggle content completed |
+| POST | `/subject/:subjectId/toggle-all` | Mark all lessons in subject complete (or clear all if already 100%) |
 | GET | `/chapter/:chapterId` | Chapter progress summary |
 
 ## Vocabulary (`/api/vocabulary`)
@@ -627,7 +687,7 @@ Base URL: `http://localhost:5000/api` (dev) or `VITE_API_URL` (prod).
 | GET | `/analytics` | 90-day trends, mode/category performance, misses and queue health |
 | GET | `/weak-words` | Priority-ranked weak words; query `type`, `limit` |
 | GET | `/root-families` | Root family groups; query `search`, `limit` |
-| POST | `/session/start` | Start persistent practice session; body includes `mode`, `type`, `questionCount`, timing/root options |
+| POST | `/session/start` | Start persistent practice session; body includes `mode` (`cds_pyq`\|mixed\|mcq\|…), `type`, `questionCount`, timing/root options; **`cds_pyq`** generates AI (or fallback) paper-style MCQs |
 | GET | `/session/:sessionId` | Resume active session (answers remain server-private) |
 | POST | `/session/:sessionId/reveal` | Reveal answer for reverse recall |
 | POST | `/session/:sessionId/answer` | Validate answer, apply SRS, write review log, return explanation + next question |
@@ -679,7 +739,7 @@ Base URL: `http://localhost:5000/api` (dev) or `VITE_API_URL` (prod).
 | GET | `/batch-updates` | Pending Telegram updates for dashboard |
 | POST | `/update-subject` | Apply Telegram updates to one subject |
 | POST | `/update-batch` | Apply batch updates |
-| GET | `/stream/:messageId` | **Stream auth** — byte-range video stream; query `channelId`, `token` |
+| GET | `/stream/:messageId` | **Stream auth** — byte-range video/PDF stream; query `channelId`, `token`; **`download=1`** → full attachment (bypasses 8 MB stream-fetch cap) |
 
 ## Settings / local media (`/api/settings`)
 
@@ -687,7 +747,9 @@ Base URL: `http://localhost:5000/api` (dev) or `VITE_API_URL` (prod).
 |--------|------|---------|
 | GET | `/local-media` | Current `LOCAL_MEDIA_ROOT`, disk usage breakdown |
 | PUT | `/local-media` | Update media root path |
-| GET | `/stream-cache` | Stream cache stats (`_stream_cache`) |
+| GET | `/stream-cache` | Stream cache inventory (`_stream_cache`; UI lists **videos only**) |
+| POST | `/stream-cache/reveal-folder` | Localhost — open `_stream_cache` in File Explorer |
+| POST | `/stream-cache/:cacheKey/reveal` | Localhost — select one cache file in Explorer |
 | DELETE | `/stream-cache` | Clear stream cache |
 
 ## Mission (`/api/mission`)
@@ -750,8 +812,8 @@ Base URL: `http://localhost:5000/api` (dev) or `VITE_API_URL` (prod).
 ## Stream routes
 
 - `protectStream`: Bearer OR `?token=` query param
-- Used by: `/api/telegram/stream/:messageId`, `/api/contents/:id/download-file`
-- Frontend appends token in `media.js` → `buildTelegramPreviewStreamUrl()`
+- Used by: `/api/telegram/stream/:messageId`, `/api/contents/:id/download-file`, **`/api/subjects/:id/merged-video/stream`**
+- Frontend appends token in `media.js` → `buildTelegramPreviewStreamUrl()`; full course uses `subjectFullCourse.js` → `getFullCourseStreamUrl()`
 
 ## Frontend route guard
 
@@ -889,14 +951,29 @@ CDS cycle (cds-1-2026, cds-2-2026)
 
 ### Frontend
 - Default `/vocabulary` is `VocabularyDashboardPage` (active practice first); old library CRUD is secondary at `/vocabulary/learn`
-- Pages: dashboard, practice setup, persistent session, roots, import preview, analytics
+- Practice default mode: **`cds_pyq`** (CDS PYQ AI) — paper-cream card UI via `QuestionCard` + `CdsPyqBody`
+- Pages: dashboard, practice setup, persistent session, roots, import preview, analytics, weak words
 - Reusable UI under `client/src/components/vocabulary/`; data hooks under `client/src/hooks/useVocabulary*.js`
 - Keyboard: MCQ `1–4`, Enter submit, Space reveal, `N` next, `R` Again
 - Legacy `/idioms` and `/one-word-substitution` remain compatible via `LanguageLearningPage`
 
+### CDS PYQ (AI) — `mode: "cds_pyq"`
+- Service: `vocabularyCdsPyqService.js` — OpenAI (`OPENAI_VOCAB_MODEL` / `OPENAI_ANALYSIS_MODEL` / `gpt-4o-mini`) using the learner word bank as seeds; **deterministic fallback** if no API key or AI fails
+- Formats (UPSC CDS English paper style):
+  1. `similar_sounding` — confusable trio + 3 underlined sentences + combination options (`1 and 2 only`, …)
+  2. `idiom_mcq` — idiom / phrase + 4 meanings
+  3. `antonym_context` — sentence with underlined word + opposite meaning
+  4. `word_meaning` — headword + 4 definitions
+  5. `word_pair` — pair definitions (affect/effect style)
+  6. `synonym_context` — sentence + nearest meaning
+  7. `match_list` — List I (A–D) ↔ List II (1–4) + code options (`3 1 4 2`)
+- Session start sets `examMode` + timed budget (`SECONDS_PER_QUESTION`); start response may include `pyqSource: "ai"|"fallback"`
+- Requires vocabulary items in the bank; invents classic confusable pairs when needed; SRS updates only when `vocabularyId` resolves
+
 ### Question/session services
-- `vocabularyQuestionService.js`: balanced distractors; definition↔word, synonym, antonym, idiom, one-word, context, root, homonym/confusing-word questions
-- `vocabularySessionService.js`: server-private answers, persistent progress, timed drills, final weak-category/review recommendations
+- `vocabularyQuestionService.js`: Arena modes + types; balanced distractors; definition↔word, synonym, antonym, idiom, one-word, context, root, homonym/confusing-word; exports `PRACTICE_MODES` including **`cds_pyq`**
+- `vocabularySessionService.js`: branches `cds_pyq` → `generateCdsPyqQuestions`; server-private answers; optional vocab link for AI items; timed drills; final weak-category/review recommendations
+- `vocabularyCdsPyqService.js`: AI + fallback PYQ generation / normalization
 - `vocabularyArenaService.js`: dashboard, weak scoring, root groups, analytics
 - `vocabularyImportService.js`: shared parser/validator/upsert for both new preview flow and legacy import endpoints
 
@@ -914,14 +991,31 @@ CDS cycle (cds-1-2026, cds-2-2026)
 - Downloads Cloudinary, local, or Telegram-stream videos to `{LOCAL_MEDIA_ROOT}/_local_library/`
 - Metadata in `{contentId}.meta.json`
 - Subject-level bulk download via `POST /subjects/:id/local-library`
+- Replacing a lesson file does **not** invalidate full-course link (removed old merge invalidation)
+
+## Full course video (`subjectFullCourseService.js`)
+
+- **Localhost / `LOCAL_LIBRARY_ENABLED=1` only** for link/replace/reveal routes
+- One linked MP4 per subject — metadata in `{LOCAL_MEDIA_ROOT}/_merged_subjects/{subjectId}.meta.json`
+- **`linkedSourcePath`** — absolute path to user's file (may be anywhere under `LOCAL_MEDIA_ROOT`, e.g. root-level `Complete Indian Geography.mp4`)
+- **No transcode, no stitch, no quality loss** — playback streams original bytes via `streamLocalFile`
+- **Link from path** — instant registration for multi-GB files (no browser upload)
+- **Replace full course** — Multer upload to `{subjectId}_full_course.mp4` (8 GB middleware cap)
+- **Playback URL** — always `GET /api/subjects/:id/merged-video/stream?token=` via `getStreamBackendBaseUrl()` (port **5001** in dev, not Vite **5173**)
+- **Static `/uploads/` pitfall** — files at CDS UPLOAD root are NOT in project `uploads/`; `createLocalMediaRootStaticHandler` serves them when path matches; full-course player uses stream API regardless
+- **Range requests** — `streamLocalFile.parseRangeHeader` supports suffix ranges (`bytes=-65536`) required for 20GB+ MP4 duration probing
+- Purge legacy `{subjectId}_{hash}.mp4` auto-stitch files on new link
 
 ## Stream cache (`telegramStreamCacheService.js`)
 
 - Localhost / `LOCAL_LIBRARY_ENABLED=1` only; dir `{LOCAL_MEDIA_ROOT}/_stream_cache/`
 - Enabled via `TELEGRAM_STREAM_CACHE=1` (default on when local media enabled)
 - **Play-first:** streams directly from Telegram on cache miss; background warmup deferred (~20s)
+- Preview/stream responses may cap a single fetch (`TELEGRAM_STREAM_FETCH_MB`, default **8 MB** on localhost) — OK for video scrubbing
+- **PC Save / `?download=1`:** `streamTelegramAttachmentDownload()` always serves the **full** file (complete disk cache or full Telegram stream) — prevents truncated/corrupt PDFs
+- Client `downloadTelegramMediaToPc()` rejects HTTP 206, size mismatches, and non-`%PDF` headers
 - Per-content status: `GET /api/contents/:id/stream-cache`
-- Global stats/clear: `GET|DELETE /api/settings/stream-cache`
+- Global stats/clear: `GET|DELETE /api/settings/stream-cache`; **Locate** via `POST .../reveal` (PowerShell explorer)
 
 ## Playback cache (`videoPlaybackCacheService.js`)
 
@@ -967,8 +1061,9 @@ CDS cycle (cds-1-2026, cds-2-2026)
 | `CORS_ALLOW_IP_ORIGINS` | Allow LAN IP origins |
 | `CORS_ALLOW_CLOUDFLARE_TUNNEL` | Allow trycloudflare.com origins |
 | `CLOUDFLARE_TUNNEL_URL` | Tunnel base URL for CORS |
-| `OPENAI_API_KEY` | OpenAI for extract, analysis, AI briefing |
+| `OPENAI_API_KEY` | OpenAI for extract, analysis, AI briefing, **CDS PYQ vocab MCQs** |
 | `OPENAI_ANALYSIS_MODEL` | Model name (default `gpt-4o-mini`) |
+| `OPENAI_VOCAB_MODEL` | Optional override for CDS PYQ generation (falls back to `OPENAI_ANALYSIS_MODEL`) |
 | `SERPER_API_KEY` | Web search for paper research (optional) |
 | `CLOUDINARY_CLOUDS` | Comma-separated cloud keys (default `cloud1,cloud2`) |
 | `CLOUDINARY_DEFAULT_CLOUD` | Fallback cloud key |
@@ -990,7 +1085,7 @@ CDS cycle (cds-1-2026, cds-2-2026)
 | `TELEGRAM_STREAM_WAIT_MS` | Stream wait timeout (default 45000) |
 | `TELEGRAM_STREAM_TAIL_MB` | Tail buffer for seeking (default 8 MB) |
 | `TELEGRAM_STREAM_WARMUP_DEFER_MS` | Delay before background cache warmup after play starts (default ~20000) |
-| `LOCAL_MEDIA_ROOT` | Override media root (e.g. `C:\Users\...\CDS UPLOAD`); holds `_local_library`, `_stream_cache`, `_playback_cache` |
+| `LOCAL_MEDIA_ROOT` | Override media root (e.g. `C:\Users\...\CDS UPLOAD`); holds `_local_library`, `_merged_subjects`, `_stream_cache`, `_playback_cache`, and optionally root-level linked MP4s |
 | `VIDEO_COMPRESS_ALWAYS` | `0` skips compression when not needed |
 | `VIDEO_COMPRESS_HEIGHT` | Target height (default 720) |
 | `VIDEO_COMPRESS_CRF` | ffmpeg CRF (default 23) |
@@ -1012,12 +1107,15 @@ CDS cycle (cds-1-2026, cds-2-2026)
 
 | Variable | Purpose |
 |----------|---------|
-| `VITE_API_URL` | API base (e.g. `http://localhost:5000/api` or production backend `/api`) |
-| `VITE_SERVER_URL` | Server origin for absolute media URLs (e.g. `http://localhost:5000`) |
+| `VITE_API_URL` | API base (e.g. `http://localhost:5001/api` or production backend `/api`) |
+| `VITE_SERVER_URL` | Server origin for absolute media URLs (e.g. `http://localhost:5001`) |
+
+**Full course streaming (`subjectFullCourse.js`):**
+- Uses **`getStreamBackendBaseUrl()`** — always Express backend (`127.0.0.1:5001` in dev), never `window.location.origin` (Vite :5173 breaks range requests on huge MP4s)
 
 **Resolution (`api/client.js`):**
 - `VITE_API_URL` wins if set
-- Dev without env → `http://localhost:5000/api`
+- Dev without env → `/api` (Vite proxy to 5001)
 - Prod without env → same-origin `/api`
 
 ---
@@ -1046,7 +1144,7 @@ CDS cycle (cds-1-2026, cds-2-2026)
 
 ```bash
 # Terminal 1 — MongoDB running locally
-cd server && npm install && npm run dev    # → http://localhost:5000
+cd server && npm install && npm run dev    # → http://localhost:5001 (or PORT from .env)
 
 # Terminal 2
 cd client && npm install && npm run dev    # → http://localhost:5173
@@ -1054,7 +1152,7 @@ cd client && npm install && npm run dev    # → http://localhost:5173
 
 Copy/configure `server/.env` and `client/.env` with variables above.
 
-Vite proxies `/api` and `/uploads` to port 5000.
+Vite proxies `/api` and `/uploads` to port **5001**. **Full course video** bypasses Vite and streams directly from backend — see `getStreamBackendBaseUrl()`.
 
 ## Production patterns
 
@@ -1074,7 +1172,7 @@ Set `SERVE_CLIENT=true` explicitly if needed.
 ```bash
 cd server
 pm2 start ecosystem.config.cjs
-# Runs cds-api + cloudflared tunnel to localhost:5000
+# Runs cds-api + cloudflared tunnel to localhost:${PORT} (match server PORT, e.g. 5001)
 npm run tunnel:url   # get public URL
 ```
 
@@ -1127,6 +1225,7 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 - **README.md** — partially stale vs actual architecture (mentions local-only uploads, missing mission/Telegram features)
 - **Subject model** — server boot still backfills legacy `courseId` field though schema uses `programmeId` hierarchy
 - **Production video** — file upload blocked; must use Telegram links or pre-imported stream/Cloudinary content
+- **Huge linked MP4 (20GB+)** — timeline may stay at 00:00 until suffix range requests succeed; ensure `streamLocalFile` suffix-range support; moov-at-end files may seek slowly until metadata is read
 
 ---
 
@@ -1150,10 +1249,10 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 ## Conventions for developers
 
 1. **Always read this file first** before coding.
-2. **Always use `resolveContentSrc(item)`** on the client for playable URLs — use **`preferSameOriginMediaUrl()`** / **`resolveVideoPlaybackUrl()`** in dev so Vite proxies `/api` (required for screenshots + Telegram streams).
-3. **Video player** — use `CdsPlyrPlayer` (imperative video DOM); do not let React reconcile nodes Plyr moves.
-4. **Respect production media gate** — `NODE_ENV === "production"` blocks video file upload and YouTube download.
-5. **Telegram stream auth** — append `?token=` from `localStorage` for `<video src>`.
+2. **Always use `resolveContentSrc(item)`** on the client for per-lesson playable URLs — use **`preferSameOriginMediaUrl()`** / **`resolveVideoPlaybackUrl()`** in dev so Vite proxies `/api` (required for screenshots + Telegram streams).
+3. **Full course video** — use **`getFullCourseStreamUrl(subjectId)`** only; never point `<video src>` at `/uploads/...` for linked root-level CDS UPLOAD files; always backend stream API + `?token=`.
+4. **Video player** — use `CdsPlyrPlayer` (imperative video DOM); do not let React reconcile nodes Plyr moves.
+5. **Respect production media gate** — `NODE_ENV === "production"` blocks video file upload and YouTube download.
 6. **Telegram stream playback** — check `GET /telegram/session` `live` before starting player; show `TelegramConnectionStatus` banner.
 7. **Chapter sorting** — use `.collation({ locale: "en", numericOrdering: true })` for natural chapter order.
 8. **Subject delete** — must use cleanup services to avoid orphaned Cloudinary assets (URL-only legacy rows now parsed via `cloudinaryAsset.js`).
@@ -1175,6 +1274,7 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | `/mission` | Daily mission command center |
 | `/import/telegram` | Telegram import wizard |
 | `/video/:id` | Video player (Plyr + Telegram status banner + stall retry) |
+| `/subject/:subjectId/full-video` | **Full course** — single linked MP4 player (byte-range stream via backend API) |
 | `/video/:id/screenshot/:noteId` | Screenshot note viewer |
 | `/pdf/:id` | PDF viewer |
 | `/papers`, `/paper/:id` | PYQ list + viewer |
@@ -1221,11 +1321,16 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | Add Cloudinary account | Env vars only (`CLOUDINARY_CLOUDS` + per-key vars) |
 | Telegram import / updates | `telegramMappingService.js`, `telegramImportFilters.js`, `telegramVideoImportService.js`, `TelegramImportPage.jsx` |
 | Lesson order / reorder | `SubjectLessonAccordion.jsx`, `contentSort.js` (client + server), `PATCH /contents/reorder` |
+| **Full course video (link + play)** | `SubjectPlayAllPremium.jsx`, `SubjectFullVideoPage.jsx`, `subjectFullCourse.js`, `subjectFullCourseService.js`, `subjectDownloadController.js`, `streamLocalFile.js`, `getStreamBackendBaseUrl()` |
+| **Mark entire subject complete** | `SubjectPlayAllPremium.jsx`, `POST /api/progress/subject/:subjectId/toggle-all`, `progressController.js` |
 | PC media / stream cache | `LocalMediaStoragePage.jsx`, `mediaStorage.js`, `telegramStreamCacheService.js`, `mediaStorageController.js` |
-| Vocabulary Arena UI | `Vocabulary*Page.jsx`, `components/vocabulary/*`, `hooks/useVocabulary*.js` |
+| Vocabulary Arena UI | `Vocabulary*Page.jsx`, `components/vocabulary/*` (incl. `CdsPyqBody.jsx`), `hooks/useVocabulary*.js`, `utils/vocabularyArena.js` |
 | Vocabulary questions/sessions | `vocabularyQuestionService.js`, `vocabularySessionService.js`, `VocabularyPracticeSession.js`, `VocabularyReviewLog.js` |
+| **CDS PYQ (AI) MCQs** | `vocabularyCdsPyqService.js`, mode `cds_pyq` in session start, `QuestionCard` / `CdsPyqBody`, tests `vocabularyCdsPyq.test.js` |
 | Vocabulary SRS/weak rank | `vocabularySrsService.js` (legacy review controller delegates here) |
 | Vocabulary import | `vocabularyImportService.js`, `VocabularyImportPage.jsx` |
+| Telegram PDF Save / full download | `media.js` (`downloadTelegramMediaToPc`), `telegramStreamCacheService.js` (`download=1`), `TelegramImportPage.jsx` |
+| Stream-cache Locate in Explorer | `revealInFileManager.js`, `LocalMediaStoragePage.jsx`, settings reveal routes |
 | Wire paper chapter detail | `paperRoutes.js` + `chapterDetailService.js` |
 | Change Vocabulary Arena analytics | `vocabularyArenaService.js`, `VocabularyAnalyticsPage.jsx` |
 | Study time tracking | `useStudy().addStudyMinutes()` in `StudyContext.jsx` |
@@ -1245,11 +1350,31 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | **SRS** | Spaced repetition system for vocabulary |
 | **GramJS** | JavaScript Telegram client library (`telegram` npm package) |
 | **PC library** | Local smooth-playback download feature (`_local_library/`) |
+| **Full course video** | One user-linked MP4 per subject (`linkedSourcePath` in `_merged_subjects/{id}.meta.json`); no ffmpeg stitch; stream via `/merged-video/stream` |
+| **Link from path** | Register an existing Windows file path as full course (no browser upload — for 20GB+ MP4s) |
 | **Stream cache** | Auto disk cache while watching Telegram streams (`_stream_cache/`) |
 | **Curated import** | Pick specific Telegram lessons; unselected → `telegramSkippedMessageIds` |
 | **importSortOrder** | Numeric lesson order; set by import or manual ↑↓ reorder |
+| **CDS PYQ (AI)** | Practice mode that generates UPSC CDS English paper-style vocabulary MCQs via OpenAI (with local fallback) |
 
 ---
+
+# Recent Changes Log (chat sessions — 2026-08-10)
+
+| Area | Change |
+|------|--------|
+| **Full course video (link-only)** | Replaced ffmpeg stitch/merge with **`subjectFullCourseService.js`** — link one edited MP4 per subject; meta in `_merged_subjects/{subjectId}.meta.json` with `linkedSourcePath` |
+| **Link from path** | `POST /merged-video/link-local` — paste Windows path for 20GB+ files (no upload); **Replace full course** still browser upload (Multer ~8 GB cap) |
+| **Playback fix** | `getStreamBackendBaseUrl()` + `getFullCourseStreamUrl()` — always Express stream API (`127.0.0.1:5001`), not Vite :5173; suffix HTTP ranges (`bytes=-N`) in `streamLocalFile.js` for huge MP4 moov |
+| **Static root files** | `createLocalMediaRootStaticHandler` serves files at CDS UPLOAD root; full-course player still uses stream API (not broken `/uploads/` paths) |
+| **UI** | `SubjectPlayAllPremium` — Link from path, Replace, Locate, Play full course; `SubjectFullVideoPage` at `/subject/:subjectId/full-video` |
+| **Bulk progress** | `POST /api/progress/subject/:subjectId/toggle-all` — mark entire subject complete (or clear if already 100%) |
+| **Removed** | `subjectMergeService.js`, virtual multi-chapter playlist, stitch/merge/download-full-video routes — user supplies one edited file instead |
+| **CDS PYQ (AI) mode** | New Arena mode `cds_pyq` — AI paper-style MCQs (confusables, idioms, antonyms, word pairs, match lists); default on Practice page; cream paper UI |
+| **PYQ fallback** | Works without OpenAI using bank-seeded templates; tests in `vocabularyCdsPyq.test.js` |
+| **Telegram PDF Save** | `?download=1` bypasses 8 MB stream cap; client validates size + `%PDF` header (fixes ~8.8 MB → 8 MB corrupt downloads) |
+| **Telegram Import PDF UX** | View in new tab; Save to PC with Telegram filename; title defaults from Telegram file name; filename search; layout scroll fix |
+| **PC Media Locate** | PowerShell Explorer reveal for `_stream_cache` items/folder; stream-cache table shows **videos only** (hides PDFs) |
 
 # Recent Changes Log (chat sessions — 2026-08-06)
 
@@ -1281,4 +1406,4 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 
 ---
 
-*Last comprehensive audit: 2026-08-06 (includes CDS Vocabulary Arena, Telegram duplicate filtering, lesson reorder, stream cache, PC media storage). Repository path: `d:\1. Projects\CDS JOURNEY OTA`.*
+*Last comprehensive audit: 2026-08-10 (includes full course linked MP4 streaming, subject bulk-complete, CDS PYQ AI mode, Telegram full PDF download, PC Media Locate, Vocabulary Arena). Repository path: `d:\1. Projects\CDS JOURNEY OTA`.*

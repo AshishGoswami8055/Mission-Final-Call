@@ -1,4 +1,14 @@
+/** Lesson title from the Telegram document filename (PDF default). */
+export const titleFromTelegramFileName = (item) => {
+  let name = String(item?.fileName || "").trim();
+  name = name.replace(/\.pdf$/i, "").trim();
+  return name || "PDF";
+};
+
 export const suggestLessonTitle = (item) => {
+  if (item?.mediaType === "pdf") {
+    return titleFromTelegramFileName(item);
+  }
   let name = String(item?.displayName || item?.fileName || "Lesson").trim();
   name = name.replace(/\.(mp4|mkv|webm|mov|m4v|pdf)$/i, "");
   name = name.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
@@ -24,8 +34,11 @@ export const syncLessonPlanForTopic = (media = [], prefs, prevPlan = null) => {
   const entries = { ...(prevPlan?.entries || {}) };
   for (const item of eligible) {
     const id = item.messageId;
+    const suggested = suggestLessonTitle(item);
     if (!entries[id]) {
-      entries[id] = { selected: true, displayName: suggestLessonTitle(item) };
+      entries[id] = { selected: true, displayName: suggested };
+    } else if (item.mediaType === "pdf" && !entries[id].titleLocked) {
+      entries[id] = { ...entries[id], displayName: suggested };
     }
   }
   for (const rawId of Object.keys(entries)) {

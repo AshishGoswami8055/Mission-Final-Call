@@ -13,3 +13,8 @@ export const clearStreamCache = (cacheKey = null) =>
   api.delete("/settings/stream-cache", {
     params: cacheKey ? { cacheKey } : undefined,
   });
+
+export const revealStreamCacheItem = (cacheKey) =>
+  api.post(`/settings/stream-cache/${encodeURIComponent(cacheKey)}/reveal`);
+
+export const revealStreamCacheFolder = () => api.post("/settings/stream-cache/reveal-folder");

@@ -11,6 +11,20 @@ export const QUESTION_TYPES = [
   "root_family",
   "confusing_words",
   "homonym",
+  "similar_sounding",
+  "idiom_mcq",
+  "antonym_context",
+  "word_meaning",
+  "word_pair",
+  "synonym_context",
+  "match_list",
+  "confusable_words",
+  "idiom_meaning",
+  "antonym_in_context",
+  "sentence_relationship",
+  "synonym_in_context",
+  "match_the_following",
+  "usage_in_sentences",
 ];
 
 export const PRACTICE_MODES = [
@@ -23,6 +37,14 @@ export const PRACTICE_MODES = [
   "exam",
   "timed",
   "mixed",
+  "cds_pyq",
+  "cds_confusable",
+  "cds_idioms",
+  "cds_antonyms",
+  "cds_word_meaning",
+  "cds_sentence_relationship",
+  "cds_mixed_paper",
+  "cds_full_english",
 ];
 
 export const shuffleOptions = (values = [], random = Math.random) => {

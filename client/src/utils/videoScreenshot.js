@@ -40,10 +40,10 @@ export const resolvePlyrVideoElement = (videoRef, playerShellRef) => {
   return fromRef || fromDom || null;
 };
 
-/** crossOrigin only when needed — avoids breaking same-origin Telegram streams. */
-export const applyVideoCrossOrigin = (video, src = "") => {
+/** crossOrigin only when needed — avoids breaking same-origin / no-cors media playback. */
+export const applyVideoCrossOrigin = (video, src = "", mode = "auto") => {
   if (!video) return;
-  if (!src || typeof window === "undefined") {
+  if (mode === "none" || !src || typeof window === "undefined") {
     video.removeAttribute("crossorigin");
     return;
   }
@@ -59,11 +59,113 @@ export const applyVideoCrossOrigin = (video, src = "") => {
   }
 };
 
-export const applyVideoSource = (video, src, appliedRef) => {
+export const applyVideoSource = (video, src, appliedRef, crossOriginMode = "auto") => {
   if (!video || !src || appliedRef.current === src) return false;
-  applyVideoCrossOrigin(video, src);
+  applyVideoCrossOrigin(video, src, crossOriginMode);
   appliedRef.current = src;
   video.src = src;
   video.load();
   return true;
+};
+
+/** Seek after metadata/canplay is ready; retries deep seeks on large local MP4 files. */
+export const seekVideoTo = (video, targetSeconds, { tolerance = 2, maxAttempts = 5 } = {}) =>
+  new Promise((resolve) => {
+    if (!video || !Number.isFinite(targetSeconds) || targetSeconds <= 0) {
+      resolve(false);
+      return;
+    }
+
+    let attempts = 0;
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      resolve(ok);
+    };
+
+    const nearTarget = () => Math.abs(video.currentTime - targetSeconds) <= tolerance;
+
+    const scheduleRetry = () => {
+      if (attempts >= maxAttempts) {
+        finish(nearTarget());
+        return;
+      }
+      window.setTimeout(trySeek, video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA ? 120 : 400);
+    };
+
+    const trySeek = () => {
+      if (settled) return;
+      attempts += 1;
+
+      if (nearTarget()) {
+        finish(true);
+        return;
+      }
+
+      const onSeeked = () => {
+        cleanup();
+        if (nearTarget()) {
+          finish(true);
+          return;
+        }
+        scheduleRetry();
+      };
+
+      const onError = () => {
+        cleanup();
+        scheduleRetry();
+      };
+
+      const cleanup = () => {
+        video.removeEventListener("seeked", onSeeked);
+        video.removeEventListener("error", onError);
+      };
+
+      video.addEventListener("seeked", onSeeked);
+      video.addEventListener("error", onError);
+
+      try {
+        video.currentTime = targetSeconds;
+      } catch {
+        cleanup();
+        scheduleRetry();
+      }
+    };
+
+    const start = () => {
+      if (video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+        trySeek();
+        return;
+      }
+      const onCanPlay = () => {
+        video.removeEventListener("canplay", onCanPlay);
+        trySeek();
+      };
+      video.addEventListener("canplay", onCanPlay, { once: true });
+      window.setTimeout(() => {
+        video.removeEventListener("canplay", onCanPlay);
+        if (!settled) trySeek();
+      }, 4000);
+    };
+
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+      start();
+    } else {
+      video.addEventListener("loadedmetadata", start, { once: true });
+    }
+  });
+
+/** Reload element and restore playback time once metadata is available again. */
+export const reloadVideoPreservingTime = (video, targetSeconds) => {
+  if (!video) return;
+  const resumeAt = Number.isFinite(targetSeconds) && targetSeconds > 0 ? targetSeconds : 0;
+  const onMeta = () => {
+    video.removeEventListener("loadedmetadata", onMeta);
+    if (resumeAt > 0) {
+      void seekVideoTo(video, resumeAt);
+    }
+  };
+  video.addEventListener("loadedmetadata", onMeta, { once: true });
+  video.load();
 };

@@ -157,6 +157,7 @@ const DashboardPage = () => {
   const [deletingContentId, setDeletingContentId] = useState("");
   const [reorderingContentId, setReorderingContentId] = useState("");
   const [togglingLessonCompletedId, setTogglingLessonCompletedId] = useState("");
+  const [togglingSubjectComplete, setTogglingSubjectComplete] = useState(false);
   const [clearingCourse, setClearingCourse] = useState(false);
   const [updateProgress, setUpdateProgress] = useState(null);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
@@ -1253,6 +1254,28 @@ const DashboardPage = () => {
     }
   };
 
+  const handleToggleSubjectCompleted = async (subjectId) => {
+    setTogglingSubjectComplete(true);
+    try {
+      const { data } = await api.post(`/progress/subject/${subjectId}/toggle-all`);
+      const completed = Boolean(data.completed);
+      for (const item of courseContents) {
+        if (String(item.subjectId?._id || item.subjectId) !== String(subjectId)) continue;
+        patchCourseContent(item._id, { completed });
+      }
+      await fetchChapterStats();
+      toast.success(
+        completed
+          ? `Marked all ${data.totalCount} lessons complete — subject is 100%`
+          : "Cleared completion for this subject"
+      );
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Could not update subject progress");
+    } finally {
+      setTogglingSubjectComplete(false);
+    }
+  };
+
   const handleDeleteSubject = async () => {
     if (!selectedSubjectId) return;
     try {
@@ -1548,6 +1571,8 @@ const DashboardPage = () => {
             clearingCourse={clearingCourse}
             onToggleCompleted={handleToggleLessonCompleted}
             togglingCompletedId={togglingLessonCompletedId}
+            onToggleSubjectCompleted={handleToggleSubjectCompleted}
+            togglingSubjectComplete={togglingSubjectComplete}
           />
         )}
 

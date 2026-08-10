@@ -8,7 +8,7 @@ import ExplanationDrawer from "../components/vocabulary/ExplanationDrawer";
 import QuestionCard from "../components/vocabulary/QuestionCard";
 import SessionSummary from "../components/vocabulary/SessionSummary";
 import useVocabularySession from "../hooks/useVocabularySession";
-import { formatPracticeMode } from "../utils/vocabularyArena";
+import { formatPracticeMode, isCdsExamMode } from "../utils/vocabularyArena";
 
 const VocabularySessionPage = () => {
   const { sessionId } = useParams();
@@ -112,21 +112,38 @@ const VocabularySessionPage = () => {
   }
 
   const actualFeedback = arena.feedback?.correctAnswer && !arena.feedback?.revealed ? arena.feedback : null;
+  const questionNumber = (arena.session?.answeredQuestions || 0) + (arena.feedback ? 0 : 1);
+  const examPaper = isCdsExamMode(arena.session?.mode);
   return (
     <Layout title={formatPracticeMode(arena.session?.mode)}>
-      <div className="mx-auto max-w-5xl space-y-4">
-        <div className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-white/[0.08] dark:bg-[#151515]">
+      <div className={`mx-auto space-y-4 ${examPaper ? "max-w-4xl" : "max-w-5xl"}`}>
+        <div
+          className={`rounded-2xl border p-3 ${
+            examPaper
+              ? "border-amber-900/20 bg-[#f7f3ea] dark:border-amber-200/10 dark:bg-[#16140f]"
+              : "border-slate-200 bg-white dark:border-white/[0.08] dark:bg-[#151515]"
+          }`}
+        >
           <div className="flex items-center justify-between gap-3 text-xs font-bold text-slate-500">
             <span>{formatPracticeMode(arena.session?.mode)}</span>
-            <span>{arena.session?.answeredQuestions || 0} / {arena.session?.totalQuestions || 0}</span>
+            <span>
+              {arena.session?.answeredQuestions || 0} / {arena.session?.totalQuestions || 0}
+            </span>
           </div>
           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-white/10">
-            <div className="h-full rounded-full bg-indigo-500 transition-all duration-500" style={{ width: `${progress}%` }} />
+            <div
+              className={`h-full rounded-full transition-all duration-500 ${
+                examPaper ? "bg-amber-700" : "bg-indigo-500"
+              }`}
+              style={{ width: `${progress}%` }}
+            />
           </div>
         </div>
         {arena.question ? (
           <QuestionCard
             question={arena.question}
+            questionNumber={questionNumber}
+            totalQuestions={arena.session?.totalQuestions || 0}
             selected={selected}
             typedAnswer={typedAnswer}
             revealed={Boolean(arena.feedback?.revealed)}

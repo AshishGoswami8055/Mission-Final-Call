@@ -17,6 +17,8 @@ import {
   clearStreamCache,
   fetchLocalMediaStorage,
   fetchStreamCache,
+  revealStreamCacheFolder,
+  revealStreamCacheItem,
   updateLocalMediaStorage,
 } from "../utils/mediaStorageApi";
 
@@ -36,6 +38,8 @@ const LocalMediaStoragePage = () => {
   const [streamCache, setStreamCache] = useState(null);
   const [cacheLoading, setCacheLoading] = useState(false);
   const [clearingCache, setClearingCache] = useState(false);
+  const [revealingKey, setRevealingKey] = useState(null);
+  const [revealingFolder, setRevealingFolder] = useState(false);
   const [rootPath, setRootPath] = useState("");
   const [migrate, setMigrate] = useState(true);
 
@@ -110,7 +114,47 @@ const LocalMediaStoragePage = () => {
     }
   };
 
-  const streamFolder = streamCache?.folderPath || `${status?.rootPath || ""}\\_stream_cache`;
+  const handleRevealStreamCacheItem = async (cacheKey) => {
+    if (!cacheKey) return;
+    setRevealingKey(cacheKey);
+    try {
+      const { data } = await revealStreamCacheItem(cacheKey);
+      toast.success(data.path ? `Opened: ${data.path}` : data.message || "Opened in File Explorer");
+    } catch (error) {
+      const item = streamCache?.items?.find((row) => row.cacheKey === cacheKey);
+      if (item?.diskPath) {
+        await copyText(item.diskPath);
+        toast.error(
+          (error.response?.data?.message || "Could not open File Explorer") +
+            " — path copied to clipboard"
+        );
+      } else {
+        toast.error(error.response?.data?.message || "Could not open file location");
+      }
+    } finally {
+      setRevealingKey(null);
+    }
+  };
+
+  const handleRevealStreamCacheFolder = async () => {
+    setRevealingFolder(true);
+    try {
+      const { data } = await revealStreamCacheFolder();
+      toast.success(data.path ? `Opened: ${data.path}` : data.message || "Opened stream cache folder");
+    } catch (error) {
+      if (streamFolder) {
+        await copyText(streamFolder);
+        toast.error("Could not open folder — path copied to clipboard");
+      } else {
+        toast.error(error.response?.data?.message || "Could not open folder");
+      }
+    } finally {
+      setRevealingFolder(false);
+    }
+  };
+
+  const mediaRoot = status?.rootPath || "";
+  const streamFolder = streamCache?.folderPath || (mediaRoot ? `${mediaRoot}\\_stream_cache` : "");
 
   return (
     <Layout
@@ -173,10 +217,10 @@ const LocalMediaStoragePage = () => {
                   <FiZap size={18} />
                 </span>
                 <div>
-                  <h2 className="text-base font-semibold">Stream cache (fast seek)</h2>
+                  <h2 className="text-base font-semibold">Stream cache (videos only)</h2>
                   <p className="mt-1 max-w-2xl text-sm text-slate-600 dark:text-slate-400">
-                    When you watch or drag the timeline, video chunks are saved here so rewinds play from
-                    your PC — not Telegram again.
+                    When you watch or seek a lecture, video chunks are saved here so rewinds play from
+                    your PC. PDF cache files are hidden from this list.
                   </p>
                 </div>
               </div>
@@ -213,14 +257,27 @@ const LocalMediaStoragePage = () => {
                 <button
                   type="button"
                   className="btn-secondary shrink-0 text-xs"
+                  disabled={revealingFolder}
+                  onClick={() => void handleRevealStreamCacheFolder()}
+                >
+                  {revealingFolder ? (
+                    <FiLoader size={13} className="animate-spin" />
+                  ) : (
+                    <FiFolder size={13} />
+                  )}{" "}
+                  Show in folder
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary shrink-0 text-xs"
                   onClick={() => void copyText(streamFolder)}
                 >
                   <FiCopy size={13} /> Copy path
                 </button>
               </div>
               <p className="mt-2 text-xs text-sky-900/80 dark:text-sky-200/80">
-                Subfolder: <strong>_stream_cache</strong> inside your main media folder · Open in File Explorer
-                and paste the path above.
+                Subfolder: <strong>_stream_cache</strong> inside your main media folder · Use{" "}
+                <strong>Show in folder</strong> to open it in Windows File Explorer.
               </p>
             </div>
 
@@ -230,7 +287,7 @@ const LocalMediaStoragePage = () => {
               </div>
             ) : !streamCache?.items?.length ? (
               <p className="rounded-xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500 dark:border-slate-700">
-                No stream cache yet. Open any lecture and seek — chunks will appear here.
+                No cached videos yet. Open a lecture and seek — video chunks will appear here.
               </p>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-slate-200/90 dark:border-white/10">
@@ -280,6 +337,22 @@ const LocalMediaStoragePage = () => {
                         </td>
                         <td className="px-3 py-3 text-right">
                           <div className="flex justify-end gap-1">
+                            {item.diskPath ? (
+                              <button
+                                type="button"
+                                className="btn-secondary text-xs"
+                                disabled={revealingKey === item.cacheKey}
+                                onClick={() => void handleRevealStreamCacheItem(item.cacheKey)}
+                                title={item.diskPath}
+                              >
+                                {revealingKey === item.cacheKey ? (
+                                  <FiLoader size={13} className="animate-spin" />
+                                ) : (
+                                  <FiFolder size={13} />
+                                )}{" "}
+                                Locate
+                              </button>
+                            ) : null}
                             {item.contentId ? (
                               <Link to={`/video/${item.contentId}`} className="btn-secondary text-xs">
                                 Open

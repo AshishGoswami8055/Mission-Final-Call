@@ -14,6 +14,7 @@ import {
   getContentLocalLibrary,
   getContentPlaybackCache,
   getContentStreamCache,
+  streamContentCachePlay,
   getContents,
   getLocalLibraryStorage,
   getPlaybackCacheStorage,
@@ -32,6 +33,7 @@ const router = express.Router();
 
 router.get("/:id/download-file", protectStream, downloadContentFile);
 router.get("/:id/browser-playable/stream", protectStream, streamBrowserPlayableVideo);
+router.get("/:id/stream-cache/play", protectStream, streamContentCachePlay);
 router.use(protect);
 router.get("/upload-progress/:uploadId", getUploadProgress);
 router.get("/playback-cache/storage", getPlaybackCacheStorage);

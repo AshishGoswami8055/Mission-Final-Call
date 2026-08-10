@@ -3,7 +3,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Content from "../models/Content.js";
 import { downloadTelegramMediaToFile, waitForPlaybackIdle } from "./telegramService.js";
-import { invalidateSubjectMergedVideo } from "./subjectMergeService.js";
 import { invalidateBrowserPlayableCache } from "./browserPlayableVideoService.js";
 import { isTelegramStreamContent } from "../utils/contentPlayback.js";
 import { isCacheEligibleContent } from "./videoPlaybackCacheService.js";
@@ -609,9 +608,6 @@ export const replaceLocalLibraryFile = async (contentId, { uploadedPath, origina
     originalFileName: originalName || path.basename(uploadedPath),
   });
 
-  if (content.subjectId) {
-    invalidateSubjectMergedVideo(String(content.subjectId));
-  }
   invalidateBrowserPlayableCache(String(contentId));
 
   return getLocalLibraryStatus(contentId);

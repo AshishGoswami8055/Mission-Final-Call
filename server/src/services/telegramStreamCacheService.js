@@ -3,8 +3,16 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { createRequire } from "node:module";
 import { applyCorsHeaders } from "../config/cors.js";
-import { ensureLocalMediaDirs, getStreamCacheDir } from "../config/mediaStorage.js";
-import { beginTelegramPlayback, endTelegramPlayback } from "./telegramService.js";
+import { ensureLocalMediaDirs, getStreamCacheDir, toMediaWebPath } from "../config/mediaStorage.js";
+import {
+  beginTelegramPlayback,
+  beginTelegramStreamWait,
+  endTelegramPlayback,
+  endTelegramStreamWait,
+  isTelegramStreamWaiting,
+  withTelegramLock,
+  withTelegramPlaybackLock,
+} from "./telegramService.js";
 
 const require = createRequire(import.meta.url);
 const bigInt = require("big-integer");
@@ -21,12 +29,24 @@ const CHUNK_SIZE = Math.max(
 const MAP_CHUNK = 256 * 1024;
 const MAX_WAIT_MS = Math.max(5000, Number(process.env.TELEGRAM_STREAM_WAIT_MS || 45000));
 const WARMUP_DELAY_MS = Math.max(
-  5000,
-  Number(process.env.TELEGRAM_STREAM_WARMUP_DELAY_MS || 20000)
+  3000,
+  Number(process.env.TELEGRAM_STREAM_WARMUP_DELAY_MS || (isLocalhostStudy() ? 5000 : 12000))
 );
 const PRIORITY_TAIL_BYTES = Math.max(
   2 * 1024 * 1024,
   Number(process.env.TELEGRAM_STREAM_TAIL_MB || defaultTailMb()) * 1024 * 1024
+);
+const PREFETCH_AHEAD_BYTES = Math.max(
+  2 * 1024 * 1024,
+  Number(process.env.TELEGRAM_STREAM_PREFETCH_MB || (isLocalhostStudy() ? 32 : 16)) * 1024 * 1024
+);
+const PREFETCH_SLICE_BYTES = Math.max(
+  512 * 1024,
+  Number(process.env.TELEGRAM_STREAM_PREFETCH_SLICE_MB || 2) * 1024 * 1024
+);
+const MAX_STREAM_FETCH_BYTES = Math.max(
+  2 * 1024 * 1024,
+  Number(process.env.TELEGRAM_STREAM_FETCH_MB || (isLocalhostStudy() ? 8 : 4)) * 1024 * 1024
 );
 
 const cacheEnabled = () => String(process.env.TELEGRAM_STREAM_CACHE ?? "1") !== "0";
@@ -37,6 +57,37 @@ const entries = new Map();
 const cacheKeyFor = (channelId, messageId) => `${channelId}_${messageId}`;
 const metaPathFor = (cacheKey) => path.join(getStreamCacheDir(), `${cacheKey}.meta.json`);
 const binPathFor = (cacheKey) => path.join(getStreamCacheDir(), `${cacheKey}.bin`);
+const mp4PathFor = (cacheKey) => path.join(getStreamCacheDir(), `${cacheKey}.mp4`);
+
+/** Hard-link complete cache to .mp4 so browsers stream it reliably from /uploads. */
+const ensureStreamCacheMp4Link = (cacheKey) => {
+  const binPath = binPathFor(cacheKey);
+  const mp4Path = mp4PathFor(cacheKey);
+  if (!fs.existsSync(binPath)) return false;
+
+  if (fs.existsSync(mp4Path)) {
+    try {
+      const binSize = fs.statSync(binPath).size;
+      const mp4Size = fs.statSync(mp4Path).size;
+      if (mp4Size === binSize && mp4Size > 0) return true;
+    } catch {
+      /* recreate below */
+    }
+  }
+
+  try {
+    if (fs.existsSync(mp4Path)) fs.unlinkSync(mp4Path);
+    fs.linkSync(binPath, mp4Path);
+    return true;
+  } catch {
+    try {
+      fs.copyFileSync(binPath, mp4Path);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+};
 
 const parseRangeHeader = (rangeHeader, totalSize) => {
   if (!rangeHeader || !/^bytes=/i.test(rangeHeader)) {
@@ -84,6 +135,22 @@ const isRangeCached = (entry, start, end) => {
   return true;
 };
 
+/** Largest byte offset we can serve from cache within [start, maxEnd]. */
+const findCachedEndWithin = (entry, start, maxEnd) => {
+  if (start > maxEnd || !isRangeCached(entry, start, start)) return -1;
+  const limitChunk = chunkIndexFor(maxEnd);
+  let chunk = chunkIndexFor(start);
+  while (chunk <= limitChunk && entry.chunkMap.filled[chunk]) {
+    chunk += 1;
+  }
+  return Math.min(maxEnd, chunk * MAP_CHUNK - 1);
+};
+
+const capFetchEnd = (entry, start, end) => {
+  if (entry.complete) return end;
+  return Math.min(end, start + MAX_STREAM_FETCH_BYTES - 1);
+};
+
 const loadMeta = (cacheKey) => {
   const metaPath = metaPathFor(cacheKey);
   if (!fs.existsSync(metaPath)) return null;
@@ -96,6 +163,9 @@ const loadMeta = (cacheKey) => {
 
 const saveMeta = (entry) => {
   ensureLocalMediaDirs();
+  if (entry.complete) {
+    ensureStreamCacheMp4Link(entry.cacheKey);
+  }
   fs.writeFileSync(
     metaPathFor(entry.cacheKey),
     JSON.stringify({
@@ -140,6 +210,8 @@ const restoreEntry = (cacheKey, meta) => {
     workerRunning: false,
     warmupTimer: null,
     playbackActive: 0,
+    prefetchRunning: false,
+    prefetchRetryTimer: null,
   };
 };
 
@@ -175,6 +247,8 @@ const getOrCreateEntry = ({ cacheKey, channelId, messageId, meta }) => {
     workerRunning: false,
     warmupTimer: null,
     playbackActive: 0,
+    prefetchRunning: false,
+    prefetchRetryTimer: null,
   };
   entries.set(cacheKey, entry);
   return entry;
@@ -190,13 +264,97 @@ const endEntryPlayback = (entry) => {
   endTelegramPlayback();
 };
 
+const findNextUncachedStart = (entry, from = 0) => {
+  const startAt = Math.max(0, Number(from) || 0);
+  for (let start = startAt; start < entry.totalSize; start += MAP_CHUNK) {
+    const end = Math.min(entry.totalSize - 1, start + PREFETCH_AHEAD_BYTES - 1);
+    if (!isRangeCached(entry, start, end)) return start;
+  }
+  return entry.totalSize;
+};
+
+const hasPrefetchActive = (entry) =>
+  Boolean(entry.prefetchRunning) || entry.queue.some((task) => task.kind === "prefetch");
+
+/** Prefer filling the sequential front gap so cache % climbs steadily. */
+const resolvePrefetchStart = (entry, hintStart = null) => {
+  const fromFront = findNextUncachedStart(entry, entry.contiguousBytes);
+  if (fromFront < entry.totalSize) return fromFront;
+  if (hintStart != null) {
+    const fromHint = findNextUncachedStart(entry, hintStart);
+    if (fromHint < entry.totalSize) return fromHint;
+  }
+  return entry.totalSize;
+};
+
+const retryPrefetch = (entry, delayMs = 3000) => {
+  if (entry.complete || entry.prefetchRetryTimer) return;
+  entry.prefetchRetryTimer = setTimeout(() => {
+    entry.prefetchRetryTimer = null;
+    scheduleAheadPrefetch(entry, entry.contiguousBytes);
+  }, delayMs);
+};
+
+/** Download the next uncached window so cache keeps growing during playback. */
+const scheduleAheadPrefetch = (entry, hintStart = null) => {
+  if (entry.complete || hasPrefetchActive(entry)) return;
+
+  const start = resolvePrefetchStart(entry, hintStart);
+  if (start >= entry.totalSize) {
+    if (entry.contiguousBytes >= entry.totalSize) {
+      entry.complete = true;
+      saveMeta(entry);
+      notifyWaiters(entry);
+    }
+    return;
+  }
+
+  const end = Math.min(entry.totalSize - 1, start + PREFETCH_AHEAD_BYTES - 1);
+  enqueueTask(entry, {
+    priority: 1,
+    kind: "prefetch",
+    run: async () => {
+      if (entry.complete) return;
+      entry.prefetchRunning = true;
+      try {
+        const { client, message } = await taskGetMedia(entry.channelId, entry.messageId);
+        await downloadRangeToCache({
+          entry,
+          client,
+          message,
+          start,
+          end,
+          res: null,
+          writeResponse: false,
+        });
+      } catch (error) {
+        console.warn("[telegram-cache] prefetch error:", error.message);
+        retryPrefetch(entry);
+        return;
+      } finally {
+        entry.prefetchRunning = false;
+      }
+
+      if (entry.contiguousBytes >= entry.totalSize) {
+        entry.complete = true;
+        saveMeta(entry);
+        notifyWaiters(entry);
+        return;
+      }
+
+      scheduleAheadPrefetch(entry, end + 1);
+    },
+  });
+};
+
 const runBackgroundWarmup = (entry) => {
-  if (entry.complete || entry.playbackActive > 0) return;
+  if (entry.complete) return;
 
   enqueueTask(entry, {
     priority: 0,
+    kind: "tail",
     run: async () => {
-      if (entry.playbackActive > 0 || entry.complete) return;
+      if (entry.complete) return;
       const { client, message } = await taskGetMedia(entry.channelId, entry.messageId);
       const tailStart = Math.max(0, entry.totalSize - PRIORITY_TAIL_BYTES);
       if (!isRangeCached(entry, tailStart, entry.totalSize - 1)) {
@@ -215,14 +373,17 @@ const runBackgroundWarmup = (entry) => {
 
   enqueueTask(entry, {
     priority: 0,
+    kind: "fill",
     run: async () => {
-      if (entry.playbackActive > 0 || entry.complete) return;
+      if (entry.complete) return;
       const { client, message } = await taskGetMedia(entry.channelId, entry.messageId);
-      const start = entry.contiguousBytes;
+      const start = findNextUncachedStart(entry, entry.contiguousBytes);
       if (start >= entry.totalSize) {
-        entry.complete = true;
-        saveMeta(entry);
-        notifyWaiters(entry);
+        if (entry.contiguousBytes >= entry.totalSize) {
+          entry.complete = true;
+          saveMeta(entry);
+          notifyWaiters(entry);
+        }
         return;
       }
       await downloadRangeToCache({
@@ -238,21 +399,21 @@ const runBackgroundWarmup = (entry) => {
         entry.complete = true;
         saveMeta(entry);
         notifyWaiters(entry);
+      } else {
+        scheduleAheadPrefetch(entry);
       }
     },
   });
 };
 
-/** Fill cache in the background only — never before or during active playback. */
-const deferBackgroundWarmup = (entry) => {
+/** Prefetch immediately; run full gap-fill when playback is idle. */
+const deferBackgroundWarmup = (entry, hintStart = null) => {
   if (entry.complete) return;
+  scheduleAheadPrefetch(entry, hintStart);
+  if (entry.playbackActive > 0) return;
   if (entry.warmupTimer) return;
   entry.warmupTimer = setTimeout(() => {
     entry.warmupTimer = null;
-    if (entry.playbackActive > 0) {
-      deferBackgroundWarmup(entry);
-      return;
-    }
     runBackgroundWarmup(entry);
   }, WARMUP_DELAY_MS);
 };
@@ -350,7 +511,7 @@ const taskGetMedia = async (channelId, messageId) => {
   return getMediaRef({ channelId, messageId });
 };
 
-const downloadRangeToCache = async ({
+const downloadRangeSlice = async ({
   entry,
   client,
   message,
@@ -374,6 +535,8 @@ const downloadRangeToCache = async ({
 
   try {
     for await (const chunk of stream) {
+      if (!writeResponse && isTelegramStreamWaiting()) break;
+
       let buffer = Buffer.from(chunk);
       if (sent + buffer.length > bytesToSend) {
         buffer = buffer.subarray(0, bytesToSend - sent);
@@ -398,6 +561,55 @@ const downloadRangeToCache = async ({
   }
 
   return sent;
+};
+
+const downloadRangeToCache = async ({
+  entry,
+  client,
+  message,
+  start,
+  end,
+  res,
+  writeResponse,
+}) => {
+  if (writeResponse) {
+    beginTelegramStreamWait();
+    try {
+      return await withTelegramPlaybackLock(() =>
+        downloadRangeSlice({ entry, client, message, start, end, res, writeResponse: true })
+      );
+    } finally {
+      endTelegramStreamWait();
+    }
+  }
+
+  let offset = start;
+  let totalSent = 0;
+  while (offset <= end && !entry.complete) {
+    if (isTelegramStreamWaiting()) {
+      retryPrefetch(entry, 600);
+      return totalSent;
+    }
+    const sliceEnd = Math.min(end, offset + PREFETCH_SLICE_BYTES - 1);
+    const sent = await withTelegramLock(() =>
+      downloadRangeSlice({
+        entry,
+        client,
+        message,
+        start: offset,
+        end: sliceEnd,
+        res: null,
+        writeResponse: false,
+      })
+    );
+    totalSent += sent;
+    if (isTelegramStreamWaiting()) {
+      retryPrefetch(entry, 600);
+      return totalSent;
+    }
+    offset = sliceEnd + 1;
+  }
+  return totalSent;
 };
 
 const runWorker = async (entry) => {
@@ -426,11 +638,71 @@ const enqueueTask = (entry, task) => {
   }
 };
 
-const sendCachedRange = async (entry, start, end, totalSize, partial, req, res) => {
+const contentDispositionHeader = (fileName, asAttachment = false) => {
+  const disposition = asAttachment ? "attachment" : "inline";
+  return `${disposition}; filename="${String(fileName || "file").replace(/"/g, "")}"`;
+};
+
+const wantsAttachmentDownload = (req) =>
+  req?.query?.download === "1" || req?.query?.download === "true";
+
+/** PC save must always receive the full file — never a partial stream-cache slice. */
+const streamTelegramAttachmentDownload = async ({ channelId, messageId, req, res, getMedia }) => {
+  const cacheKey = cacheKeyFor(channelId, messageId);
+  let entry = resolveEntryFromDisk(cacheKey, channelId, messageId);
+  let meta = readMetaFile(cacheKey);
+
+  if (!meta?.totalSize && !meta?.size) {
+    const { meta: liveMeta } = await getMedia({ channelId, messageId });
+    meta = liveMeta;
+    entry = getOrCreateEntry({ cacheKey, channelId, messageId, meta: liveMeta });
+  }
+
+  const totalSize = Number(meta?.totalSize || meta?.size || entry?.totalSize) || 0;
+  if (!totalSize) {
+    return res.status(416).json({ message: "Unknown file size." });
+  }
+
+  const isComplete = Boolean(meta?.complete || entry?.complete);
+  const diskPath = isComplete ? resolveStreamCacheDiskPath(cacheKey, { ...meta, complete: true }) : null;
+
+  if (diskPath && fs.existsSync(diskPath)) {
+    const stat = fs.statSync(diskPath);
+    if (stat.size >= totalSize) {
+      res.setHeader("Accept-Ranges", "bytes");
+      res.setHeader("Content-Type", meta.mimeType || "application/octet-stream");
+      res.setHeader("Content-Disposition", contentDispositionHeader(meta.fileName, true));
+      res.setHeader("Content-Length", String(totalSize));
+      res.setHeader("X-Telegram-Cache", "HIT-FULL");
+      res.setHeader("Cache-Control", "private, max-age=3600");
+      applyCorsHeaders(req, res);
+      res.status(200);
+      await pipeline(fs.createReadStream(diskPath, { start: 0, end: totalSize - 1 }), res);
+      return;
+    }
+  }
+
+  const { client, message, meta: liveMeta } = await getMedia({ channelId, messageId });
+  const fileSize = Number(liveMeta.size || totalSize);
+  return streamDirectFromTelegram({
+    client,
+    message,
+    meta: liveMeta,
+    start: 0,
+    end: fileSize - 1,
+    partial: false,
+    totalSize: fileSize,
+    req,
+    res,
+    asAttachment: true,
+  });
+};
+
+const sendCachedRange = async (entry, start, end, totalSize, partial, req, res, asAttachment = false) => {
   const bytesToSend = end - start + 1;
   res.setHeader("Accept-Ranges", "bytes");
   res.setHeader("Content-Type", entry.mimeType);
-  res.setHeader("Content-Disposition", `inline; filename="${entry.fileName.replace(/"/g, "")}"`);
+  res.setHeader("Content-Disposition", contentDispositionHeader(entry.fileName, asAttachment));
   res.setHeader("Cache-Control", "private, max-age=86400");
   res.setHeader("X-Telegram-Cache", entry.complete ? "HIT-FULL" : "HIT-PARTIAL");
   applyCorsHeaders(req, res);
@@ -457,11 +729,12 @@ const streamDirectFromTelegram = async ({
   totalSize,
   req,
   res,
+  asAttachment = false,
 }) => {
   const bytesToSend = end - start + 1;
   res.setHeader("Accept-Ranges", "bytes");
   res.setHeader("Content-Type", meta.mimeType);
-  res.setHeader("Content-Disposition", `inline; filename="${meta.fileName.replace(/"/g, "")}"`);
+  res.setHeader("Content-Disposition", contentDispositionHeader(meta.fileName, asAttachment));
   res.setHeader("Cache-Control", "private, max-age=3600");
   applyCorsHeaders(req, res);
 
@@ -522,8 +795,16 @@ export const initTelegramStreamCache = (getMedia) => {
 export const streamTelegramMediaWithCache = async ({ channelId, messageId, req, res, getMedia }) => {
   if (!getMediaRef) initTelegramStreamCache(getMedia);
 
+  const asAttachment = wantsAttachmentDownload(req);
+  if (asAttachment) {
+    return streamTelegramAttachmentDownload({ channelId, messageId, req, res, getMedia });
+  }
+
   const cacheKey = cacheKeyFor(channelId, messageId);
   let entry = resolveEntryFromDisk(cacheKey, channelId, messageId);
+  if (entry && !entry.complete) {
+    deferBackgroundWarmup(entry, entry.contiguousBytes);
+  }
 
   let totalSize = entry?.totalSize || 0;
   if (!totalSize) {
@@ -533,6 +814,7 @@ export const streamTelegramMediaWithCache = async ({ channelId, messageId, req, 
       return res.status(416).json({ message: "Unknown file size." });
     }
     entry = getOrCreateEntry({ cacheKey, channelId, messageId, meta });
+    deferBackgroundWarmup(entry, 0);
   }
 
   const range = parseRangeHeader(req.headers.range, totalSize);
@@ -555,6 +837,7 @@ export const streamTelegramMediaWithCache = async ({ channelId, messageId, req, 
       totalSize,
       req,
       res,
+      asAttachment,
     });
   }
 
@@ -563,28 +846,43 @@ export const streamTelegramMediaWithCache = async ({ channelId, messageId, req, 
   if (entry.complete || isRangeCached(entry, start, end)) {
     beginEntryPlayback(entry);
     try {
-      deferBackgroundWarmup(entry);
-      return await sendCachedRange(entry, start, end, totalSize, partial, req, res);
+      deferBackgroundWarmup(entry, end + 1);
+      return await sendCachedRange(entry, start, end, totalSize, partial, req, res, asAttachment);
     } finally {
       endEntryPlayback(entry);
     }
   }
 
+  const cachedEnd = findCachedEndWithin(entry, start, end);
+  if (cachedEnd >= start) {
+    beginEntryPlayback(entry);
+    try {
+      deferBackgroundWarmup(entry, cachedEnd + 1);
+      const servePartial = partial || cachedEnd < end || cachedEnd < totalSize - 1;
+      return await sendCachedRange(entry, start, cachedEnd, totalSize, servePartial, req, res, asAttachment);
+    } finally {
+      endEntryPlayback(entry);
+    }
+  }
+
+  const fetchEnd = capFetchEnd(entry, start, end);
   beginEntryPlayback(entry);
   try {
     const { client, message, meta } = await getMedia({ channelId, messageId });
+    deferBackgroundWarmup(entry, fetchEnd + 1);
 
     res.setHeader("Accept-Ranges", "bytes");
     res.setHeader("Content-Type", meta.mimeType);
-    res.setHeader("Content-Disposition", `inline; filename="${meta.fileName.replace(/"/g, "")}"`);
+    res.setHeader("Content-Disposition", contentDispositionHeader(meta.fileName, asAttachment));
     res.setHeader("Cache-Control", "private, max-age=3600");
     res.setHeader("X-Telegram-Cache", "MISS");
     applyCorsHeaders(req, res);
 
-    const bytesToSend = end - start + 1;
-    if (partial) {
+    const bytesToSend = fetchEnd - start + 1;
+    const responsePartial = partial || fetchEnd < end || fetchEnd < totalSize - 1;
+    if (responsePartial) {
       res.status(206);
-      res.setHeader("Content-Range", `bytes ${start}-${end}/${totalSize}`);
+      res.setHeader("Content-Range", `bytes ${start}-${fetchEnd}/${totalSize}`);
       res.setHeader("Content-Length", String(bytesToSend));
     } else {
       res.status(200);
@@ -605,7 +903,7 @@ export const streamTelegramMediaWithCache = async ({ channelId, messageId, req, 
           client,
           message,
           start,
-          end,
+          end: fetchEnd,
           res,
           writeResponse: true,
         });
@@ -623,7 +921,7 @@ export const streamTelegramMediaWithCache = async ({ channelId, messageId, req, 
     if (!res.writableEnded) res.end();
   } finally {
     endEntryPlayback(entry);
-    deferBackgroundWarmup(entry);
+    deferBackgroundWarmup(entry, fetchEnd + 1);
   }
 };
 
@@ -655,7 +953,25 @@ const estimateCachedBytes = (meta) => {
   return Math.min(meta.totalSize, Number(meta.contiguousBytes) || 0);
 };
 
-/** Inventory for PC Media Storage UI — where seek/stream cache lives on disk. */
+const resolveStreamCacheDiskPath = (cacheKey, meta) => {
+  const mp4Path = mp4PathFor(cacheKey);
+  if (fs.existsSync(mp4Path)) return mp4Path;
+  const binPath = binPathFor(cacheKey);
+  if (fs.existsSync(binPath) && (meta?.complete || estimateCachedBytes(meta) > 0)) {
+    return binPath;
+  }
+  return null;
+};
+
+const isStreamCachePdfMeta = (meta, linkedContent = null) => {
+  if (linkedContent?.type === "pdf") return true;
+  if (linkedContent?.type === "video") return false;
+  const mime = String(meta?.mimeType || "").toLowerCase();
+  if (mime === "application/pdf" || mime.includes("pdf")) return true;
+  return /\.pdf$/i.test(String(meta?.fileName || ""));
+};
+
+/** Inventory for PC Media Storage UI — cached videos on disk (PDFs excluded). */
 export const getStreamCacheInventory = async () => {
   ensureLocalMediaDirs();
   const dir = getStreamCacheDir();
@@ -678,6 +994,7 @@ export const getStreamCacheInventory = async () => {
     const cacheKey = fileName.replace(/\.meta\.json$/, "");
     const meta = readMetaFile(cacheKey);
     if (!meta) continue;
+    if (isStreamCachePdfMeta(meta)) continue;
 
     const cachedBytes = estimateCachedBytes(meta);
     const totalSize = Number(meta.totalSize) || 0;
@@ -688,11 +1005,13 @@ export const getStreamCacheInventory = async () => {
       channelId: meta.channelId,
       messageId: meta.messageId,
       fileName: meta.fileName || "video.mp4",
+      mimeType: meta.mimeType || "video/mp4",
       totalSize,
       cachedBytes,
       cachedPercent,
       complete: Boolean(meta.complete),
       lastAccessAt: meta.lastAccessAt || null,
+      diskPath: resolveStreamCacheDiskPath(cacheKey, meta),
     });
   }
 
@@ -701,7 +1020,7 @@ export const getStreamCacheInventory = async () => {
   const messageIds = items.map((item) => Number(item.messageId)).filter(Boolean);
   const contents = messageIds.length
     ? await Content.find({ telegramMessageId: { $in: messageIds } })
-        .select("_id title telegramMessageId telegramChannelId subjectId")
+        .select("_id title type telegramMessageId telegramChannelId subjectId")
         .populate("subjectId", "name")
         .lean()
     : [];
@@ -710,11 +1029,16 @@ export const getStreamCacheInventory = async () => {
     contents.map((row) => [`${row.telegramChannelId}_${row.telegramMessageId}`, row])
   );
 
+  const videoItems = [];
   for (const item of items) {
     const linked = contentByMessage.get(`${item.channelId}_${item.messageId}`);
+    if (isStreamCachePdfMeta({ mimeType: item.mimeType, fileName: item.fileName }, linked)) {
+      continue;
+    }
     item.contentId = linked?._id ? String(linked._id) : null;
     item.title = linked?.title || item.fileName;
     item.subjectName = linked?.subjectId?.name || null;
+    videoItems.push(item);
   }
 
   let usedBytes = 0;
@@ -733,9 +1057,36 @@ export const getStreamCacheInventory = async () => {
     folderPath: dir,
     folderLabel: "_stream_cache",
     usedBytes,
-    itemCount: items.length,
-    items,
+    itemCount: videoItems.length,
+    items: videoItems,
   };
+};
+
+export const revealStreamCacheItemOnDisk = async (cacheKey) => {
+  const key = String(cacheKey || "").trim();
+  if (!key) throw new Error("cacheKey is required.");
+  const meta = readMetaFile(key);
+  if (!meta) throw new Error("Cached file not found.");
+
+  const diskPath = resolveStreamCacheDiskPath(key, meta);
+  if (!diskPath) throw new Error("No file saved on disk yet.");
+
+  const { isPathUnderLocalMediaRoot } = await import("../config/mediaStorage.js");
+  if (!isPathUnderLocalMediaRoot(diskPath)) {
+    throw new Error("Path is outside the media folder.");
+  }
+
+  const { revealPathInFileManager } = await import("../utils/revealInFileManager.js");
+  await revealPathInFileManager(diskPath);
+  return { path: diskPath };
+};
+
+export const revealStreamCacheFolderOnDisk = async () => {
+  ensureLocalMediaDirs();
+  const dir = getStreamCacheDir();
+  const { openFolderInFileManager } = await import("../utils/revealInFileManager.js");
+  await openFolderInFileManager(dir);
+  return { path: dir };
 };
 
 export const clearStreamCache = ({ cacheKey = null } = {}) => {
@@ -771,8 +1122,82 @@ export const clearStreamCache = ({ cacheKey = null } = {}) => {
   return { cleared: "all" };
 };
 
+const getStreamCacheLiveState = (cacheKey) => {
+  const entry = entries.get(cacheKey);
+  if (!entry) {
+    return {
+      activity: "idle",
+      workerRunning: false,
+      playbackActive: 0,
+      queueLength: 0,
+      warmupScheduled: false,
+    };
+  }
+
+  if (entry.complete) {
+    return {
+      activity: "complete",
+      workerRunning: false,
+      playbackActive: entry.playbackActive || 0,
+      queueLength: 0,
+      warmupScheduled: false,
+    };
+  }
+
+  if (entry.workerRunning || entry.queue.length > 0 || entry.prefetchRunning) {
+    return {
+      activity: "running",
+      workerRunning: Boolean(entry.workerRunning || entry.prefetchRunning),
+      playbackActive: entry.playbackActive || 0,
+      queueLength: entry.queue.length,
+      warmupScheduled: false,
+    };
+  }
+
+  if (entry.playbackActive > 0) {
+    return {
+      activity: "paused",
+      workerRunning: false,
+      playbackActive: entry.playbackActive,
+      queueLength: entry.queue.length,
+      warmupScheduled: Boolean(entry.warmupTimer),
+    };
+  }
+
+  if (entry.warmupTimer) {
+    return {
+      activity: "warming",
+      workerRunning: false,
+      playbackActive: 0,
+      queueLength: entry.queue.length,
+      warmupScheduled: true,
+    };
+  }
+
+  return {
+    activity: "idle",
+    workerRunning: false,
+    playbackActive: 0,
+    queueLength: entry.queue.length,
+    warmupScheduled: false,
+  };
+};
+
+const ensureEntryPrefetch = (cacheKey, meta) => {
+  if (!meta || meta.complete || !cacheEnabled()) return null;
+  let entry = entries.get(cacheKey);
+  if (!entry) {
+    entry = restoreEntry(cacheKey, meta);
+    entries.set(cacheKey, entry);
+  }
+  entry.lastAccessAt = Date.now();
+  deferBackgroundWarmup(entry, entry.contiguousBytes);
+  return entry;
+};
+
 export const getStreamCacheStatusByMessage = ({ channelId, messageId }) => {
   const folderPath = getStreamCacheDir();
+  const checkedAt = Date.now();
   if (!channelId || !messageId) {
     return {
       eligible: false,
@@ -782,11 +1207,15 @@ export const getStreamCacheStatusByMessage = ({ channelId, messageId }) => {
       totalSize: 0,
       cachedPercent: 0,
       folderPath,
+      checkedAt,
+      activity: "idle",
     };
   }
 
   const cacheKey = cacheKeyFor(channelId, messageId);
   const meta = readMetaFile(cacheKey);
+  ensureEntryPrefetch(cacheKey, meta);
+  const live = getStreamCacheLiveState(cacheKey);
   if (!meta) {
     return {
       eligible: true,
@@ -797,6 +1226,8 @@ export const getStreamCacheStatusByMessage = ({ channelId, messageId }) => {
       cachedPercent: 0,
       folderPath,
       cacheKey,
+      checkedAt,
+      ...live,
     };
   }
 
@@ -804,6 +1235,10 @@ export const getStreamCacheStatusByMessage = ({ channelId, messageId }) => {
   const cachedBytes = estimateCachedBytes(meta);
   const cachedPercent =
     totalSize > 0 ? Math.min(100, Math.round((cachedBytes / totalSize) * 100)) : 0;
+  const completeFile =
+    meta.complete && ensureStreamCacheMp4Link(cacheKey)
+      ? getCompleteStreamCacheFile({ channelId, messageId })
+      : null;
 
   return {
     eligible: true,
@@ -814,6 +1249,30 @@ export const getStreamCacheStatusByMessage = ({ channelId, messageId }) => {
     cachedPercent,
     folderPath,
     cacheKey,
+    playWebPath: completeFile?.playWebPath || null,
     lastAccessAt: meta.lastAccessAt || null,
+    checkedAt,
+    ...live,
+    activity: meta.complete ? "complete" : live.activity,
+  };
+};
+
+/** Absolute path to a fully cached stream file, when ready for direct disk playback. */
+export const getCompleteStreamCacheFile = ({ channelId, messageId }) => {
+  if (!channelId || !messageId) return null;
+  const cacheKey = cacheKeyFor(channelId, messageId);
+  const meta = readMetaFile(cacheKey);
+  if (!meta?.complete) return null;
+  if (!ensureStreamCacheMp4Link(cacheKey)) return null;
+
+  const mp4Path = mp4PathFor(cacheKey);
+  if (!fs.existsSync(mp4Path)) return null;
+
+  return {
+    absolutePath: mp4Path,
+    playWebPath: toMediaWebPath("_stream_cache", `${cacheKey}.mp4`),
+    mimeType: meta.mimeType || "video/mp4",
+    fileName: meta.fileName || "video.mp4",
+    totalSize: Number(meta.totalSize) || 0,
   };
 };

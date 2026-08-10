@@ -82,6 +82,106 @@ export const buildTelegramPreviewStreamUrl = (channelId, messageId) => {
   return url;
 };
 
+/** Same stream with Content-Disposition attachment for saving to the user's PC. */
+export const buildTelegramDownloadUrl = (channelId, messageId) => {
+  const base = buildTelegramPreviewStreamUrl(channelId, messageId);
+  if (!base) return "";
+  return `${base}&download=1`;
+};
+
+const sanitizeDownloadFileName = (name, fallback = "document.pdf") => {
+  const cleaned = String(name || "")
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+    .trim();
+  if (!cleaned) return fallback;
+  return /\.pdf$/i.test(cleaned) ? cleaned : `${cleaned}.pdf`;
+};
+
+const parseContentDispositionFileName = (header) => {
+  if (!header) return "";
+  const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1].trim());
+    } catch {
+      /* ignore */
+    }
+  }
+  const quotedMatch = /filename="([^"]+)"/i.exec(header);
+  if (quotedMatch?.[1]) return quotedMatch[1].trim();
+  const plainMatch = /filename=([^;]+)/i.exec(header);
+  return plainMatch?.[1]?.trim().replace(/^"|"$/g, "") || "";
+};
+
+/** Fetch a Telegram PDF/document and trigger the browser save dialog. */
+export const downloadTelegramMediaToPc = async ({ channelId, messageId, fileName }) => {
+  const url = buildTelegramDownloadUrl(channelId, messageId);
+  if (!url) throw new Error("Missing channel or message id");
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    let message = "Download failed";
+    try {
+      const body = await response.json();
+      message = body.message || message;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(message);
+  }
+
+  if (response.status === 206) {
+    throw new Error("Incomplete PDF download — please try Save again.");
+  }
+
+  const expectedLength = Number(response.headers.get("Content-Length") || 0);
+  const blob = await response.blob();
+
+  if (expectedLength > 0 && blob.size < expectedLength) {
+    throw new Error(
+      `Download incomplete (${formatFileSize(blob.size)} of ${formatFileSize(expectedLength)}). Try again.`
+    );
+  }
+
+  const saveAs = sanitizeDownloadFileName(
+    parseContentDispositionFileName(response.headers.get("Content-Disposition")) || fileName
+  );
+
+  if (/\.pdf$/i.test(saveAs)) {
+    const header = await blob.slice(0, 5).text();
+    if (!header.startsWith("%PDF")) {
+      throw new Error("Downloaded file is not a valid PDF. Try Save again.");
+    }
+  }
+
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = saveAs;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+};
+
+/** Direct disk playback when stream cache reached 100% (no Telegram needed). */
+export const buildStreamCachePlayUrl = (contentId, playWebPath = null) => {
+  if (playWebPath?.startsWith("/uploads/")) {
+    return resolveVideoPlaybackUrl(playWebPath);
+  }
+  if (!contentId) return "";
+  const apiBase = getMediaApiBaseUrl();
+  let url = `${apiBase}/contents/${encodeURIComponent(contentId)}/stream-cache/play`;
+  try {
+    const token = localStorage.getItem("cds_token");
+    if (token) url += `?token=${encodeURIComponent(token)}`;
+  } catch {
+    // ignore storage errors
+  }
+  return url;
+};
+
 /** Legacy Telegram t.me link stored when the video file is not on the server. */
 export const getTelegramVideoUrl = (item) => {
   if (!item || item.type !== "video") return "";

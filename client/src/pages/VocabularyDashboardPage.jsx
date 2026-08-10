@@ -15,7 +15,7 @@ import PracticeModePicker from "../components/vocabulary/PracticeModePicker";
 import VocabularyHeader from "../components/vocabulary/VocabularyHeader";
 import VocabularyStatsGrid from "../components/vocabulary/VocabularyStatsGrid";
 import useVocabularyDashboard from "../hooks/useVocabularyDashboard";
-import { VOCABULARY_MODES, formatPracticeMode, isTimedMode, sessionDurationSeconds } from "../utils/vocabularyArena";
+import { ARENA_LEGACY_MODES, CDS_EXAM_MODES, VOCABULARY_MODES, formatPracticeMode, isCdsExamMode, isTimedMode, sessionDurationSeconds } from "../utils/vocabularyArena";
 
 const VocabularyDashboardPage = () => {
   const navigate = useNavigate();
@@ -28,7 +28,7 @@ const VocabularyDashboardPage = () => {
         mode,
         questionCount,
         timed,
-        examMode: mode === "exam",
+        examMode: mode === "exam" || isCdsExamMode(mode),
         durationSeconds: sessionDurationSeconds(mode, questionCount),
       });
       navigate(`/vocabulary/session/${response.data.session.sessionId}`);
@@ -101,11 +101,14 @@ const VocabularyDashboardPage = () => {
 
         <section>
           <div className="mb-3">
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">TRAINING MODES</p>
-            <h2 className="mt-1 font-display text-2xl font-black text-slate-950 dark:text-white">Choose your pressure test</h2>
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">CDS ENGLISH PRACTICE</p>
+            <h2 className="mt-1 font-display text-2xl font-black text-slate-950 dark:text-white">
+              Exam-style vocabulary drills
+            </h2>
           </div>
           <PracticeModePicker
-            modes={VOCABULARY_MODES}
+            cdsModes={CDS_EXAM_MODES}
+            legacyModes={ARENA_LEGACY_MODES}
             onSelect={(mode) => navigate(`/vocabulary/practice?mode=${mode.id}`)}
           />
         </section>

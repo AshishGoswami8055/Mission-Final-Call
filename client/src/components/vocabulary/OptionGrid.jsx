@@ -1,4 +1,4 @@
-const optionLetter = (index) => String.fromCharCode(65 + index);
+const optionLetter = (index) => String.fromCharCode(97 + index);
 
 const OptionGrid = ({ options = [], selected = "", disabled = false, onSelect }) => (
   <div className="grid gap-3 md:grid-cols-2">
@@ -19,7 +19,7 @@ const OptionGrid = ({ options = [], selected = "", disabled = false, onSelect })
           <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-black ${
             active ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-500 dark:bg-white/10 dark:text-slate-300"
           }`}>
-            {optionLetter(index)}
+            ({optionLetter(index)})
           </span>
           <span>{option}</span>
         </button>

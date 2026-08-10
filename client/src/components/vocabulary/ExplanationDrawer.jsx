@@ -36,7 +36,16 @@ const ExplanationDrawer = ({ feedback }) => {
         <h2 className="mt-2 font-display text-2xl font-black text-slate-950 dark:text-white">
           {feedback.correctAnswer || explanation.word}
         </h2>
-        <p className="mt-2 text-sm leading-6 text-slate-700 dark:text-slate-200">{explanation.meaning}</p>
+        <p className="mt-2 text-sm leading-6 text-slate-700 dark:text-slate-200">
+          {explanation.rationale ? (
+            <>
+              <span className="font-semibold">Why: </span>
+              {explanation.rationale}
+            </>
+          ) : (
+            explanation.meaning
+          )}
+        </p>
       </div>
       <div className="grid gap-5 p-5 sm:p-6 lg:grid-cols-2">
         <div className="space-y-4">

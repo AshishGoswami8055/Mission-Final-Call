@@ -5,6 +5,8 @@ import {
   FiCheck,
   FiChevronDown,
   FiChevronUp,
+  FiDownload,
+  FiEye,
   FiFileText,
   FiLoader,
   FiLogOut,
@@ -19,17 +21,24 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import api from "../api/client";
 import Layout from "../components/Layout";
 import OperationProgressOverlay from "../components/OperationProgressOverlay";
-import { buildTelegramPreviewStreamUrl, formatTelegramMediaMeta } from "../utils/media";
+import { buildTelegramPreviewStreamUrl, downloadTelegramMediaToPc, formatTelegramMediaMeta } from "../utils/media";
 import {
   buildSelectedItemsFromPlans,
   countSelectedLessonsInPlan,
   orderedMediaForTopic,
+  titleFromTelegramFileName,
   suggestLessonTitle,
   syncLessonPlanForTopic,
 } from "../utils/telegramLessonPlan";
 import { createUploadId, waitForUploadProgress } from "../utils/uploadProgress";
 
 const mediaDisplayName = (item) => item?.displayName || item?.fileName || "Untitled";
+
+/** Original Telegram document filename (for PDF download / file label). */
+const telegramFileName = (item) => {
+  const name = String(item?.fileName || item?.telegramFileName || "").trim();
+  return name || "document.pdf";
+};
 
 const DEFAULT_TOPIC_MEDIA_PREFS = { includeVideos: true, includePdfs: true };
 
@@ -71,8 +80,10 @@ const TelegramImportPage = () => {
   const [topicMediaPrefs, setTopicMediaPrefs] = useState({});
   const [topicLessonPlans, setTopicLessonPlans] = useState({});
   const [topicSearch, setTopicSearch] = useState("");
+  const [mediaSearch, setMediaSearch] = useState("");
   const [mediaFilter, setMediaFilter] = useState("all");
   const [previewFile, setPreviewFile] = useState(null);
+  const [downloadingPdfIds, setDownloadingPdfIds] = useState(() => new Set());
   const [previewError, setPreviewError] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(null);
@@ -127,6 +138,8 @@ const TelegramImportPage = () => {
       setSelectedTopicId(topics[0]?.id ?? null);
       setPreviewFile(null);
       setMediaFilter("all");
+      setMediaSearch("");
+      setTopicSearch("");
     } catch (error) {
       const status = error.response?.status;
       const message = error.response?.data?.message || error.message || "Could not load subjects";
@@ -210,6 +223,11 @@ const TelegramImportPage = () => {
     if (selectedTopicId) loadTopicMedia(selectedTopicId);
   }, [selectedTopicId, loadTopicMedia]);
 
+  useEffect(() => {
+    setMediaSearch("");
+    setPreviewFile(null);
+  }, [selectedTopicId]);
+
   const handleLogin = async (e) => {
     e.preventDefault();
     setAuthLoading(true);
@@ -263,6 +281,9 @@ const TelegramImportPage = () => {
     [preview?.topics, topicSearch]
   );
 
+  const topicSearchActive = Boolean(topicSearch.trim());
+  const totalTopicCount = preview?.topics?.length ?? 0;
+
   const activeTopic = preview?.topics?.find((t) => t.id === selectedTopicId);
 
   const stats = useMemo(() => {
@@ -287,7 +308,21 @@ const TelegramImportPage = () => {
     ? topicLessonPlans[topicMediaPrefKey(activeTopic.id)]
     : null;
 
-  const filteredMedia = useMemo(
+  const mediaSearchHaystack = useCallback(
+    (item, planEntry) => {
+      const parts = [
+        item?.fileName,
+        item?.displayName,
+        planEntry?.displayName,
+        suggestLessonTitle(item),
+        titleFromTelegramFileName(item),
+      ];
+      return parts.filter(Boolean).join(" ").toLowerCase();
+    },
+    []
+  );
+
+  const baseFilteredMedia = useMemo(
     () =>
       orderedMediaForTopic({
         media: activeTopic?.media || [],
@@ -297,6 +332,17 @@ const TelegramImportPage = () => {
       }),
     [activeTopic?.media, activeLessonPlan, activeTopicPrefs, mediaFilter]
   );
+
+  const filteredMedia = useMemo(() => {
+    const query = mediaSearch.trim().toLowerCase();
+    if (!query) return baseFilteredMedia;
+    return baseFilteredMedia.filter((item) => {
+      const planEntry = activeLessonPlan?.entries[item.messageId];
+      return mediaSearchHaystack(item, planEntry).includes(query);
+    });
+  }, [baseFilteredMedia, mediaSearch, activeLessonPlan, mediaSearchHaystack]);
+
+  const mediaSearchActive = Boolean(mediaSearch.trim());
 
   const selectableMediaInView = useMemo(
     () => filteredMedia.filter((row) => !row.imported),
@@ -317,10 +363,41 @@ const TelegramImportPage = () => {
       topicId: topic.id,
       messageId: item.messageId,
       mediaType: item.mediaType,
-      fileName: mediaDisplayName(item),
+      fileName: telegramFileName(item),
       displayName: mediaDisplayName(item),
       topicTitle: topic.title,
     });
+  };
+
+  const openPdfInNewTab = (item) => {
+    if (!selectedChannel?.id || item.mediaType !== "pdf") return;
+    const url = buildTelegramPreviewStreamUrl(selectedChannel.id, item.messageId);
+    if (!url) return;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const downloadPdfToPc = async (item) => {
+    if (!selectedChannel?.id || item.mediaType !== "pdf") return;
+    const messageId = item.messageId;
+    const saveAs = telegramFileName(item);
+    setDownloadingPdfIds((prev) => new Set(prev).add(messageId));
+    const loadingToast = toast.loading(`Downloading ${saveAs}…`);
+    try {
+      await downloadTelegramMediaToPc({
+        channelId: selectedChannel.id,
+        messageId,
+        fileName: saveAs,
+      });
+      toast.success(`Downloaded ${saveAs}`, { id: loadingToast });
+    } catch (error) {
+      toast.error(error.message || "Could not download PDF", { id: loadingToast });
+    } finally {
+      setDownloadingPdfIds((prev) => {
+        const next = new Set(prev);
+        next.delete(messageId);
+        return next;
+      });
+    }
   };
 
   const previewStreamUrl =
@@ -430,7 +507,7 @@ const TelegramImportPage = () => {
           ...plan,
           entries: {
             ...plan.entries,
-            [messageId]: { ...plan.entries[messageId], displayName },
+            [messageId]: { ...plan.entries[messageId], displayName, titleLocked: true },
           },
         },
       };
@@ -819,7 +896,7 @@ const TelegramImportPage = () => {
             )}
 
             {selectedChannel && (
-              <div className="flex min-h-[50vh] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white sm:min-h-[70vh] dark:border-slate-800 dark:bg-[#1a1a1a]">
+              <div className="flex max-h-[calc(100dvh-7rem)] min-h-[320px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-[#1a1a1a]">
                 <div className="border-b border-slate-200 px-3 py-3 sm:px-4 dark:border-slate-800">
                   <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
                     <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
@@ -923,48 +1000,74 @@ const TelegramImportPage = () => {
                     <p className="text-sm">Loading subjects…</p>
                   </div>
                 ) : (
-                  <div className="grid flex-1 lg:grid-cols-[minmax(240px,300px)_1fr]">
+                  <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(240px,300px)_1fr] lg:overflow-hidden">
                     <div
-                      className={`border-b border-slate-200 lg:border-r lg:border-b-0 dark:border-slate-800 ${
-                        mobilePanel === "detail" ? "hidden lg:block" : "block"
+                      className={`flex min-h-0 flex-col overflow-hidden border-b border-slate-200 lg:border-r lg:border-b-0 dark:border-slate-800 ${
+                        mobilePanel === "detail" ? "hidden lg:flex" : "flex"
                       }`}
                     >
-                      <div className="space-y-2 border-b border-slate-100 p-3 dark:border-slate-800">
-                        <div className="relative">
-                          <FiSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                          <input
-                            className="input pl-9 text-sm"
-                            placeholder="Search subjects…"
-                            value={topicSearch}
-                            onChange={(e) => setTopicSearch(e.target.value)}
-                          />
-                        </div>
-                        <p className="text-xs text-slate-500">
-                          <span className="inline-block h-2 w-2 rounded-sm bg-emerald-200 align-middle dark:bg-emerald-800" />{" "}
-                          Green = already in this batch · check others to add to this course
-                        </p>
-                        {addableTopicIds.length > 0 ? (
-                          <div className="flex flex-wrap items-center gap-2">
-                            <button
-                              type="button"
-                              className="btn-ghost text-xs"
-                              disabled={busy || addableSelectedCount >= addableTopicIds.length}
-                              onClick={selectAllAddableSubjects}
-                            >
-                              Select all ({addableTopicIds.length})
-                            </button>
-                            <button
-                              type="button"
-                              className="btn-ghost text-xs"
-                              disabled={busy || addableSelectedCount === 0}
-                              onClick={unselectAllAddableSubjects}
-                            >
-                              Unselect all
-                            </button>
+                      <div className="sticky top-0 z-10 border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-[#1a1a1a]">
+                        <div className="space-y-2 p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                              Subjects
+                            </h3>
+                            <span className="text-xs tabular-nums text-slate-400">
+                              {topicSearchActive ? `${filteredTopics.length} of ${totalTopicCount}` : totalTopicCount}
+                            </span>
                           </div>
-                        ) : null}
+                          <div className="relative">
+                            <FiSearch
+                              className="pointer-events-none absolute left-3.5 top-1/2 z-10 -translate-y-1/2 text-slate-400"
+                              size={14}
+                            />
+                            <input
+                              className="input w-full !pl-10 pr-10 text-sm"
+                              placeholder="Search subjects…"
+                              value={topicSearch}
+                              onChange={(e) => setTopicSearch(e.target.value)}
+                              aria-label="Search subjects"
+                            />
+                            {topicSearchActive ? (
+                              <button
+                                type="button"
+                                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-white/10"
+                                onClick={() => setTopicSearch("")}
+                                aria-label="Clear subject search"
+                              >
+                                <FiX size={14} />
+                              </button>
+                            ) : null}
+                          </div>
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="inline-flex items-center gap-1.5 text-[11px] leading-snug text-slate-500">
+                              <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+                              Green = in batch · check to add
+                            </p>
+                            {addableTopicIds.length > 0 ? (
+                              <div className="flex shrink-0 gap-1">
+                                <button
+                                  type="button"
+                                  className="btn-ghost px-2 py-1 text-[11px]"
+                                  disabled={busy || addableSelectedCount >= addableTopicIds.length}
+                                  onClick={selectAllAddableSubjects}
+                                >
+                                  All
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-ghost px-2 py-1 text-[11px]"
+                                  disabled={busy || addableSelectedCount === 0}
+                                  onClick={unselectAllAddableSubjects}
+                                >
+                                  None
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
                       </div>
-                      <div className="max-h-[50vh] overflow-y-auto lg:max-h-[60vh]">
+                      <div className="min-h-0 flex-1 overflow-y-auto">
                         {filteredTopics.map((topic) => {
                           const isActive = selectedTopicId === topic.id;
                           const canAdd = !topicInCourse(topic);
@@ -1023,7 +1126,18 @@ const TelegramImportPage = () => {
                         })}
                         {!filteredTopics.length && (
                           <div className="p-6 text-center text-sm text-slate-400">
-                            {previewError ? (
+                            {topicSearchActive ? (
+                              <>
+                                <p>No subjects match &ldquo;{topicSearch.trim()}&rdquo;</p>
+                                <button
+                                  type="button"
+                                  className="btn-ghost mt-2 text-xs"
+                                  onClick={() => setTopicSearch("")}
+                                >
+                                  Clear search
+                                </button>
+                              </>
+                            ) : previewError ? (
                               <>
                                 <p className="text-rose-600 dark:text-rose-400">{previewError}</p>
                                 <button
@@ -1046,15 +1160,16 @@ const TelegramImportPage = () => {
                     </div>
 
                     <div
-                      className={`max-h-[60vh] overflow-y-auto p-3 sm:p-4 ${
-                        mobilePanel === "topics" ? "hidden lg:block" : "block"
+                      className={`flex min-h-0 flex-col overflow-hidden ${
+                        mobilePanel === "topics" ? "hidden lg:flex" : "flex"
                       }`}
                     >
                       {activeTopic ? (
                         <>
+                          <div className="shrink-0 space-y-3 p-3 sm:p-4">
                           <button
                             type="button"
-                            className="btn-ghost mb-3 text-sm lg:hidden"
+                            className="btn-ghost text-sm lg:hidden"
                             onClick={() => setMobilePanel("topics")}
                           >
                             <FiArrowLeft size={14} /> All subjects
@@ -1187,35 +1302,78 @@ const TelegramImportPage = () => {
                             ))}
                           </div>
 
-                          {previewFile && previewStreamUrl && (
-                            <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
-                              <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2 dark:border-slate-800">
-                                <p className="truncate text-sm font-medium">{mediaDisplayName(previewFile)}</p>
-                                <button type="button" className="btn-ghost p-1" onClick={() => setPreviewFile(null)} aria-label="Close preview">
+                          {activeTopic?.mediaLoaded ? (
+                            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                              <div className="relative min-w-0 flex-1">
+                                <FiSearch
+                                  className="pointer-events-none absolute left-3.5 top-1/2 z-10 -translate-y-1/2 text-slate-400"
+                                  size={14}
+                                />
+                                <input
+                                  className="input w-full !pl-10 pr-10 text-sm"
+                                  placeholder={
+                                    mediaFilter === "pdf"
+                                      ? "Search PDF file names…"
+                                      : mediaFilter === "video"
+                                        ? "Search video names…"
+                                        : "Search file names…"
+                                  }
+                                  value={mediaSearch}
+                                  onChange={(e) => setMediaSearch(e.target.value)}
+                                  aria-label="Search lessons by file name"
+                                />
+                                {mediaSearchActive ? (
+                                  <button
+                                    type="button"
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-white/10"
+                                    onClick={() => setMediaSearch("")}
+                                    aria-label="Clear file search"
+                                  >
+                                    <FiX size={14} />
+                                  </button>
+                                ) : null}
+                              </div>
+                              {mediaSearchActive ? (
+                                <p className="shrink-0 text-xs text-slate-500">
+                                  {filteredMedia.length} of {baseFilteredMedia.length} match
+                                  {filteredMedia.length === 1 ? "" : "es"}
+                                </p>
+                              ) : null}
+                            </div>
+                          ) : null}
+
+                          {previewFile && previewStreamUrl && previewFile.mediaType === "video" && (
+                            <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-2 dark:border-slate-800">
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm font-medium">
+                                    {previewFile.displayName || previewFile.fileName}
+                                  </p>
+                                  <p className="text-xs text-slate-500">Video preview from Telegram</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="btn-ghost p-1"
+                                  onClick={() => setPreviewFile(null)}
+                                  aria-label="Close preview"
+                                >
                                   <FiX size={16} />
                                 </button>
                               </div>
                               <div className="bg-black/5 p-2 dark:bg-black/30">
-                                {previewFile.mediaType === "video" ? (
-                                  <video
-                                    key={previewStreamUrl}
-                                    src={previewStreamUrl}
-                                    controls
-                                    playsInline
-                                    className="max-h-[40vh] w-full rounded-lg bg-black sm:max-h-[320px]"
-                                  />
-                                ) : (
-                                  <iframe
-                                    title={mediaDisplayName(previewFile)}
-                                    src={previewStreamUrl}
-                                    className="viewer-frame w-full rounded-lg bg-white"
-                                  />
-                                )}
+                                <video
+                                  key={previewStreamUrl}
+                                  src={previewStreamUrl}
+                                  controls
+                                  playsInline
+                                  className="max-h-[240px] w-full rounded-lg bg-black"
+                                />
                               </div>
                             </div>
                           )}
+                          </div>
 
-                          <div className="mt-4 space-y-2">
+                          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 pb-4 sm:px-4">
                             {topicMediaLoading && !activeTopic?.mediaLoaded && (
                               <div className="flex items-center justify-center gap-2 py-8 text-sm text-slate-400">
                                 <FiLoader className="animate-spin" size={16} />
@@ -1287,15 +1445,43 @@ const TelegramImportPage = () => {
                                       {orderIndex + 1}
                                     </span>
                                   )}
-                                  <button
-                                    type="button"
-                                    className="mt-0.5 shrink-0 text-teal-600"
-                                    disabled={busy}
-                                    onClick={() => openPreview(item, activeTopic)}
-                                    title="Preview"
-                                  >
-                                    {item.mediaType === "video" ? <FiPlay size={16} /> : <FiFileText size={16} />}
-                                  </button>
+                                  {item.mediaType === "video" ? (
+                                    <button
+                                      type="button"
+                                      className="btn-ghost shrink-0 px-2 py-1 text-xs"
+                                      disabled={busy}
+                                      onClick={() => openPreview(item, activeTopic)}
+                                      title="Preview video"
+                                    >
+                                      <FiPlay size={14} />
+                                    </button>
+                                  ) : (
+                                    <div className="flex shrink-0 flex-col gap-1 sm:flex-row">
+                                      <button
+                                        type="button"
+                                        className="btn-secondary px-2 py-1 text-xs"
+                                        disabled={busy}
+                                        onClick={() => openPdfInNewTab(item)}
+                                        title="Open PDF in a new tab"
+                                      >
+                                        <FiEye size={12} /> View
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn-ghost px-2 py-1 text-xs"
+                                        disabled={busy || downloadingPdfIds.has(item.messageId)}
+                                        onClick={() => downloadPdfToPc(item)}
+                                        title="Download PDF to your PC"
+                                      >
+                                        {downloadingPdfIds.has(item.messageId) ? (
+                                          <FiLoader size={12} className="animate-spin" />
+                                        ) : (
+                                          <FiDownload size={12} />
+                                        )}{" "}
+                                        Save
+                                      </button>
+                                    </div>
+                                  )}
                                   <div className="min-w-0 flex-1 space-y-1">
                                     {!item.imported ? (
                                       <input
@@ -1316,8 +1502,8 @@ const TelegramImportPage = () => {
                                     )}
                                     <p className="text-xs text-slate-500">
                                       {formatTelegramMediaMeta(item)}
-                                      {!item.imported && item.fileName && item.fileName !== displayTitle ? (
-                                        <span className="text-slate-400"> · Telegram: {mediaDisplayName(item)}</span>
+                                      {item.mediaType === "pdf" && item.fileName ? (
+                                        <span className="text-slate-400"> · Telegram: {item.fileName}</span>
                                       ) : null}
                                     </p>
                                   </div>
@@ -1360,8 +1546,23 @@ const TelegramImportPage = () => {
                               </div>
                             );
                             })}
-                            {!filteredMedia.length && !topicMediaLoading && (
-                              <p className="text-sm text-slate-400">No lessons in this subject yet.</p>
+                            {!filteredMedia.length && !topicMediaLoading && activeTopic?.mediaLoaded && (
+                              <div className="py-8 text-center text-sm text-slate-400">
+                                {mediaSearchActive ? (
+                                  <>
+                                    <p>No files match &ldquo;{mediaSearch.trim()}&rdquo;</p>
+                                    <button
+                                      type="button"
+                                      className="btn-ghost mt-2 text-xs"
+                                      onClick={() => setMediaSearch("")}
+                                    >
+                                      Clear search
+                                    </button>
+                                  </>
+                                ) : (
+                                  "No lessons in this subject yet."
+                                )}
+                              </div>
                             )}
                           </div>
                         </>

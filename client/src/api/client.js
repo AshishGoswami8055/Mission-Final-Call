@@ -42,6 +42,15 @@ export const getServerBaseUrl = () => {
   return "";
 };
 
+/** Backend origin for <video src> — never the Vite dev port (5173). */
+export const getStreamBackendBaseUrl = () => {
+  const configured = String(import.meta.env.VITE_SERVER_URL || "").trim();
+  if (configured) return configured.replace(/\/$/, "");
+  const apiUrl = String(import.meta.env.VITE_API_URL || "").trim();
+  if (apiUrl) return apiUrl.replace(/\/api\/?$/, "").replace(/\/$/, "");
+  return "http://127.0.0.1:5001";
+};
+
 const api = axios.create({
   baseURL: getApiBaseUrl(),
 });

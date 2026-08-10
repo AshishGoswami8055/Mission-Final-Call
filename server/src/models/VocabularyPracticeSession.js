@@ -5,7 +5,8 @@ const answerSchema = new mongoose.Schema(
     vocabularyId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Vocabulary",
-      required: true,
+      required: false,
+      default: null,
     },
     questionType: { type: String, required: true },
     selectedAnswer: { type: String, default: "" },

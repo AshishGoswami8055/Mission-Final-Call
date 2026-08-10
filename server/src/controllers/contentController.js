@@ -54,7 +54,7 @@ import {
 import { ensureBrowserPlayableAbsolute } from "../services/browserPlayableVideoService.js";
 import { streamLocalFile } from "../utils/streamLocalFile.js";
 import { formatBytesLabel, isTelegramStreamContent } from "../utils/contentPlayback.js";
-import { getStreamCacheStatusByMessage } from "../services/telegramStreamCacheService.js";
+import { getStreamCacheStatusByMessage, getCompleteStreamCacheFile } from "../services/telegramStreamCacheService.js";
 import { streamTelegramMedia } from "../services/telegramService.js";
 import { toCloudinaryDownloadUrl } from "../services/subjectDownloadService.js";
 import {
@@ -1014,9 +1014,43 @@ export const getContentStreamCache = async (req, res) => {
       contentId: String(content._id),
       cachedLabel: formatBytesLabel(status.cachedBytes),
       totalLabel: formatBytesLabel(status.totalSize),
+      playUrl: status.playWebPath || null,
     });
   } catch (error) {
     res.status(500).json({ message: error.message || "Could not read stream cache status" });
+  }
+};
+
+export const streamContentCachePlay = async (req, res) => {
+  try {
+    const content = await Content.findById(req.params.id);
+    if (!content) return res.status(404).json({ message: "Content not found" });
+    if (!isTelegramStreamContent(content)) {
+      return res.status(400).json({ message: "Stream cache playback applies to Telegram videos only." });
+    }
+
+    const cached = getCompleteStreamCacheFile({
+      channelId: content.telegramChannelId,
+      messageId: content.telegramMessageId,
+    });
+    if (!cached) {
+      return res.status(404).json({
+        message: "Full stream cache is not ready yet. Keep watching until cache reaches 100%.",
+      });
+    }
+
+    streamLocalFile({
+      req,
+      res,
+      absolutePath: cached.absolutePath,
+      contentType: cached.mimeType,
+      fileName: cached.fileName,
+      asAttachment: false,
+    });
+  } catch (error) {
+    if (!res.headersSent) {
+      res.status(500).json({ message: error.message || "Could not play cached stream" });
+    }
   }
 };
 

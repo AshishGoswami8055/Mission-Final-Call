@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import Plyr from "plyr";
 import "plyr/dist/plyr.css";
 import "../styles/plyr-overrides.css";
-import { applyVideoSource } from "../utils/videoScreenshot";
+import { applyVideoSource, reloadVideoPreservingTime } from "../utils/videoScreenshot";
 import { attachTimelineScrubPreview } from "../utils/timelineScrubPreview";
 
 const STALL_RETRY_MS = 18000;
@@ -42,9 +42,12 @@ const CdsPlyrPlayer = ({
   onPause,
   onEnded,
   onStalled,
+  stallRecoveryEnabled = true,
   controlsPreset = "full",
   autoPlay = false,
   scrubPreviewEnabled = false,
+  videoPreload = "auto",
+  crossOriginMode = "auto",
 }) => {
   const hostRef = useRef(null);
   const plyrRef = useRef(null);
@@ -71,8 +74,12 @@ const CdsPlyrPlayer = ({
     onStalled,
   });
 
+  const stallRecoveryEnabledRef = useRef(stallRecoveryEnabled);
   const autoPlayRef = useRef(autoPlay);
+  const crossOriginModeRef = useRef(crossOriginMode);
   autoPlayRef.current = autoPlay;
+  crossOriginModeRef.current = crossOriginMode;
+  stallRecoveryEnabledRef.current = stallRecoveryEnabled;
 
   srcRef.current = src;
   scrubPreviewEnabledRef.current = scrubPreviewEnabled;
@@ -115,10 +122,12 @@ const CdsPlyrPlayer = ({
 
   const scheduleStallWatch = useCallback((video) => {
     clearStallTimer();
-    if (!video || !srcRef.current) return;
+    if (!stallRecoveryEnabledRef.current || !video || !srcRef.current) return;
+    if (video.paused) return;
 
     stallTimerRef.current = setTimeout(() => {
       const elapsed = Date.now() - lastProgressAtRef.current;
+      if (video.paused) return;
       if (elapsed < STALL_RETRY_MS - 500) {
         scheduleStallWatch(video);
         return;
@@ -130,8 +139,12 @@ const CdsPlyrPlayer = ({
       stallRetriesRef.current += 1;
       eventRefs.current.onStalled?.({ retries: stallRetriesRef.current, gaveUp: false });
       const currentSrc = srcRef.current;
+      const resumeAt = video.currentTime;
       appliedSrcRef.current = "";
-      applyVideoSource(video, currentSrc, appliedSrcRef);
+      applyVideoCrossOrigin(video, currentSrc, crossOriginModeRef.current);
+      video.src = currentSrc;
+      reloadVideoPreservingTime(video, resumeAt);
+      appliedSrcRef.current = currentSrc;
       scheduleStallWatch(video);
     }, STALL_RETRY_MS);
   }, []);
@@ -183,7 +196,10 @@ const CdsPlyrPlayer = ({
         touchProgress(video);
         eventRefs.current.onPlay?.();
       },
-      pause: () => eventRefs.current.onPause?.(),
+      pause: () => {
+        clearStallTimer();
+        eventRefs.current.onPause?.();
+      },
       ended: () => eventRefs.current.onEnded?.(),
       waiting: () => {
         touchProgress(video);
@@ -233,7 +249,7 @@ const CdsPlyrPlayer = ({
       video = document.createElement("video");
       video.className = "aspect-video w-full";
       video.setAttribute("playsinline", "");
-      video.preload = "auto";
+      video.preload = videoPreload;
       video.controls = false;
       const track = document.createElement("track");
       track.kind = "captions";
@@ -247,7 +263,7 @@ const CdsPlyrPlayer = ({
       });
 
       if (srcRef.current) {
-        applyVideoSource(video, srcRef.current, appliedSrcRef);
+        applyVideoSource(video, srcRef.current, appliedSrcRef, crossOriginModeRef.current);
         touchProgress(video);
       }
 
@@ -311,16 +327,16 @@ const CdsPlyrPlayer = ({
       cancelAnimationFrame(rafId);
       cleanupDom();
     };
-  }, [contentId, ready, assignVideoRef, touchProgress]);
+  }, [contentId, ready, assignVideoRef, touchProgress, videoPreload]);
 
   // Apply / refresh src when it becomes available or changes (fixes rAF race on refresh).
   useEffect(() => {
     const video = internalVideoRef.current;
     if (!video || !ready || !src) return;
-    if (applyVideoSource(video, src, appliedSrcRef)) {
+    if (applyVideoSource(video, src, appliedSrcRef, crossOriginModeRef.current)) {
       touchProgress(video);
     }
-  }, [src, ready, touchProgress]);
+  }, [src, ready, touchProgress, crossOriginMode]);
 
   return (
     <div

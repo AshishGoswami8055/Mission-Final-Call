@@ -3,6 +3,8 @@ import { isLocalLibraryEnabled } from "../services/localLibraryService.js";
 import {
   clearStreamCache,
   getStreamCacheInventory,
+  revealStreamCacheFolderOnDisk,
+  revealStreamCacheItemOnDisk,
 } from "../services/telegramStreamCacheService.js";
 import {
   getLocalMediaStorageStatusAsync,
@@ -108,6 +110,31 @@ export const clearStreamCacheHandler = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ message: error.message || "Could not clear stream cache" });
+  }
+};
+
+export const revealStreamCacheItemHandler = async (req, res) => {
+  try {
+    const cacheKey = String(req.params.cacheKey || "").trim();
+    const result = await revealStreamCacheItemOnDisk(cacheKey);
+    res.json({
+      ...result,
+      message: "Opened in File Explorer.",
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Could not open file location" });
+  }
+};
+
+export const revealStreamCacheFolderHandler = async (_req, res) => {
+  try {
+    const result = await revealStreamCacheFolderOnDisk();
+    res.json({
+      ...result,
+      message: "Opened stream cache folder.",
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Could not open folder" });
   }
 };
 

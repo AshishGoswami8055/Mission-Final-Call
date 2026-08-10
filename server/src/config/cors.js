@@ -60,5 +60,9 @@ export const applyCorsHeaders = (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
   }
-  res.setHeader("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length");
+  res.setHeader("Access-Control-Allow-Headers", "Range, Authorization, Content-Type");
+  res.setHeader(
+    "Access-Control-Expose-Headers",
+    "Content-Range, Accept-Ranges, Content-Length, Content-Type"
+  );
 };

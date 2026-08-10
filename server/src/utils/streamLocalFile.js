@@ -6,7 +6,19 @@ export const parseRangeHeader = (rangeHeader, totalSize) => {
     return { start: 0, end: totalSize - 1, partial: false };
   }
 
-  const match = /^bytes=(\d*)-(\d*)$/i.exec(String(rangeHeader).trim());
+  const value = String(rangeHeader).trim().replace(/^bytes=/i, "");
+
+  // Suffix range: bytes=-500 (last 500 bytes — browsers use this to read MP4 moov on huge files)
+  if (value.startsWith("-")) {
+    const suffix = parseInt(value.slice(1), 10);
+    if (Number.isNaN(suffix) || suffix <= 0) {
+      return { invalid: true };
+    }
+    const start = Math.max(0, totalSize - suffix);
+    return { start, end: totalSize - 1, partial: true };
+  }
+
+  const match = /^(\d*)-(\d*)$/.exec(value);
   if (!match) {
     return { start: 0, end: totalSize - 1, partial: false };
   }
@@ -40,6 +52,8 @@ export const streamLocalFile = ({
   const totalSize = fs.statSync(absolutePath).size;
   const range = parseRangeHeader(req.headers.range, totalSize);
   if (range.invalid) {
+    applyCorsHeaders(req, res);
+    res.setHeader("Accept-Ranges", "bytes");
     res.setHeader("Content-Range", `bytes */${totalSize}`);
     return res.status(416).end();
   }

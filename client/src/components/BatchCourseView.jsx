@@ -33,6 +33,8 @@ const BatchCourseView = ({
   onRenameSubject,
   onToggleCompleted,
   togglingCompletedId = null,
+  onToggleSubjectCompleted,
+  togglingSubjectComplete = false,
   onClearCourse,
   subjectUpdates = {},
   subjectStats: subjectStatsProp = null,
@@ -283,6 +285,8 @@ const BatchCourseView = ({
                 contents={subjectContents}
                 chapters={subjectChapters}
                 disabled={subjectDetailBusy || loadingSubjectContents}
+                onToggleSubjectCompleted={onToggleSubjectCompleted}
+                togglingSubjectComplete={togglingSubjectComplete}
               />
               <SubjectLessonAccordion
               contents={subjectContents}

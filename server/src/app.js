@@ -20,7 +20,7 @@ import telegramRoutes from "./routes/telegramRoutes.js";
 import missionRoutes from "./routes/missionRoutes.js";
 import workspaceRoutes from "./routes/workspaceRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
-import { createLocalMediaStaticHandler } from "./middlewares/mediaStaticMiddleware.js";
+import { createLocalMediaRootStaticHandler, createLocalMediaStaticHandler } from "./middlewares/mediaStaticMiddleware.js";
 import { PROJECT_UPLOADS_ROOT } from "./config/mediaStorage.js";
 import { errorHandler, notFound } from "./middlewares/errorMiddleware.js";
 
@@ -51,6 +51,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/uploads/_local_library", createLocalMediaStaticHandler("_local_library"));
 app.use("/uploads/_merged_subjects", createLocalMediaStaticHandler("_merged_subjects"));
 app.use("/uploads/_playback_cache", createLocalMediaStaticHandler("_playback_cache"));
+app.use("/uploads/_stream_cache", createLocalMediaStaticHandler("_stream_cache"));
+app.use("/uploads", createLocalMediaRootStaticHandler());
 app.use("/uploads", express.static(uploadsPath));
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 app.use("/api/workspace", workspaceRoutes);

@@ -18,6 +18,7 @@ let clientConnectPromise = null;
 let lastLiveCheck = { at: 0, result: null };
 let keepAliveTimer = null;
 let telegramLockBusy = false;
+let telegramStreamWaitCount = 0;
 
 const LIVE_CHECK_CACHE_MS = Math.max(
   15000,
@@ -33,6 +34,16 @@ export const beginTelegramPlayback = () => {
 export const endTelegramPlayback = () => {
   activeStreamCount = Math.max(0, activeStreamCount - 1);
 };
+
+export const beginTelegramStreamWait = () => {
+  telegramStreamWaitCount += 1;
+};
+
+export const endTelegramStreamWait = () => {
+  telegramStreamWaitCount = Math.max(0, telegramStreamWaitCount - 1);
+};
+
+export const isTelegramStreamWaiting = () => telegramStreamWaitCount > 0;
 
 export const waitForPlaybackIdle = async (maxWaitMs = 30 * 60 * 1000, options = {}) => {
   const forceAfterMs = options.forceAfterMs ?? null;
@@ -80,20 +91,44 @@ const isRetryableTelegramError = (error) => {
   );
 };
 
-/** Serializes all GramJS work — only one Telegram operation at a time per process. */
-export const withTelegramLock = (task) => {
-  const runWrapped = async () => {
-    telegramLockBusy = true;
-    try {
-      return await task();
-    } finally {
-      telegramLockBusy = false;
+/** @type {Array<{ task: Function, priority: number, resolve: Function, reject: Function }>} */
+const pendingTelegramOps = [];
+let telegramPumpRunning = false;
+
+const pumpTelegramOps = () => {
+  if (telegramPumpRunning) return;
+  telegramPumpRunning = true;
+
+  const tick = async () => {
+    while (pendingTelegramOps.length) {
+      pendingTelegramOps.sort((a, b) => b.priority - a.priority);
+      const job = pendingTelegramOps.shift();
+      telegramLockBusy = true;
+      try {
+        job.resolve(await job.task());
+      } catch (error) {
+        job.reject(error);
+      } finally {
+        telegramLockBusy = false;
+      }
     }
+    telegramPumpRunning = false;
   };
-  const run = telegramOpChain.then(runWrapped, runWrapped);
-  telegramOpChain = run.catch(() => {});
-  return run;
+
+  tick().catch(() => {
+    telegramPumpRunning = false;
+  });
 };
+
+/** Serializes all GramJS work — only one Telegram operation at a time per process. */
+export const withTelegramLock = (task, { priority = 0 } = {}) =>
+  new Promise((resolve, reject) => {
+    pendingTelegramOps.push({ task, priority, resolve, reject });
+    pumpTelegramOps();
+  });
+
+/** Video playback — takes priority over background cache prefetch. */
+export const withTelegramPlaybackLock = (task) => withTelegramLock(task, { priority: 10 });
 
 /** @deprecated use withTelegramLock */
 export const withTelegramDownloadLock = withTelegramLock;
