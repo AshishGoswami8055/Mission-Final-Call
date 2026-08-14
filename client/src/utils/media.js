@@ -82,6 +82,20 @@ export const buildTelegramPreviewStreamUrl = (channelId, messageId) => {
   return url;
 };
 
+/** JPEG thumbnail for Telegram video preview in import UI. */
+export const buildTelegramThumbnailUrl = (channelId, messageId) => {
+  if (!channelId || !messageId) return "";
+  const apiBase = getMediaApiBaseUrl();
+  let url = `${apiBase}/telegram/thumbnail/${encodeURIComponent(messageId)}?channelId=${encodeURIComponent(channelId)}`;
+  try {
+    const token = localStorage.getItem("cds_token");
+    if (token) url += `&token=${encodeURIComponent(token)}`;
+  } catch {
+    // ignore storage errors
+  }
+  return url;
+};
+
 /** Same stream with Content-Disposition attachment for saving to the user's PC. */
 export const buildTelegramDownloadUrl = (channelId, messageId) => {
   const base = buildTelegramPreviewStreamUrl(channelId, messageId);
@@ -254,6 +268,27 @@ export const formatDuration = (seconds = 0) => {
     return `${hours}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   }
   return `${minutes}:${secs.toString().padStart(2, "0")}`;
+};
+
+/** Sum known video durations from lesson rows (seconds). */
+export const sumVideoDurationSeconds = (items = []) =>
+  (Array.isArray(items) ? items : []).reduce((sum, item) => {
+    if (item?.type !== "video") return sum;
+    const duration = Number(item.duration);
+    return Number.isFinite(duration) && duration > 0 ? sum + duration : sum;
+  }, 0);
+
+/** Human-friendly total for subject headers — e.g. "28h 15m". */
+export const formatTotalStudyDuration = (seconds = 0) => {
+  const safe = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (!safe) return "";
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  if (hours >= 1) {
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+  if (minutes >= 1) return `${minutes}m`;
+  return formatDuration(safe);
 };
 
 export const formatTelegramMediaMeta = (item) => {

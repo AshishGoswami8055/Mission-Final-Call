@@ -1,0 +1,436 @@
+/* Telegram import — polished workspace UI */
+
+.tg-import-panel {
+  --tg-accent: #0ea5e9;
+  --tg-accent-soft: rgba(14, 165, 233, 0.12);
+  --tg-border: rgba(148, 163, 184, 0.35);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 8px 32px rgba(15, 23, 42, 0.06);
+}
+
+.dark .tg-import-panel {
+  --tg-border: rgba(148, 163, 184, 0.18);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+}
+
+.tg-import-channel-card {
+  border: 1px solid var(--tg-border);
+  border-radius: 0.875rem;
+  padding: 0.875rem 1rem;
+  background: linear-gradient(180deg, #fff 0%, #f8fafc 100%);
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.15s ease;
+}
+
+.dark .tg-import-channel-card {
+  background: linear-gradient(180deg, #1a1a1a 0%, #141414 100%);
+}
+
+.tg-import-channel-card:hover {
+  border-color: var(--tg-accent);
+  box-shadow: 0 4px 20px rgba(14, 165, 233, 0.15);
+  transform: translateY(-1px);
+}
+
+.tg-import-subjects {
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+}
+
+.dark .tg-import-subjects {
+  background: linear-gradient(180deg, #141414 0%, #111 100%);
+}
+
+.tg-import-subject-row {
+  border-left: 3px solid transparent;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.tg-import-subject-row:hover {
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.dark .tg-import-subject-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tg-import-subject-row--active {
+  border-left-color: var(--tg-accent);
+  background: rgba(14, 165, 233, 0.08);
+}
+
+.tg-import-subject-row--in-course {
+  border-left-color: #10b981;
+}
+
+.tg-import-subject-row--in-course.tg-import-subject-row--active {
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.tg-import-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 999px;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.tg-import-chip--video {
+  background: rgba(14, 165, 233, 0.14);
+  color: #0369a1;
+}
+
+.dark .tg-import-chip--video {
+  color: #7dd3fc;
+}
+
+.tg-import-chip--pdf {
+  background: rgba(244, 63, 94, 0.1);
+  color: #be123c;
+}
+
+.dark .tg-import-chip--pdf {
+  color: #fda4af;
+}
+
+.tg-import-chip--new {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+}
+
+.tg-import-chip--done {
+  background: rgba(16, 185, 129, 0.14);
+  color: #047857;
+}
+
+.tg-import-toolbar {
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.95) 0%, rgba(241, 245, 249, 0.9) 100%);
+  border-bottom: 1px solid var(--tg-border);
+}
+
+.dark .tg-import-toolbar {
+  background: linear-gradient(180deg, rgba(26, 26, 26, 0.98) 0%, rgba(20, 20, 20, 0.95) 100%);
+}
+
+.tg-import-segment {
+  display: inline-flex;
+  gap: 0.125rem;
+  padding: 0.1875rem;
+  border-radius: 0.625rem;
+  background: rgba(148, 163, 184, 0.16);
+}
+
+.dark .tg-import-segment {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.tg-import-segment__btn {
+  border-radius: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #64748b;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.tg-import-segment__btn:hover {
+  color: #334155;
+}
+
+.dark .tg-import-segment__btn {
+  color: #94a3b8;
+}
+
+.tg-import-segment__btn--active {
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.dark .tg-import-segment__btn--active {
+  background: #262626;
+  color: #f8fafc;
+}
+
+.tg-import-lesson-list {
+  background: #fafbfc;
+}
+
+.dark .tg-import-lesson-list {
+  background: #0f0f0f;
+}
+
+.tg-import-lesson {
+  border: 1px solid var(--tg-border);
+  border-radius: 0.75rem;
+  background: #fff;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.dark .tg-import-lesson {
+  background: #1a1a1a;
+}
+
+.tg-import-lesson:hover {
+  border-color: rgba(14, 165, 233, 0.45);
+  box-shadow: 0 2px 12px rgba(14, 165, 233, 0.08);
+}
+
+.tg-import-lesson--imported {
+  border-color: rgba(16, 185, 129, 0.35);
+  background: linear-gradient(180deg, rgba(236, 253, 245, 0.9) 0%, #fff 100%);
+}
+
+.dark .tg-import-lesson--imported {
+  background: linear-gradient(180deg, rgba(6, 78, 59, 0.25) 0%, #1a1a1a 100%);
+}
+
+.tg-import-lesson--muted {
+  opacity: 0.72;
+}
+
+.tg-import-lesson__index {
+  display: flex;
+  height: 1.5rem;
+  width: 1.5rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.375rem;
+  background: rgba(148, 163, 184, 0.18);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+}
+
+.tg-import-lesson__play {
+  display: flex;
+  height: 2rem;
+  width: 2rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--tg-accent-soft);
+  color: #0284c7;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.tg-import-lesson__thumb {
+  position: relative;
+  display: block;
+  width: 7.25rem;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 0.5rem;
+  border: 1px solid var(--tg-border);
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.14), rgba(14, 165, 233, 0.04));
+  padding: 0;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.tg-import-lesson__thumb:hover {
+  border-color: rgba(14, 165, 233, 0.55);
+  box-shadow: 0 4px 14px rgba(14, 165, 233, 0.18);
+  transform: translateY(-1px);
+}
+
+.tg-import-lesson__thumb img {
+  display: block;
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+}
+
+.tg-import-lesson__thumb-play {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.28);
+  color: #fff;
+  transition: background 0.15s ease;
+}
+
+.tg-import-lesson__thumb:hover .tg-import-lesson__thumb-play {
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.tg-import-lesson__thumb--fallback .tg-import-lesson__thumb-play {
+  background: rgba(14, 165, 233, 0.12);
+  color: #0284c7;
+}
+
+.dark .tg-import-lesson__thumb--fallback .tg-import-lesson__thumb-play {
+  color: #7dd3fc;
+}
+
+.tg-import-lesson__play:hover {
+  background: rgba(14, 165, 233, 0.22);
+  transform: scale(1.05);
+}
+
+.dark .tg-import-lesson__play {
+  color: #7dd3fc;
+}
+
+.tg-import-lesson__title-input {
+  border: 1px solid transparent;
+  background: transparent;
+  font-weight: 600;
+  padding: 0.25rem 0.375rem;
+  border-radius: 0.375rem;
+}
+
+.tg-import-lesson__title-input:hover {
+  border-color: var(--tg-border);
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.tg-import-lesson__title-input:focus {
+  border-color: var(--tg-accent);
+  background: #fff;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.15);
+}
+
+.dark .tg-import-lesson__title-input:focus {
+  background: #262626;
+}
+
+.tg-import-lesson__meta {
+  font-size: 0.6875rem;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+}
+
+.dark .tg-import-lesson__meta {
+  color: #94a3b8;
+}
+
+.tg-import-lesson-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  border: 1px solid var(--tg-border);
+  border-radius: 0.625rem;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(8px);
+}
+
+.dark .tg-import-lesson-bar {
+  background: rgba(26, 26, 26, 0.92);
+}
+
+.tg-import-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border-radius: 999px;
+  border: 1px solid var(--tg-border);
+  padding: 0.3125rem 0.625rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.tg-import-toggle:has(input:checked) {
+  border-color: rgba(14, 165, 233, 0.5);
+  background: var(--tg-accent-soft);
+}
+
+.tg-import-detail-empty {
+  display: flex;
+  min-height: 12rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  color: #94a3b8;
+  font-size: 0.875rem;
+}
+
+.tg-import-thumb-menu__action {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.625rem;
+  border-radius: 0.625rem;
+  border: 1px solid var(--tg-border);
+  background: #fff;
+  padding: 0.75rem 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #0f172a;
+  text-align: left;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    transform 0.15s ease;
+}
+
+.tg-import-thumb-menu__action:hover:not(:disabled) {
+  border-color: rgba(14, 165, 233, 0.45);
+  background: var(--tg-accent-soft);
+  transform: translateY(-1px);
+}
+
+.tg-import-thumb-menu__action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.dark .tg-import-thumb-menu__action {
+  background: #1a1a1a;
+  color: #f8fafc;
+}
+
+.tg-import-thumb-lightbox__panel {
+  width: min(92vw, 56rem);
+  overflow: hidden;
+  border-radius: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #fff;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.35);
+}
+
+.dark .tg-import-thumb-lightbox__panel {
+  background: #111;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.tg-import-thumb-lightbox__header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--tg-border);
+  padding: 0.75rem 1rem;
+}
+
+.tg-import-thumb-lightbox__body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0f172a;
+  padding: 0.75rem;
+}
+
+.tg-import-thumb-lightbox__image {
+  display: block;
+  max-height: min(78vh, 720px);
+  max-width: 100%;
+  width: auto;
+  border-radius: 0.375rem;
+  object-fit: contain;
+}

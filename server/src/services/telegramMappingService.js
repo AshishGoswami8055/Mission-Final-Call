@@ -6,7 +6,7 @@ import { getOrCreateChapterForSubject } from "../utils/chapterHelpers.js";
 import { parseChapterAndTitleFromFilename } from "../utils/contentHelpers.js";
 import {
   resolveTelegramMediaTitle,
-  getTelegramMessageMedia,
+  resolveTelegramImportMessageMetas,
   fetchForumTopicsForChannel,
   fetchForumTopicsByIds,
   fetchMediaInTopic,
@@ -1010,20 +1010,48 @@ export const importSelectedForumMessages = async ({
   const skipped = [];
   let maxMessageId = 0;
 
-  const metas = [];
+  if (uploadId) {
+    initProgress(uploadId, {
+      phase: "pending",
+      percent: 3,
+      message: "Fetching lesson details from Telegram…",
+      filesTotal: selectedItems.length,
+      fileIndex: 0,
+    });
+  }
+
+  let metas = [];
+  try {
+    metas = await resolveTelegramImportMessageMetas({
+      channelId,
+      items: selectedItems.map((item) => ({
+        topicId: item.topicId,
+        messageId: item.messageId,
+        topicTitle: item.topicTitle || topicById.get(Number(item.topicId))?.title,
+        displayName: item.displayName || item.title,
+      })),
+      uploadId,
+      onItemProgress: ({ index, total, messageId }) => {
+        if (!uploadId) return;
+        setProgress(uploadId, {
+          phase: "pending",
+          percent: Math.min(20, Math.round((index / Math.max(total, 1)) * 20)),
+          message: `Reading Telegram files (${index}/${total})…`,
+          currentFile: `#${messageId}`,
+          fileIndex: index,
+          filesTotal: total,
+        });
+      },
+    });
+  } catch (error) {
+    if (uploadId) failProgress(uploadId, error.message || "Could not read Telegram files");
+    throw error;
+  }
+
+  const fetchedIds = new Set(metas.map((meta) => Number(meta.messageId)));
   for (const item of selectedItems) {
-    const topicId = Number(item.topicId);
     const messageId = Number(item.messageId);
-    if (!topicId || !messageId) continue;
-    try {
-      const { meta } = await getTelegramMessageMedia({ channelId, messageId, topicId });
-      metas.push({
-        ...meta,
-        topicId,
-        topicTitle: item.topicTitle || topicById.get(topicId)?.title || "Subject",
-        preferredTitle: String(item.displayName || item.title || "").trim() || null,
-      });
-    } catch {
+    if (messageId && !fetchedIds.has(messageId)) {
       skipped.push({ messageId, reason: "Could not fetch message" });
     }
   }
@@ -1033,11 +1061,12 @@ export const importSelectedForumMessages = async ({
   ).length;
   let mediaIndex = 0;
   if (uploadId) {
-    initProgress(uploadId, {
-      phase: "pending",
-      message: "Preparing file import…",
+    setProgress(uploadId, {
+      phase: "importing",
+      message: "Creating lessons in your course…",
       filesTotal: metas.length,
       fileIndex: 0,
+      percent: 22,
     });
   }
 
@@ -1088,7 +1117,7 @@ export const importSelectedForumMessages = async ({
         currentFile: meta.displayName || meta.fileName,
         fileIndex: sortOrder + 1,
         filesTotal: metas.length,
-        percent: Math.round(((sortOrder + 0.2) / metas.length) * 100),
+        percent: Math.min(99, 22 + Math.round(((sortOrder + 1) / Math.max(metas.length, 1)) * 77)),
       });
     }
 

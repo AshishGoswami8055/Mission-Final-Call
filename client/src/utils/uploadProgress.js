@@ -5,6 +5,12 @@ export const createUploadId = () =>
     ? crypto.randomUUID()
     : `up_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
+const fetchUploadProgress = (uploadId) =>
+  api.get(`/contents/upload-progress/${encodeURIComponent(uploadId)}`, {
+    params: { _t: Date.now() },
+    headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+  });
+
 export const pollUploadProgress = (uploadId, onUpdate, intervalMs = 450) => {
   if (!uploadId) return () => {};
   let active = true;
@@ -12,7 +18,7 @@ export const pollUploadProgress = (uploadId, onUpdate, intervalMs = 450) => {
   const run = async () => {
     while (active) {
       try {
-        const { data } = await api.get(`/contents/upload-progress/${uploadId}`);
+        const { data } = await fetchUploadProgress(uploadId);
         if (!active) break;
         if (data?.phase && data.phase !== "idle") {
           onUpdate(data);
@@ -32,14 +38,17 @@ export const pollUploadProgress = (uploadId, onUpdate, intervalMs = 450) => {
 };
 
 /** Poll until phase is done or error; resolves with final progress payload. */
-export const waitForUploadProgress = (uploadId, onUpdate, intervalMs = 450) => {
+export const waitForUploadProgress = (uploadId, onUpdate, intervalMs = 450, options = {}) => {
   if (!uploadId) {
     return Promise.reject(new Error("Missing uploadId"));
   }
 
+  const maxWaitMs = Number(options.maxWaitMs) || 45 * 60 * 1000;
   let active = true;
   let settled = false;
   let settle = null;
+  const startedAt = Date.now();
+  let lastProgressAt = startedAt;
 
   const promise = new Promise((resolve, reject) => {
     settle = { resolve, reject };
@@ -54,10 +63,18 @@ export const waitForUploadProgress = (uploadId, onUpdate, intervalMs = 450) => {
 
   const run = async () => {
     while (active) {
+      if (Date.now() - startedAt > maxWaitMs) {
+        finish(
+          settle.reject,
+          new Error("Import is taking too long. Try Cancel, refresh the page, and import again.")
+        );
+        break;
+      }
       try {
-        const { data } = await api.get(`/contents/upload-progress/${uploadId}`);
+        const { data } = await fetchUploadProgress(uploadId);
         if (!active) break;
         if (data?.phase && data.phase !== "idle") {
+          lastProgressAt = Date.now();
           onUpdate?.(data);
           if (data.phase === "done") {
             finish(settle.resolve, data);
@@ -67,6 +84,13 @@ export const waitForUploadProgress = (uploadId, onUpdate, intervalMs = 450) => {
             finish(settle.reject, new Error(data.error || "Import failed"));
             break;
           }
+        } else if (Date.now() - lastProgressAt > 3 * 60 * 1000) {
+          onUpdate?.({
+            phase: "pending",
+            percent: 5,
+            message: "Still working… connecting to Telegram (this can take a few minutes).",
+          });
+          lastProgressAt = Date.now();
         }
       } catch {
         // keep polling through transient errors

@@ -1,3 +1,19 @@
+/** Parse bot-style caption blocks (Index, Title, Topic, Batch). */
+export const parseTelegramCaptionMetadata = (text = "") => {
+  const out = {};
+  if (!text) return out;
+  for (const line of String(text).split(/\r?\n/)) {
+    const match = line.match(/^\s*(Index|Title|Topic|Batch)\s*:\s*(.+)$/i);
+    if (match) out[match[1].toLowerCase()] = match[2].trim();
+  }
+  return out;
+};
+
+const stripMediaExtension = (value = "") =>
+  String(value)
+    .replace(/\.(mp4|mkv|webm|mov|m4v|pdf)$/i, "")
+    .trim();
+
 /** Lesson title from the Telegram document filename (PDF default). */
 export const titleFromTelegramFileName = (item) => {
   let name = String(item?.fileName || "").trim();
@@ -6,14 +22,25 @@ export const titleFromTelegramFileName = (item) => {
 };
 
 export const suggestLessonTitle = (item) => {
+  const fields = parseTelegramCaptionMetadata(item?.caption || "");
+  if (fields.title) {
+    return stripMediaExtension(fields.title) || "Lesson";
+  }
+
   if (item?.mediaType === "pdf") {
     return titleFromTelegramFileName(item);
   }
+
   let name = String(item?.displayName || item?.fileName || "Lesson").trim();
-  name = name.replace(/\.(mp4|mkv|webm|mov|m4v|pdf)$/i, "");
+  if (/^(Index|Title|Topic|Batch)\s*:/i.test(name)) {
+    return "Lesson";
+  }
+  name = stripMediaExtension(name);
   name = name.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
   return name || "Lesson";
 };
+
+export const getLessonCaptionFields = (item) => parseTelegramCaptionMetadata(item?.caption || "");
 
 export const mediaMatchesImportPrefs = (item, prefs) =>
   (item?.mediaType === "video" && prefs?.includeVideos) ||
@@ -37,7 +64,7 @@ export const syncLessonPlanForTopic = (media = [], prefs, prevPlan = null) => {
     const suggested = suggestLessonTitle(item);
     if (!entries[id]) {
       entries[id] = { selected: true, displayName: suggested };
-    } else if (item.mediaType === "pdf" && !entries[id].titleLocked) {
+    } else if (!entries[id].titleLocked) {
       entries[id] = { ...entries[id], displayName: suggested };
     }
   }

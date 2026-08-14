@@ -40,8 +40,20 @@ export const inferFlatChannelSubjectKey = (meta = {}) => {
 
   if (fields.batch) return fields.batch.trim();
 
-  const base = String(meta.fileName || "").replace(/\.[^.]+$/, "");
+  const base = String(meta.fileName || meta.displayName || "").replace(/\.[^.]+$/, "");
+  const dashParts = base.split(/\s+-\s+/).map((p) => p.trim()).filter(Boolean);
+  if (dashParts.length >= 2) {
+    const head = dashParts[0];
+    if (/^(notes|video|videos|lecture|lectures|mind maps|class|classes)\b/i.test(head) && dashParts[1]) {
+      return `${dashParts[0]} ${dashParts[1]}`.trim();
+    }
+    return dashParts[0];
+  }
+
   const parts = base.split(/[-–—_|/\\]+/).map((p) => p.trim()).filter(Boolean);
+  if (parts.length >= 3 && /^(notes|video|videos|lecture|lectures|mind maps)\b/i.test(parts[0])) {
+    return `${parts[0]} ${parts[1]}`.trim();
+  }
   if (parts.length >= 2) return parts[0];
 
   return "General";

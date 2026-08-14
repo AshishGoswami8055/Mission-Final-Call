@@ -1,23 +1,38 @@
-/* Plyr theming to match the app's teal accent + rounded, modern look */
+/* CDS Journey — sky blue player with hover volume */
+
 .cds-plyr-shell {
-  --plyr-color-main: #14b8a6;
+  --cds-sky: #0ea5e9;
+  --cds-sky-light: #38bdf8;
+  --cds-sky-dark: #0284c7;
+  --plyr-color-main: var(--cds-sky);
   --plyr-video-background: #000;
   --plyr-video-control-color: #f1f5f9;
-  --plyr-video-control-color-hover: #ffffff;
-  --plyr-menu-background: rgba(15, 23, 42, 0.96);
+  --plyr-video-control-color-hover: #fff;
+  --plyr-menu-background: rgba(15, 23, 42, 0.98);
   --plyr-menu-color: #e2e8f0;
   --plyr-tooltip-background: rgba(15, 23, 42, 0.96);
   --plyr-tooltip-color: #f8fafc;
-  --plyr-range-thumb-background: #14b8a6;
-  --plyr-range-fill-background: #14b8a6;
-  --plyr-control-radius: 10px;
+  --plyr-range-thumb-background: var(--cds-sky-light);
+  --plyr-range-fill-background: var(--cds-sky);
+  --plyr-control-radius: 8px;
   --plyr-font-family: inherit;
+  --plyr-font-size-time: 13px;
+  --plyr-control-spacing: 6px;
+  --plyr-range-track-height: 4px;
+  --plyr-range-thumb-height: 12px;
+  --plyr-range-thumb-shadow: 0 0 0 2px rgba(14, 165, 233, 0.35);
+  --plyr-video-controls-background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(0, 0, 0, 0.65) 100%
+  );
 }
 
 .cds-plyr-shell .plyr {
   border-radius: 0;
   overflow: hidden;
   width: 100%;
+  font-variant-numeric: tabular-nums;
 }
 
 @media (min-width: 1024px) {
@@ -26,21 +41,158 @@
   }
 }
 
+/* Center play */
+.cds-plyr-shell .plyr__control--overlaid {
+  background: var(--cds-sky);
+  border: none;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.cds-plyr-shell .plyr__control--overlaid:hover {
+  background: var(--cds-sky-dark);
+}
+
+/* Control bar — left cluster + right cluster */
+.cds-plyr-shell .plyr__controls {
+  padding: 6px 12px 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+/* Undo Plyr default: only first item left, rest forced right */
+.cds-plyr-shell .plyr__controls .plyr__controls__item:first-child {
+  margin-right: 0;
+}
+
+/* Progress — full width row on top (don't grow on the button row) */
+.cds-plyr-shell .plyr__progress__container,
+.cds-plyr-shell .plyr__progress {
+  order: -1;
+  flex: 1 1 100%;
+  width: 100%;
+  min-width: 100%;
+  margin: 0;
+  padding: 0 4px 8px;
+}
+
+.cds-plyr-shell .plyr__controls .plyr__progress__container {
+  flex: 1 1 100%;
+  min-width: 100%;
+}
+
+.cds-plyr-shell .plyr__progress input[type="range"] {
+  height: 4px;
+  border-radius: 999px;
+}
+
+.cds-plyr-shell .plyr__progress__buffer {
+  color: rgba(14, 165, 233, 0.22);
+  border-radius: 999px;
+}
+
+/* Left: play, rewind, forward, volume, time */
+.cds-plyr-shell .plyr__control[data-plyr="play"],
+.cds-plyr-shell .plyr__control[data-plyr="rewind"],
+.cds-plyr-shell .plyr__control[data-plyr="fast-forward"] {
+  flex: 0 0 auto;
+}
+
+.cds-plyr-shell .plyr__time {
+  flex: 0 0 auto;
+  margin: 0 4px 0 2px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #e2e8f0;
+}
+
+/* Right: settings, pip, screenshot, fullscreen */
+.cds-plyr-shell .plyr__controls > .plyr__menu {
+  margin-left: auto;
+}
+
+.cds-plyr-shell .plyr__control:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Volume — speaker only; slider expands on hover */
+.cds-plyr-shell .plyr__volume {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  width: auto;
+  max-width: none;
+  margin-right: 4px;
+  overflow: hidden;
+}
+
+.cds-plyr-shell .plyr__control[data-plyr="mute"] {
+  width: 36px;
+  height: 36px;
+  padding: 6px;
+  flex-shrink: 0;
+}
+
+.cds-plyr-shell .plyr__control[data-plyr="mute"] svg {
+  width: 20px;
+  height: 20px;
+}
+
+.cds-plyr-shell .plyr__volume input[type="range"] {
+  width: 0;
+  min-width: 0;
+  max-width: 0;
+  margin-left: 0;
+  height: 4px;
+  opacity: 0;
+  cursor: pointer;
+  pointer-events: none;
+  transition:
+    width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    max-width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    margin-left 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.22s ease;
+}
+
+.cds-plyr-shell .plyr__volume:hover input[type="range"],
+.cds-plyr-shell .plyr__volume:focus-within input[type="range"] {
+  width: 80px;
+  max-width: 80px;
+  margin-left: 4px;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.cds-plyr-shell .plyr__menu__container .plyr__control[role="menuitemradio"][aria-checked="true"]::before {
+  background: var(--cds-sky);
+}
+
+.plyr__control.plyr-screenshot-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Watch page */
 .watch-stage .cds-plyr-shell {
-  --plyr-control-spacing: 10px;
+  --plyr-control-spacing: 8px;
 }
 
 @media (max-width: 639px) {
   .watch-stage .cds-plyr-shell .plyr__controls {
-    padding: 8px 6px;
+    padding: 4px 6px 8px;
   }
 
-  .watch-stage .cds-plyr-shell .plyr__control {
-    padding: 6px;
+  .watch-stage .cds-plyr-shell .plyr__volume:hover input[type="range"],
+  .watch-stage .cds-plyr-shell .plyr__volume:focus-within input[type="range"] {
+    width: 56px;
+    max-width: 56px;
   }
 
   .watch-stage .cds-plyr-shell .plyr__time {
-    font-size: 12px;
+    font-size: 11px;
+    margin: 0 4px;
   }
 
   .watch-stage .cds-plyr-shell,
@@ -51,31 +203,54 @@
   }
 }
 
-.cds-plyr-shell .plyr__control--overlaid {
-  background: var(--plyr-color-main);
+/* Touch devices — no hover, keep slider visible when tapping volume */
+@media (hover: none) {
+  .cds-plyr-shell .plyr__volume input[type="range"] {
+    width: 64px;
+    max-width: 64px;
+    margin-left: 4px;
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
-/* Custom screenshot control injected into the Plyr control bar */
-.plyr__control.plyr-screenshot-btn svg {
-  width: 18px;
-  height: 18px;
-}
-
-/* Timeline hover preview (PC library / full stream cache) */
+/* Timeline scrub preview */
 .cds-plyr-shell .plyr {
+  position: relative;
+}
+
+.cds-plyr-shell .cds-scrub-progress-host {
   position: relative;
 }
 
 .cds-scrub-preview {
   position: absolute;
-  bottom: 52px;
+  bottom: calc(100% + 10px);
   z-index: 40;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
   pointer-events: none;
-  filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.45));
+  transform: translateX(-50%);
+  filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.4));
+  transition: opacity 0.15s ease;
+}
+
+.cds-scrub-preview[hidden] {
+  display: none !important;
+}
+
+/* Hide Plyr seek tooltip — we use custom preview */
+.cds-plyr-shell .plyr__progress .plyr__tooltip {
+  display: none !important;
+}
+
+/* Hide center play while scrubbing timeline */
+.cds-plyr-shell.cds-scrub-hover .plyr__control--overlaid {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 
 .cds-scrub-preview__frame {
@@ -83,9 +258,9 @@
   width: 160px;
   aspect-ratio: 16 / 9;
   overflow: hidden;
-  border-radius: 8px;
-  border: 2px solid rgba(255, 255, 255, 0.92);
-  background: #0f172a;
+  border-radius: 6px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  background: #111;
 }
 
 .cds-scrub-preview__img {
@@ -102,14 +277,7 @@
 .cds-scrub-preview__loading {
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    110deg,
-    rgba(30, 41, 59, 0.85) 8%,
-    rgba(51, 65, 85, 0.95) 18%,
-    rgba(30, 41, 59, 0.85) 33%
-  );
-  background-size: 200% 100%;
-  animation: cds-scrub-shimmer 1.1s linear infinite;
+  background: #1e293b;
 }
 
 .cds-scrub-preview__loading[hidden] {
@@ -118,17 +286,10 @@
 
 .cds-scrub-preview__time {
   padding: 2px 8px;
-  border-radius: 6px;
-  background: rgba(15, 23, 42, 0.94);
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.95);
   color: #f8fafc;
   font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
-}
-
-@keyframes cds-scrub-shimmer {
-  to {
-    background-position-x: -200%;
-  }
 }

@@ -12,7 +12,7 @@ const formatScrubTime = (seconds = 0) => {
 
 /**
  * YouTube-style hover previews on the Plyr timeline.
- * Works for same-origin / local files (PC library or 100% stream cache).
+ * Best for same-origin / cached / local files — not large HTTP range streams.
  */
 export const attachTimelineScrubPreview = ({ rootEl, src, getDuration }) => {
   if (!rootEl || !src) {
@@ -20,20 +20,24 @@ export const attachTimelineScrubPreview = ({ rootEl, src, getDuration }) => {
   }
 
   const progressRoot = rootEl.querySelector(".plyr__progress");
-  if (!progressRoot) {
+  const progressContainer =
+    rootEl.querySelector(".plyr__progress__container") || progressRoot?.parentElement;
+  if (!progressRoot || !progressContainer) {
     return { destroy: () => {} };
   }
+
+  progressContainer.classList.add("cds-scrub-progress-host");
 
   const previewWrap = document.createElement("div");
   previewWrap.className = "cds-scrub-preview";
   previewWrap.hidden = true;
   previewWrap.innerHTML =
     '<div class="cds-scrub-preview__frame">' +
-    '<img class="cds-scrub-preview__img" alt="" />' +
+    '<img class="cds-scrub-preview__img" alt="" decoding="async" />' +
     '<div class="cds-scrub-preview__loading" aria-hidden="true"></div>' +
     "</div>" +
     '<span class="cds-scrub-preview__time"></span>';
-  rootEl.appendChild(previewWrap);
+  progressContainer.appendChild(previewWrap);
 
   const imgEl = previewWrap.querySelector(".cds-scrub-preview__img");
   const timeEl = previewWrap.querySelector(".cds-scrub-preview__time");
@@ -42,7 +46,7 @@ export const attachTimelineScrubPreview = ({ rootEl, src, getDuration }) => {
   const previewVideo = document.createElement("video");
   previewVideo.muted = true;
   previewVideo.playsInline = true;
-  previewVideo.preload = "auto";
+  previewVideo.preload = "metadata";
   previewVideo.setAttribute("aria-hidden", "true");
   previewVideo.tabIndex = -1;
   previewVideo.style.cssText =
@@ -53,25 +57,46 @@ export const attachTimelineScrubPreview = ({ rootEl, src, getDuration }) => {
 
   const frameCache = new Map();
   const BUCKET_SEC = 2;
-  const MAX_CACHE = 100;
+  const MAX_CACHE = 80;
   let hoverActive = false;
-  let lastBucket = -1;
+  let activeTime = -1;
+  let activeBucket = -1;
   let seekTimer = null;
   let seekGeneration = 0;
+  let previewReady = false;
 
   const bucketTime = (time) => Math.max(0, Math.floor(time / BUCKET_SEC) * BUCKET_SEC);
 
-  const positionPreview = (clientX) => {
-    const hostRect = rootEl.getBoundingClientRect();
-    const previewWidth = previewWrap.offsetWidth || 168;
-    let left = clientX - hostRect.left - previewWidth / 2;
-    left = Math.max(8, Math.min(left, hostRect.width - previewWidth - 8));
-    previewWrap.style.left = `${left}px`;
+  const setHoverState = (active) => {
+    hoverActive = active;
+    rootEl.classList.toggle("cds-scrub-hover", active);
+    if (!active) {
+      previewWrap.hidden = true;
+      imgEl.removeAttribute("src");
+      imgEl.hidden = true;
+      loadingEl.hidden = true;
+      activeTime = -1;
+      activeBucket = -1;
+      clearTimeout(seekTimer);
+      seekGeneration += 1;
+    }
   };
 
-  const showCachedFrame = (bucket, time) => {
+  const positionPreview = (clientX) => {
+    const rect = progressRoot.getBoundingClientRect();
+    if (!rect.width) return;
+
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    previewWrap.style.left = `${ratio * 100}%`;
+  };
+
+  const canShowFrame = (time, bucket, generation) =>
+    hoverActive && generation === seekGeneration && bucket === activeBucket && Math.abs(time - activeTime) < BUCKET_SEC + 0.5;
+
+  const showCachedFrame = (time, bucket, generation) => {
     const cached = frameCache.get(bucket);
-    if (!cached) return false;
+    if (!cached || !canShowFrame(time, bucket, generation)) return false;
+
     imgEl.src = cached;
     imgEl.hidden = false;
     loadingEl.hidden = true;
@@ -81,7 +106,7 @@ export const attachTimelineScrubPreview = ({ rootEl, src, getDuration }) => {
   };
 
   const captureAt = async (time, bucket, generation) => {
-    if (generation !== seekGeneration) return;
+    if (!canShowFrame(time, bucket, generation)) return;
 
     try {
       if (previewVideo.readyState < 1) {
@@ -101,9 +126,9 @@ export const attachTimelineScrubPreview = ({ rootEl, src, getDuration }) => {
         });
       }
 
-      if (generation !== seekGeneration) return;
+      if (!canShowFrame(time, bucket, generation)) return;
 
-      if (Math.abs(previewVideo.currentTime - time) > 0.15) {
+      if (Math.abs(previewVideo.currentTime - time) > 0.2) {
         await new Promise((resolve, reject) => {
           const onSeeked = () => {
             previewVideo.removeEventListener("seeked", onSeeked);
@@ -121,7 +146,7 @@ export const attachTimelineScrubPreview = ({ rootEl, src, getDuration }) => {
         });
       }
 
-      if (generation !== seekGeneration || !hoverActive) return;
+      if (!canShowFrame(time, bucket, generation)) return;
 
       const dataUrl = captureVideoFrameDataUrl(previewVideo, { maxWidth: 320, quality: 0.72 });
       frameCache.set(bucket, dataUrl);
@@ -130,47 +155,49 @@ export const attachTimelineScrubPreview = ({ rootEl, src, getDuration }) => {
         frameCache.delete(firstKey);
       }
 
-      if (hoverActive && bucket === lastBucket) {
-        imgEl.src = dataUrl;
-        imgEl.hidden = false;
-        loadingEl.hidden = true;
-      }
+      if (!canShowFrame(time, bucket, generation)) return;
+
+      imgEl.src = dataUrl;
+      imgEl.hidden = false;
+      loadingEl.hidden = true;
+      timeEl.textContent = formatScrubTime(time);
+      previewWrap.hidden = false;
+      previewReady = true;
     } catch {
-      if (hoverActive && bucket === lastBucket) {
+      if (canShowFrame(time, bucket, generation)) {
         loadingEl.hidden = true;
         imgEl.hidden = true;
+        timeEl.textContent = formatScrubTime(time);
+        previewWrap.hidden = false;
       }
     }
   };
 
   const scheduleCapture = (time) => {
     const bucket = bucketTime(time);
+    activeTime = time;
+    activeBucket = bucket;
     timeEl.textContent = formatScrubTime(time);
     previewWrap.hidden = false;
 
-    if (bucket === lastBucket && frameCache.has(bucket)) {
-      showCachedFrame(bucket, time);
-      return;
-    }
-
-    lastBucket = bucket;
-    if (showCachedFrame(bucket, time)) return;
-
-    imgEl.hidden = true;
-    loadingEl.hidden = false;
     seekGeneration += 1;
     const generation = seekGeneration;
+
+    if (showCachedFrame(time, bucket, generation)) return;
+
+    imgEl.hidden = true;
+    loadingEl.hidden = previewReady;
     clearTimeout(seekTimer);
     seekTimer = setTimeout(() => {
       void captureAt(time, bucket, generation);
-    }, 60);
+    }, previewReady ? 90 : 160);
   };
 
   const onMove = (event) => {
     const duration = getDuration();
     if (!duration || duration <= 0) return;
 
-    hoverActive = true;
+    setHoverState(true);
     const rect = progressRoot.getBoundingClientRect();
     if (!rect.width) return;
 
@@ -182,19 +209,28 @@ export const attachTimelineScrubPreview = ({ rootEl, src, getDuration }) => {
   };
 
   const onLeave = () => {
-    hoverActive = false;
-    previewWrap.hidden = true;
-    clearTimeout(seekTimer);
-    seekGeneration += 1;
+    setHoverState(false);
   };
 
-  progressRoot.addEventListener("mousemove", onMove);
-  progressRoot.addEventListener("mouseleave", onLeave);
+  const onWindowBlur = () => {
+    setHoverState(false);
+  };
+
+  progressRoot.addEventListener("pointerenter", onMove);
+  progressRoot.addEventListener("pointermove", onMove);
+  progressRoot.addEventListener("pointerleave", onLeave);
+  progressRoot.addEventListener("pointercancel", onLeave);
+  window.addEventListener("blur", onWindowBlur);
 
   const destroy = () => {
-    progressRoot.removeEventListener("mousemove", onMove);
-    progressRoot.removeEventListener("mouseleave", onLeave);
+    progressRoot.removeEventListener("pointerenter", onMove);
+    progressRoot.removeEventListener("pointermove", onMove);
+    progressRoot.removeEventListener("pointerleave", onLeave);
+    progressRoot.removeEventListener("pointercancel", onLeave);
+    window.removeEventListener("blur", onWindowBlur);
     clearTimeout(seekTimer);
+    progressContainer.classList.remove("cds-scrub-progress-host");
+    rootEl.classList.remove("cds-scrub-hover");
     previewWrap.remove();
     previewVideo.pause();
     previewVideo.removeAttribute("src");

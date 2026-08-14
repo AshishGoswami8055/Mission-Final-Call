@@ -19,7 +19,7 @@ import { Link } from "react-router-dom";
 import api from "../api/client";
 import LessonVideoDownload from "./LessonVideoDownload";
 import { getContentDateLabels } from "../utils/contentDates";
-import { canLocalLibraryDownload, isLocalFrontend, isTelegramLinkVideo } from "../utils/media";
+import { canLocalLibraryDownload, formatTotalStudyDuration, isLocalFrontend, isTelegramLinkVideo, sumVideoDurationSeconds } from "../utils/media";
 
 import { sortSubjectContents } from "../utils/contentSort";
 
@@ -565,6 +565,10 @@ const SubjectLessonAccordion = ({
   );
   const completedVideos = useMemo(() => videos.filter((item) => item.completed).length, [videos]);
   const completedPdfs = useMemo(() => pdfs.filter((item) => item.completed).length, [pdfs]);
+  const totalVideoDurationLabel = useMemo(
+    () => formatTotalStudyDuration(sumVideoDurationSeconds(videos)),
+    [videos]
+  );
 
   useEffect(() => {
     setActiveTab(videos.length ? "videos" : "pdfs");
@@ -602,7 +606,7 @@ const SubjectLessonAccordion = ({
   const tabs = [
     {
       id: "videos",
-      label: "Videos",
+      label: totalVideoDurationLabel ? `Videos · ${totalVideoDurationLabel}` : "Videos",
       count: videos.length,
       done: completedVideos,
       icon: FiPlayCircle,

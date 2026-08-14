@@ -4,22 +4,21 @@ import {
   FiCheck,
   FiCheckCircle,
   FiCircle,
+  FiFilm,
   FiFolder,
   FiLoader,
   FiPlay,
-  FiRefreshCw,
   FiStar,
 } from "react-icons/fi";
 import { useNavigate } from "react-router-dom";
 import { getSubjectVideosForPlayAll } from "../utils/contentSort";
-import { isLocalFrontend, isTelegramLinkVideo } from "../utils/media";
+import { formatFileSize, isLocalFrontend, isTelegramLinkVideo } from "../utils/media";
 import {
   fetchFullCourseStatus,
-  linkFullCourseFromPath,
+  pickFullCourseVideo,
   replaceFullCourseVideo,
   revealFullCourseVideo,
 } from "../utils/subjectFullCourse";
-import { formatFileSize } from "../utils/media";
 
 const SubjectPlayAllPremium = ({
   subject,
@@ -36,8 +35,7 @@ const SubjectPlayAllPremium = ({
   const [revealing, setRevealing] = useState(false);
   const [replacing, setReplacing] = useState(false);
   const [replacePercent, setReplacePercent] = useState(0);
-  const [linkPath, setLinkPath] = useState("");
-  const [linkingPath, setLinkingPath] = useState(false);
+  const [pickingVideo, setPickingVideo] = useState(false);
 
   const playableVideos = useMemo(() => {
     const sorted = getSubjectVideosForPlayAll(contents, chapters);
@@ -78,7 +76,7 @@ const SubjectPlayAllPremium = ({
 
   const handlePlayAll = () => {
     if (!canPlay) {
-      toast.error("Link your full course MP4 first — use Link from path for large files.");
+      toast.error("Choose your full course MP4 first.");
       return;
     }
     navigate(`/subject/${subject._id}/full-video`, {
@@ -125,7 +123,7 @@ const SubjectPlayAllPremium = ({
       const message = error.response?.data?.message || error.message || "Could not link full course video";
       toast.error(message);
       if (/too large|limit/i.test(message)) {
-        toast("Use Link from path below for files over 8 GB — no upload needed.", { icon: "💡" });
+        toast("Use Choose video from PC for files over 8 GB — no upload needed.", { icon: "💡" });
       }
     } finally {
       setReplacing(false);
@@ -133,19 +131,19 @@ const SubjectPlayAllPremium = ({
     }
   };
 
-  const handleLinkFromPath = async () => {
-    const trimmed = linkPath.trim();
-    if (!trimmed || disabled || linkingPath) return;
-    setLinkingPath(true);
+  const handlePickVideo = async () => {
+    if (disabled || pickingVideo) return;
+    setPickingVideo(true);
     try {
-      const { data } = await linkFullCourseFromPath(subject._id, trimmed);
+      toast("Select your video in the file picker…", { icon: "📂", duration: 4000 });
+      const { data } = await pickFullCourseVideo(subject._id);
+      if (data.cancelled) return;
       setFullCourseStatus(data);
-      setLinkPath("");
-      toast.success(data.message || "Linked your file — no upload needed.");
+      toast.success(data.message || "Full course video linked from your PC.");
     } catch (error) {
-      toast.error(error.response?.data?.message || error.message || "Could not link file from path");
+      toast.error(error.response?.data?.message || error.message || "Could not link video from PC");
     } finally {
-      setLinkingPath(false);
+      setPickingVideo(false);
     }
   };
 
@@ -156,8 +154,24 @@ const SubjectPlayAllPremium = ({
 
   if (!playableVideos.length) return null;
 
+  const title = fullCourseReady ? "Ready to play" : "Full course video";
+  const subtitle = fullCourseReady
+    ? [
+        fullCourseStatus?.originalFileName || "Linked",
+        fullCourseStatus?.sizeBytes ? formatFileSize(fullCourseStatus.sizeBytes) : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "Choose your edited MP4 — works with 20 GB+ files, no upload.";
+
   return (
-    <div className="rounded-2xl border border-amber-200/80 bg-gradient-to-br from-amber-50 via-white to-violet-50 p-3 shadow-sm dark:border-amber-900/40 dark:from-amber-950/30 dark:via-[#1a1a1a] dark:to-violet-950/20 sm:p-4">
+    <section
+      className={`rounded-2xl border shadow-sm ${
+        fullCourseReady
+          ? "border-violet-200/80 bg-gradient-to-br from-violet-50/90 via-white to-teal-50/60 dark:border-violet-900/40 dark:from-violet-950/30 dark:via-[#181818] dark:to-teal-950/20"
+          : "border-slate-200/90 bg-gradient-to-br from-slate-50/90 via-white to-indigo-50/30 dark:border-white/10 dark:from-white/[0.04] dark:via-[#181818] dark:to-indigo-950/15"
+      }`}
+    >
       <input
         ref={fileInputRef}
         type="file"
@@ -165,129 +179,134 @@ const SubjectPlayAllPremium = ({
         className="hidden"
         onChange={handleReplaceFile}
       />
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="flex flex-wrap items-center gap-2 text-xs font-bold uppercase tracking-wide text-amber-800 dark:text-amber-300">
-            <FiStar size={14} className="text-amber-500" />
-            Premium · Full course video
-          </p>
-          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-            For large files (8 GB+), paste the full Windows path below —{" "}
-            <strong>Link from path</strong> registers instantly with no upload. Smaller files can use{" "}
-            <strong>Replace full course</strong>.
-          </p>
 
-          {isLocal ? (
-            <div className="mt-3 flex w-full max-w-2xl flex-col gap-2 sm:flex-row">
-              <input
-                type="text"
-                className="input min-w-0 flex-1 py-2 text-sm"
-                placeholder="C:\Videos\Indian geography full.mp4"
-                value={linkPath}
-                disabled={disabled || linkingPath}
-                onChange={(event) => setLinkPath(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void handleLinkFromPath();
-                }}
-              />
-              <button
-                type="button"
-                className="btn-secondary shrink-0 text-sm"
-                disabled={!linkPath.trim() || disabled || linkingPath}
-                onClick={() => void handleLinkFromPath()}
-              >
-                {linkingPath ? <FiLoader size={14} className="animate-spin" /> : null}
-                Link from path
-              </button>
-            </div>
-          ) : null}
-
-          <p
-            className={`mt-2 inline-flex flex-wrap items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold ${
+      <div className="flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:p-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <div
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl shadow-md ${
               fullCourseReady
-                ? "bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-200"
-                : "bg-slate-100 text-slate-700 dark:bg-white/10 dark:text-slate-300"
+                ? "bg-gradient-to-br from-violet-600 to-teal-600 text-white"
+                : "bg-gradient-to-br from-slate-700 to-slate-900 text-white dark:from-slate-600 dark:to-slate-800"
             }`}
           >
-            {fullCourseReady ? <FiCheck size={12} /> : null}
-            {fullCourseReady
-              ? `${fullCourseStatus?.originalFileName || "Full course linked"}${fullCourseStatus?.sizeBytes ? ` · ${formatFileSize(fullCourseStatus.sizeBytes)}` : ""}`
-              : "No full course video linked yet"}
-          </p>
+            {fullCourseReady ? <FiFilm size={20} /> : <FiPlay size={18} className="ml-0.5" />}
+          </div>
+          <div className="min-w-0">
+            <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-violet-700 dark:text-violet-300">
+              <FiStar size={12} className="text-amber-500" />
+              Full course
+            </p>
+            <p className="flex items-center gap-1.5 text-base font-semibold text-slate-900 dark:text-white">
+              {title}
+              {fullCourseReady ? (
+                <FiCheck size={14} className="text-emerald-600 dark:text-emerald-400" />
+              ) : null}
+            </p>
+            <p className="mt-0.5 line-clamp-2 text-sm text-slate-600 dark:text-slate-400" title={subtitle}>
+              {subtitle}
+            </p>
+          </div>
+        </div>
 
+        <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
           {onToggleSubjectCompleted && subjectLessons.length > 0 ? (
             <button
               type="button"
-              className={`mt-3 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+              className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition ${
                 subjectComplete
-                  ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-200"
-                  : "border-slate-200 bg-white text-slate-700 hover:border-emerald-300 hover:bg-emerald-50/60 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-200 dark:hover:border-emerald-800/60"
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-200"
+                  : "border-slate-200 bg-white text-slate-700 hover:border-emerald-300 hover:bg-emerald-50/60 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-200"
               }`}
               disabled={disabled || togglingSubjectComplete}
               onClick={handleToggleSubjectComplete}
               title={
                 subjectComplete
-                  ? "Clear completion for all lessons in this subject"
-                  : "Mark every lesson in this subject as complete (100%)"
+                  ? "Clear completion for all lessons"
+                  : "Mark every lesson complete"
               }
             >
               {togglingSubjectComplete ? (
-                <FiLoader size={16} className="animate-spin" />
+                <FiLoader size={15} className="animate-spin" />
               ) : subjectComplete ? (
-                <FiCheckCircle size={16} className="text-emerald-600 dark:text-emerald-400" />
+                <FiCheckCircle size={15} />
               ) : (
-                <FiCircle size={16} />
+                <FiCircle size={15} />
               )}
-              {subjectComplete
-                ? `Subject complete (${completedLessons}/${subjectLessons.length})`
-                : `Mark entire subject complete (${completedLessons}/${subjectLessons.length})`}
+              <span className="hidden sm:inline">
+                {subjectComplete ? "Subject complete" : "Mark all complete"}
+              </span>
+              <span className="tabular-nums">({completedLessons}/{subjectLessons.length})</span>
             </button>
           ) : null}
 
-          {replacing && replacePercent > 0 ? (
-            <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
-              Linking full course video {replacePercent}%…
-            </p>
-          ) : null}
-        </div>
-        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
           {isLocal ? (
             <>
               <button
                 type="button"
-                className="btn-secondary w-full text-sm sm:w-auto"
-                disabled={!canUse || revealing}
-                onClick={() => void handleRevealMerged()}
-                title="Show the full course MP4 in File Explorer"
+                className="btn-secondary px-3 py-2 text-sm"
+                disabled={!canUse || disabled || pickingVideo || replacing}
+                onClick={() => void handlePickVideo()}
+                title="Open file picker — links instantly, no upload"
               >
-                {revealing ? <FiLoader size={14} className="animate-spin" /> : <FiFolder size={14} />}
-                Locate full course
+                {pickingVideo ? <FiLoader size={15} className="animate-spin" /> : <FiFolder size={15} />}
+                Choose video
               </button>
+              {!fullCourseReady ? (
+                <button
+                  type="button"
+                  className="btn-secondary px-3 py-2 text-sm"
+                  disabled={disabled || replacing || pickingVideo}
+                  onClick={handleReplaceClick}
+                  title="Upload under 8 GB"
+                >
+                  Upload
+                </button>
+              ) : null}
               <button
                 type="button"
-                className="btn-secondary w-full text-sm sm:w-auto"
-                disabled={!canUse || replacing}
-                onClick={handleReplaceClick}
-                title="Pick your manually edited full course MP4 from your PC"
+                className="btn-secondary px-3 py-2 text-sm"
+                disabled={!canUse || revealing}
+                onClick={() => void handleRevealMerged()}
+                title="Show in File Explorer"
               >
-                {replacing ? <FiLoader size={14} className="animate-spin" /> : <FiRefreshCw size={14} />}
-                Replace full course
+                {revealing ? <FiLoader size={15} className="animate-spin" /> : <FiFolder size={15} />}
+                Locate
               </button>
             </>
           ) : null}
+
           <button
             type="button"
-            className="btn-primary w-full bg-gradient-to-r from-violet-600 to-teal-600 text-sm sm:w-auto"
+            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold shadow-sm transition ${
+              canPlay
+                ? "bg-gradient-to-r from-violet-600 via-indigo-600 to-teal-600 text-white hover:brightness-105 active:scale-[0.98]"
+                : "cursor-not-allowed bg-slate-200 text-slate-500 dark:bg-white/10 dark:text-slate-500"
+            }`}
             disabled={!canPlay}
             onClick={handlePlayAll}
-            title={fullCourseReady ? "Play your linked full course video" : "Link a full course MP4 first"}
+            title={fullCourseReady ? "Play full course" : "Link a video first"}
           >
-            <FiPlay size={14} />
+            <FiPlay size={15} className={canPlay ? "fill-current" : ""} />
             Play full course
           </button>
         </div>
       </div>
-    </div>
+
+      {replacing && replacePercent > 0 ? (
+        <div className="border-t border-slate-200/70 px-3.5 pb-3 pt-2 dark:border-white/[0.06] sm:px-4">
+          <div className="flex items-center justify-between text-xs font-medium text-violet-700 dark:text-violet-300">
+            <span>Uploading…</span>
+            <span>{replacePercent}%</span>
+          </div>
+          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-violet-100 dark:bg-violet-950/40">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-violet-600 to-teal-500 transition-all duration-300"
+              style={{ width: `${replacePercent}%` }}
+            />
+          </div>
+        </div>
+      ) : null}
+    </section>
   );
 };
 

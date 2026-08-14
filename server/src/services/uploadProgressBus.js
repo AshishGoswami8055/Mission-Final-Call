@@ -15,6 +15,7 @@
 
 const stateMap = new Map();
 const TTL_MS = 10 * 60 * 1000;
+const ACTIVE_TTL_MS = 60 * 60 * 1000;
 
 const now = () => Date.now();
 
@@ -100,8 +101,11 @@ export const throwIfCancelled = (uploadId) => {
 };
 
 const sweep = () => {
-  const cutoff = now() - TTL_MS;
+  const terminalCutoff = now() - TTL_MS;
+  const activeCutoff = now() - ACTIVE_TTL_MS;
   for (const [id, state] of stateMap) {
+    const isTerminal = state.phase === "done" || state.phase === "error";
+    const cutoff = isTerminal ? terminalCutoff : activeCutoff;
     if ((state.updatedAt || 0) < cutoff) {
       stateMap.delete(id);
     }

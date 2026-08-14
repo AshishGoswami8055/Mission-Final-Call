@@ -264,8 +264,11 @@ export const getContentById = async (req, res) => {
 
 export const getUploadProgress = (req, res) => {
   const state = getProgress(req.params.uploadId);
-  if (!state) return res.json({ phase: "idle" });
-  res.json(state);
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  if (!state) return res.status(200).json({ phase: "idle" });
+  return res.status(200).json(state);
 };
 
 export const createContent = async (req, res) => {

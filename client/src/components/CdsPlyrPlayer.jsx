@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import Plyr from "plyr";
 import "plyr/dist/plyr.css";
 import "../styles/plyr-overrides.css";
-import { applyVideoSource, reloadVideoPreservingTime } from "../utils/videoScreenshot";
+import { applyVideoCrossOrigin, applyVideoSource, reloadVideoPreservingTime } from "../utils/videoScreenshot";
 import { attachTimelineScrubPreview } from "../utils/timelineScrubPreview";
 
 const STALL_RETRY_MS = 18000;
@@ -11,14 +11,14 @@ const MAX_STALL_RETRIES = 2;
 const CONTROL_PRESETS = {
   full: [
     "play-large",
-    "rewind",
     "play",
+    "rewind",
     "fast-forward",
-    "progress",
-    "current-time",
-    "duration",
     "mute",
     "volume",
+    "current-time",
+    "duration",
+    "progress",
     "settings",
     "pip",
     "fullscreen",
@@ -273,13 +273,14 @@ const CdsPlyrPlayer = ({
       }
 
       player = new Plyr(video, {
-        seekTime: 5,
+        seekTime: 10,
         keyboard: { focused: true, global: true },
         clickToPlay: true,
+        hideControls: true,
         controls: CONTROL_PRESETS[controlsPreset] || CONTROL_PRESETS.full,
         settings: ["speed"],
         speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] },
-        tooltips: { controls: true, seek: true },
+        tooltips: { controls: true, seek: false },
         ratio: "16:9",
         storage: { enabled: false },
       });
@@ -341,7 +342,7 @@ const CdsPlyrPlayer = ({
   return (
     <div
       ref={hostRef}
-      className="overflow-hidden rounded-xl relative aspect-video w-full bg-black"
+      className="cds-plyr-shell overflow-hidden rounded-xl relative aspect-video w-full bg-black"
       data-cds-plyr-host={contentId || "pending"}
     />
   );

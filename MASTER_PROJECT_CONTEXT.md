@@ -1,6 +1,8 @@
 # MASTER PROJECT CONTEXT — CDS Journey OTA
 
 > **Read this file first** before making any code changes, answering architecture questions, or onboarding to this repository. It is the permanent memory of the project at `d:\1. Projects\CDS JOURNEY OTA`.
+>
+> **Moving to another PC?** Jump to **[Backup & migration to another PC](#backup--migration-to-another-pc)** — copy source + `server/.env` + MongoDB dump + `LOCAL_MEDIA_ROOT` / `uploads/`.
 
 A shorter companion exists at `PROJECT_CONTEXT.md`; this document is the authoritative, expanded version.
 
@@ -21,13 +23,13 @@ The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, p
 | **Course organization** | CDS cycle → coaching batch (Programme) → Subject → Chapter → Content (video/PDF) |
 | **Content ingestion** | File upload, URL, YouTube download→Cloudinary (dev), Telegram import (forum/flat channels), Telegram video links (prod) |
 | **Telegram** | GramJS login, channel browse, batch import, auto-sync, stream proxy, optional cloudify to Cloudinary |
-| **Video playback** | **Plyr** player (`CdsPlyrPlayer`), HTML5 local, Cloudinary CDN, Telegram stream, YouTube embed, screenshot notes, resume position, stall watchdog + retry, Telegram live-connection banner, **timeline scrub previews** when fully cached or PC-library downloaded |
+| **Video playback** | **Plyr** player (`CdsPlyrPlayer`, sky-blue theme), HTML5 local, Cloudinary CDN, Telegram stream, YouTube embed, screenshot notes, resume position, stall watchdog + retry, Telegram live-connection banner, **timeline scrub previews** when fully cached or PC-library downloaded (disabled on full-course stream page) |
 | **PDF / PYQ** | Inline viewer, course PDFs on disk, PYQ on Cloudinary, **AI question extract** (`POST /papers/:id/extract`), optional OCR via `ocrmypdf` on upload |
 | **Progress** | Per-content completion, chapter stats, paper attempted tracking, **mark entire subject complete** (bulk toggle-all) |
-| **Dashboard** | Lazy course loading — subject stats from `/chapters/stats`; lesson rows fetched only when a subject is opened; library view paginated (`limit=20`); **↑↓ lesson reorder**; mark-as-done on lesson rows; **mark entire subject complete** (bulk progress) |
+| **Dashboard** | Lazy course loading — subject stats from `/chapters/stats`; lesson rows fetched only when a subject is opened; library view paginated (`limit=20`); **↑↓ lesson reorder**; mark-as-done on lesson rows; **mark entire subject complete** (bulk progress); **subject total watch time** (sum of video `duration` in subject header + Videos tab) |
 | **Full course video** | Per-subject **linked MP4** (manual edit, no auto-stitch); **Link from path** for 20GB+ files; **Play full course** via byte-range stream API; **Locate in Explorer**; no quality loss (direct file stream) |
 | **CDS Vocabulary Arena** | Active-practice dashboard; **CDS PYQ (AI)** paper-style MCQs (default practice mode); mixed/MCQ/reverse/typing/context/weak/root/exam drills; deterministic SRS; session analytics; root families; CSV/Excel/OCR/text preview import; idioms + one-word substitution share the same corpus |
-| **Telegram Import UX** | Curated topic media; PDF **View** (new tab) + **Save** (full PC download); filenames from Telegram document name; filename search; lesson-list scroll layout |
+| **Telegram Import UX** | Dedicated **`/import/telegram`** page; channel search; curated topic media; lesson plans with clean titles from bot captions; **video thumbnails** in lesson list; thumbnail click → **Play video** or **Preview thumbnail** (lightbox); PDF **View** (new tab) + **Save** (full PC download); import progress with **Cancel**; batch GramJS metadata fetch; PDF filenames from Telegram document name; filename search; full-height lesson workspace |
 | **PC Media Storage** | Configure `LOCAL_MEDIA_ROOT`; stream-cache inventory (**videos only**); **Locate / Show in folder** via File Explorer (localhost PowerShell reveal) |
 | **Study tracker** | Daily minutes, per-subject targets, watch history, exam countdown, celebration overlays |
 | **Daily Mission** (`/mission`) | Auto-generated daily plan: 1 English + 1 Maths + 1 GS video + reading; Sunday mock; AI briefing; discipline score; streaks |
@@ -79,7 +81,7 @@ The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, p
 | Spreadsheet | xlsx (vocab import) |
 | Security | helmet, cors, express-validator |
 | Logging | morgan |
-| Testing | Node.js built-in test runner — `npm test` in `server/` (auth, Cloudinary cleanup, mission scoring, Telegram helpers, **contentSort**, **telegramImportFilters**, **vocabularyQuestions**, **vocabularyCdsPyq**); GitHub Actions CI |
+| Testing | Node.js built-in test runner — `npm test` in `server/` (auth, Cloudinary cleanup, mission scoring, Telegram helpers + **telegramMedia**, **telegramImportFilters**, **contentSort**, **vocabularyQuestions**, **vocabularyCdsPyq**); GitHub Actions CI |
 
 ## Database
 
@@ -126,8 +128,8 @@ d:\1. Projects\CDS JOURNEY OTA\
 │       ├── components/           # Reusable UI (Layout, CdsPlyrPlayer, SubjectPlayAllPremium, SubjectLessonAccordion, …)
 │       ├── pages/                # Route-level pages (incl. SubjectFullVideoPage, CloudinaryStoragePage, LocalMediaStoragePage)
 │       ├── config/navItems.js    # Sidebar nav (incl. PC Media Storage — localOnly)
-│       ├── styles/               # plyr-overrides.css (teal Plyr theme + screenshot button)
-│       └── utils/                # media.js, contentSort.js, subjectFullCourse.js, videoScreenshot.js, timelineScrubPreview.js, …
+│       ├── styles/               # plyr-overrides.css (sky-blue Plyr theme), telegram-import.css
+│       └── utils/                # media.js, contentSort.js, subjectFullCourse.js, telegramLessonPlan.js, videoScreenshot.js, timelineScrubPreview.js, …
 │
 ├── server/                       # Express backend (MVC)
 │   ├── package.json
@@ -146,7 +148,7 @@ d:\1. Projects\CDS JOURNEY OTA\
 │       ├── models/               # Mongoose schemas
 │       ├── routes/               # Express routers
 │       ├── services/             # Business logic (Telegram, Cloudinary, mission, cleanup, etc.)
-│       └── utils/                # Helpers (content, contentSort, telegramImportFilters, chapters, cloudinaryAsset, slugify, buckets)
+│       └── utils/                # Helpers (content, contentSort, telegramImportFilters, telegramMediaMeta, telegramFlatChannel, pickVideoFileDialog, chapters, cloudinaryAsset, slugify, buckets)
 │
 └── uploads/                      # Default local media root (override with LOCAL_MEDIA_ROOT env)
     ├── _tmp_videos/              # Multer scratch before YouTube→Cloudinary or delete
@@ -180,8 +182,13 @@ d:\1. Projects\CDS JOURNEY OTA\
 | `server/src/utils/telegramImportFilters.js` | Duplicate title detection, user-skipped Telegram message IDs, update-count filtering |
 | `server/src/config/mediaStorage.js` | `LOCAL_MEDIA_ROOT`, paths for `_local_library`, `_merged_subjects`, `_stream_cache`, `_playback_cache` |
 | `client/src/utils/videoScreenshot.js` | Frame capture for Plyr; `applyVideoCrossOrigin`, `applyVideoSource`, `resolvePlyrVideoElement` |
-| `client/src/components/CdsPlyrPlayer.jsx` | Plyr wrapper — imperative `<video>` (avoids React StrictMode DOM conflicts); stall watchdog |
-| `client/src/utils/media.js` | **`resolveContentSrc()`**, `preferSameOriginMediaUrl()`, `resolveVideoPlaybackUrl()`, **`downloadTelegramMediaToPc()`** (full attachment download + PDF integrity checks) — canonical playback/download URLs |
+| `client/src/components/CdsPlyrPlayer.jsx` | Plyr wrapper — sky-blue theme, imperative `<video>` (avoids React StrictMode DOM conflicts); stall watchdog |
+| `client/src/utils/media.js` | **`resolveContentSrc()`**, `buildTelegramPreviewStreamUrl()`, **`buildTelegramThumbnailUrl()`**, **`formatTotalStudyDuration()`**, **`sumVideoDurationSeconds()`**, **`downloadTelegramMediaToPc()`** — canonical playback/download/thumbnail URLs |
+| `client/src/utils/telegramLessonPlan.js` | Telegram import lesson titles, selection plans, caption parsing, `buildSelectedItemsFromPlans()` |
+| `client/src/styles/telegram-import.css` | Telegram import page — subject chips, lesson cards, thumbnails, thumb menu/lightbox |
+| `client/src/components/FullCoursePlaybackPanel.jsx` | Full-course link/status UI panel (subject banner flow) |
+| `server/src/utils/telegramMediaMeta.js` | Classify Telegram documents as video/PDF (mime, extension, video attribute; GramJS has no `MessageMediaVideo` type) |
+| `server/src/utils/pickVideoFileDialog.js` | Localhost Windows file picker for linking full-course MP4 by path |
 | `client/src/utils/vocabularyArena.js` | Practice mode catalog — **`cds_pyq` first**; timed duration helpers |
 | `client/src/components/vocabulary/CdsPyqBody.jsx` | Paper-style stems: underlined sentences, match lists, confusable word sets |
 | `server/src/services/vocabularyCdsPyqService.js` | OpenAI CDS English PYQ MCQ generator + deterministic fallback (7 formats) |
@@ -196,9 +203,9 @@ d:\1. Projects\CDS JOURNEY OTA\
 | `server/src/utils/contentHelpers.js` | MIME/URL detection, Telegram link helper, filename parser |
 | `server/src/utils/subjectBuckets.js` | Mission slot classification (english/maths/gs) |
 | `server/src/config/cdsCourses.js` | Cycle id ↔ disk folder name |
-| `server/src/services/uploadProgressBus.js` | In-memory upload job state (UUID `uploadId`); also Telegram update progress |
+| `server/src/services/uploadProgressBus.js` | In-memory upload job state (UUID `uploadId`); Telegram import/update progress; **active jobs TTL 60 min**, terminal 10 min |
 | `server/src/services/contentCleanupService.js` | Unified delete: Cloudinary (incl. thumbnails + URL fallback) + local files |
-| `server/src/services/telegramService.js` | GramJS client, **`checkTelegramConnectionLive()`**, stream, **`fetchNewChannelMediaSince()`** |
+| `server/src/services/telegramService.js` | GramJS client, **`fetchTelegramThumbnail()`**, **`resolveTelegramImportMessageMetas()`**, **`checkTelegramConnectionLive()`**, stream, **`fetchNewChannelMediaSince()`** |
 
 ---
 
@@ -315,6 +322,8 @@ TelegramImportPage: phone → OTP → optional 2FA
   → If TELEGRAM_VIDEO_CLOUDIFY=1: GramJS download → compress → Cloudinary
      Else: sourceType=telegram with telegramMessageId for stream playback
   → **Curated import:** client sends `selectedItems[]`; unselected topic media → `Subject.telegramSkippedMessageIds`
+  → **Metadata batch:** `resolveTelegramImportMessageMetas()` — one GramJS lock, batched message IDs (avoids N×500-message topic scans)
+  → **Progress:** client polls `GET /contents/upload-progress/:uploadId` (no-cache headers + cache-bust query); optional **Cancel** → `POST /telegram/progress/:uploadId/cancel`
   → **Update check:** `getProgrammeSubjectUpdates()` filters skipped IDs + duplicate titles (same lesson uploaded twice)
   → Background syncAllAutoChannels() every TELEGRAM_SYNC_INTERVAL_MS
 ```
@@ -632,7 +641,7 @@ Base URL: `/api` via Vite proxy in dev (→ `http://127.0.0.1:5001`), or `VITE_A
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
 | GET | `/:id/download-file` | Stream | Download content file (local library file) |
-| GET | `/upload-progress/:uploadId` | Yes | Poll upload/compress/download progress |
+| GET | `/upload-progress/:uploadId` | Yes | Poll upload/compress/download/import progress (**`Cache-Control: no-store`** — do not rely on browser 304) |
 | GET | `/playback-cache/storage` | Yes | Playback cache disk usage |
 | GET | `/local-library/storage` | Yes | PC library disk usage (local only) |
 | GET | `/` | Yes | List with filters: `subjectId`, `chapterId`, `type`, `search`, `sort`, `page`, `limit`, `programmeId` |
@@ -739,7 +748,9 @@ Base URL: `/api` via Vite proxy in dev (→ `http://127.0.0.1:5001`), or `VITE_A
 | GET | `/batch-updates` | Pending Telegram updates for dashboard |
 | POST | `/update-subject` | Apply Telegram updates to one subject |
 | POST | `/update-batch` | Apply batch updates |
+| POST | `/progress/:uploadId/cancel` | Request cancel of in-flight Telegram import/update (checks `cancelRequested` in progress bus) |
 | GET | `/stream/:messageId` | **Stream auth** — byte-range video/PDF stream; query `channelId`, `token`; **`download=1`** → full attachment (bypasses 8 MB stream-fetch cap) |
+| GET | `/thumbnail/:messageId` | **Stream auth** — JPEG thumbnail from Telegram document thumb; query `channelId`, `token` (import UI + lightbox) |
 
 ## Settings / local media (`/api/settings`)
 
@@ -812,7 +823,7 @@ Base URL: `/api` via Vite proxy in dev (→ `http://127.0.0.1:5001`), or `VITE_A
 ## Stream routes
 
 - `protectStream`: Bearer OR `?token=` query param
-- Used by: `/api/telegram/stream/:messageId`, `/api/contents/:id/download-file`, **`/api/subjects/:id/merged-video/stream`**
+- Used by: `/api/telegram/stream/:messageId`, **`/api/telegram/thumbnail/:messageId`**, `/api/contents/:id/download-file`, **`/api/subjects/:id/merged-video/stream`**
 - Frontend appends token in `media.js` → `buildTelegramPreviewStreamUrl()`; full course uses `subjectFullCourse.js` → `getFullCourseStreamUrl()`
 
 ## Frontend route guard
@@ -874,9 +885,10 @@ CDS cycle (cds-1-2026, cds-2-2026)
 ## Telegram subsystem
 
 ### Services
-- `telegramService.js` — GramJS client, login, channel list, media download, streaming, **`checkTelegramConnectionLive()`**, **`fetchNewChannelMediaSince()`** (fast update scan)
-- `telegramMappingService.js` — forum topic import, **`getProgrammeSubjectUpdates()`** (minId scan + skip/duplicate filter), **`importSelectedForumMessages()`** (curated import)
-- `telegramFlatChannelService.js` — flat channel import (caption metadata grouping)
+- `telegramService.js` — GramJS client, login, channel list, media download, streaming, **`fetchTelegramThumbnail()`** (in-memory 1h cache), **`resolveTelegramImportMessageMetas()`**, **`checkTelegramConnectionLive()`**, **`fetchNewChannelMediaSince()`** (fast update scan)
+- `telegramMappingService.js` — forum topic import, **`getProgrammeSubjectUpdates()`** (minId scan + skip/duplicate filter), **`importSelectedForumMessages()`** (curated import with batched metadata)
+- `telegramFlatChannelService.js` — flat channel import (caption metadata grouping via `telegramFlatChannel.js`; virtual topic IDs ≥ `900_000_000`)
+- `telegramMediaMeta.js` (utils) — **`classifyTelegramMediaType()`** — video detection for bot-uploaded documents (mime + extension + `DocumentAttributeVideo`)
 - `telegramImportFilters.js` (utils) — **`normalizeLessonTitleKey()`**, duplicate detection, **`telegramSkippedMessageIds`** persistence
 - `telegramImportMediaPrefs.js` (utils) — per-topic video/PDF import toggles
 - `telegramVideoImportService.js` — download → compress → Cloudinary
@@ -1025,7 +1037,10 @@ CDS cycle (cds-1-2026, cds-2-2026)
 ## Upload progress bus
 
 - In-memory `Map` keyed by client UUID `uploadId`
-- Phases: `received`, `downloading`, `compressing`, `uploading`, `telegram-download`, `done`, `error`
+- Phases: `pending`, `received`, `downloading`, `compressing`, `uploading`, `importing`, `syncing`, `telegram-download`, `done`, `error`
+- **TTL:** terminal states swept after **10 min**; active imports/updates kept up to **60 min**
+- **Polling:** `GET /contents/upload-progress/:uploadId` sends **`Cache-Control: no-store`**; client adds `?_t=` cache-bust — avoids stuck UI at 5% from browser **304 Not Modified**
+- **Cancel:** `POST /telegram/progress/:uploadId/cancel` sets `cancelRequested`; import loops call `throwIfCancelled()`
 - **Lost on server restart**
 
 ## Study context (client)
@@ -1138,6 +1153,125 @@ CDS cycle (cds-1-2026, cds-2-2026)
 
 ---
 
+# Backup & migration to another PC
+
+Use this checklist when copying the project folder to a new machine. **No feature changes required** — restore env, database, and media paths.
+
+## What to copy
+
+| Item | Required? | Notes |
+|------|-----------|--------|
+| **Entire repo** (source) | Yes | `client/`, `server/`, root docs — exclude `node_modules/` (reinstall) |
+| **`server/.env`** | **Yes** | Secrets: `MONGO_URI`, `JWT_SECRET`, `ADMIN_*`, Telegram, Cloudinary, OpenAI, Google OAuth — **not in git** |
+| **`client/.env`** | If used | Usually optional in dev; set `VITE_API_URL` / `VITE_SERVER_URL` for split deploy |
+| **MongoDB data** | **Yes** | Export/import database (see below) — course structure, progress, vocab, Telegram mappings live here |
+| **`uploads/`** or **`LOCAL_MEDIA_ROOT`** | If local media | PDFs on disk, `_local_library/`, `_merged_subjects/`, `_stream_cache/`, `_playback_cache/`, linked full-course MP4s |
+| **`server/eng.traineddata`** | If vocab OCR | Tesseract model (in repo) |
+| **`server/cloudflare/`** | If using tunnel | Named tunnel credentials (`config.yml` is gitignored) |
+
+## What NOT to copy (rebuild instead)
+
+- `client/node_modules/`, `server/node_modules/` → run `npm install` in each
+- `client/dist/` → run `npm run build` in `client/` if serving combined from Express
+- Browser `localStorage` (JWT, theme, resume positions) — log in again on new PC
+
+## Step-by-step on the new PC
+
+### 1. Prerequisites
+
+- **Node.js ≥ 20**, **npm ≥ 10**
+- **MongoDB** running locally or **MongoDB Atlas** URI in `.env`
+- Optional (dev): **ffmpeg**, **yt-dlp** (YouTube download), **ocrmypdf** (PYQ OCR)
+- Windows: PowerShell for **Locate in Explorer** / full-course path picker
+
+### 2. Install dependencies
+
+```bash
+cd server && npm install
+cd ../client && npm install
+```
+
+### 3. Environment files
+
+Copy `server/.env` from old PC (create if missing — see Configuration section for all variables).
+
+**Critical for dev alignment:**
+
+```env
+PORT=5001
+MONGO_URI=mongodb://127.0.0.1:27017/cdsjourney-course-manager
+JWT_SECRET=<same-or-new-secret>
+ADMIN_EMAIL=...
+ADMIN_PASSWORD=...
+TELEGRAM_API_ID=...
+TELEGRAM_API_HASH=...
+```
+
+If `LOCAL_MEDIA_ROOT` pointed to e.g. `C:\Users\...\CDS UPLOAD` on the old PC, **update the path** on the new PC or copy that folder too.
+
+### 4. MongoDB backup & restore
+
+**Export on old PC:**
+
+```bash
+mongodump --uri="mongodb://127.0.0.1:27017/cdsjourney-course-manager" --out=./mongo-backup
+```
+
+Copy the `mongo-backup/` folder to the new PC.
+
+**Import on new PC:**
+
+```bash
+mongorestore --uri="mongodb://127.0.0.1:27017/cdsjourney-course-manager" --drop ./mongo-backup/cdsjourney-course-manager
+```
+
+For Atlas: use `mongodump` / `mongorestore` with your Atlas connection string, or Atlas UI backup/restore.
+
+### 5. Local media files
+
+If not using only Cloudinary/Telegram streams:
+
+1. Copy the **`uploads/`** folder inside the repo **or** the external folder set in `LOCAL_MEDIA_ROOT`.
+2. Keep subfolders: `_local_library/`, `_merged_subjects/`, `_stream_cache/`, `_playback_cache/`, cycle/batch PDF paths.
+3. Update `LOCAL_MEDIA_ROOT` in `server/.env` if the drive letter or username changed.
+
+### 6. Telegram session
+
+- **`TelegramSession`** is stored in MongoDB but is tied to **`deploymentKey`** (`local` vs `render`).
+- On a **new PC**, expect to **log in to Telegram again** in the app (Settings or Import page) — OTP + optional 2FA.
+- **Do not** run the same GramJS session on two machines simultaneously (`AUTH_KEY_DUPLICATED`).
+
+### 7. Cloudinary & OpenAI
+
+- No file copy needed — credentials in `.env` / MongoDB mappings (`SubjectCloudMapping`, `TelegramChannelMapping`) restore from DB dump.
+- Re-verify `/cloudinary` storage dashboard after first boot.
+
+### 8. Run & verify
+
+```bash
+# Terminal 1
+cd server && npm run dev    # → http://localhost:5001
+
+# Terminal 2
+cd client && npm run dev    # → http://localhost:5173
+```
+
+**Smoke test:** login → open batch → open subject (watch time + lessons) → play one Telegram video → Telegram import page loads channels.
+
+### 9. Optional: combined home server
+
+```bash
+cd server && npm run start:home
+```
+
+Serves API + built client from one port (set `PORT` and `SERVE_CLIENT` as needed).
+
+## Git note
+
+If copying via **zip/USB** instead of `git clone`, you get working tree + untracked files. If using **git**, run `git status` on the new PC — uncommitted work from the old machine must be copied separately or committed/pushed first.
+
+---
+
 # Deployment
 
 ## Local development
@@ -1217,7 +1351,8 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 - **Upload-then-DB-fail orphans** — Cloudinary asset not rolled back if DB save fails after upload (rare)
 - **Telegram GramJS TIMEOUT** — benign update loop timeouts; client configured to suppress; use **Reset session** if streams stall
 - **Cloudinary Free plan usage API** — may omit byte limit; server uses **25 GB fallback** for progress bar %
-- **In-memory upload progress** — lost on server restart
+- **In-memory upload progress** — lost on server restart; poll uses no-cache (fixed 304 stuck-at-5% bug in browser)
+- **Long Telegram import** — first run may take minutes for large subjects; use Cancel on overlay; progress shows `Reading Telegram files (n/m)…`
 - **Telegram auto-sync** — requires active session + mapped `syncTopicIds`/`syncSubjectKeys`; silently skips if no session
 - **Telegram duplicate “N new”** — if titles differ between duplicate uploads, may still show updates; use curated import skip list or rename lessons for match
 - **Legacy disk PYQ** — boot migration may move old files; new uploads go to Cloudinary only
@@ -1262,6 +1397,7 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 12. **Telegram curated import** — unselected messages → `Subject.telegramSkippedMessageIds`; duplicates filtered by title in update checks.
 13. **Multer limit** — 5 GB per file; bulk content max 100 files per request.
 14. **Cloudinary usage dashboard** — needs Admin API read or `CLOUDINARY_<KEY>_USAGE_*` env vars per account.
+15. **Backup / new PC** — follow **Backup & migration** section: `server/.env`, MongoDB dump, media root; re-login Telegram on new machine.
 
 ## Frontend routes (`App.jsx`)
 
@@ -1319,7 +1455,9 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | Cloudinary delete on remove | `contentCleanupService.js`, `paperCleanupService.js`, `cloudinaryAsset.js`, `cloudinaryUploadService.js` |
 | Change PDF disk layout | `uploadMiddleware.js`, `uploadOrganizationService.js` |
 | Add Cloudinary account | Env vars only (`CLOUDINARY_CLOUDS` + per-key vars) |
-| Telegram import / updates | `telegramMappingService.js`, `telegramImportFilters.js`, `telegramVideoImportService.js`, `TelegramImportPage.jsx` |
+| Telegram import / updates | `telegramMappingService.js`, `telegramImportFilters.js`, `telegramMediaMeta.js`, `telegramFlatChannel.js`, `TelegramImportPage.jsx`, `telegram-import.css`, `telegramLessonPlan.js` |
+| Subject watch time (total duration) | `BatchCourseView.jsx`, `SubjectLessonAccordion.jsx`, `media.js` (`sumVideoDurationSeconds`, `formatTotalStudyDuration`) |
+| Telegram thumbnails (import UI) | `fetchTelegramThumbnail()` in `telegramService.js`, `GET /telegram/thumbnail/:messageId`, `buildTelegramThumbnailUrl()` in `media.js` |
 | Lesson order / reorder | `SubjectLessonAccordion.jsx`, `contentSort.js` (client + server), `PATCH /contents/reorder` |
 | **Full course video (link + play)** | `SubjectPlayAllPremium.jsx`, `SubjectFullVideoPage.jsx`, `subjectFullCourse.js`, `subjectFullCourseService.js`, `subjectDownloadController.js`, `streamLocalFile.js`, `getStreamBackendBaseUrl()` |
 | **Mark entire subject complete** | `SubjectPlayAllPremium.jsx`, `POST /api/progress/subject/:subjectId/toggle-all`, `progressController.js` |
@@ -1355,9 +1493,22 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | **Stream cache** | Auto disk cache while watching Telegram streams (`_stream_cache/`) |
 | **Curated import** | Pick specific Telegram lessons; unselected → `telegramSkippedMessageIds` |
 | **importSortOrder** | Numeric lesson order; set by import or manual ↑↓ reorder |
+| **Subject watch time** | Sum of `Content.duration` (seconds) for videos in a subject — shown in dashboard subject header |
 | **CDS PYQ (AI)** | Practice mode that generates UPSC CDS English paper-style vocabulary MCQs via OpenAI (with local fallback) |
 
 ---
+
+# Recent Changes Log (chat sessions — 2026-08-13 / 2026-08-14)
+
+| Area | Change |
+|------|--------|
+| **Telegram flat-channel video detection** | `telegramMediaMeta.js` — classify videos by mime, extension, `DocumentAttributeVideo`; removed invalid `MessageMediaVideo` instanceof (GramJS crash) |
+| **Telegram import UI** | `TelegramImportPage.jsx` + `telegram-import.css` — channel search, taller workspace, clean lesson titles from captions, professional lesson cards |
+| **Video thumbnails (import)** | `GET /telegram/thumbnail/:messageId`; lazy 16:9 thumbs; click → **Play video** or **Preview thumbnail** lightbox |
+| **Import progress reliability** | No-cache progress API; client cache-bust polling; batched `resolveTelegramImportMessageMetas()`; Cancel button; 60 min active progress TTL |
+| **Plyr player** | Sky-blue theme (`plyr-overrides.css`); control layout (volume hover, auto-hide, no seek tooltip); scrub preview fixes |
+| **Subject watch time** | Total video duration in `BatchCourseView` header + Videos tab (`formatTotalStudyDuration`) |
+| **Tests** | `server/tests/telegramMedia.test.js` for media classification |
 
 # Recent Changes Log (chat sessions — 2026-08-10)
 
@@ -1406,4 +1557,4 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 
 ---
 
-*Last comprehensive audit: 2026-08-10 (includes full course linked MP4 streaming, subject bulk-complete, CDS PYQ AI mode, Telegram full PDF download, PC Media Locate, Vocabulary Arena). Repository path: `d:\1. Projects\CDS JOURNEY OTA`.*
+*Last comprehensive audit: 2026-08-14 (includes backup/migration guide, Telegram import thumbnails, flat-channel video fix, subject watch time, import progress fixes). Repository path: `d:\1. Projects\CDS JOURNEY OTA`.*

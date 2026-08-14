@@ -3,6 +3,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { applyCorsHeaders } from "../config/cors.js";
 import TelegramSession from "../models/TelegramSession.js";
+import { classifyTelegramMediaType } from "../utils/telegramMediaMeta.js";
 
 const require = createRequire(import.meta.url);
 const { TelegramClient, Api } = require("telegram");
@@ -573,10 +574,119 @@ const extractPlainText = (message) => {
   return null;
 };
 
-const hasMediaDocument = (message) => {
-  const media = message?.media;
-  return media instanceof Api.MessageMediaDocument;
+const isMessageMediaDocument = (media) => media instanceof Api.MessageMediaDocument;
+
+const hasScannableMedia = (message) => isMessageMediaDocument(message?.media);
+
+const extractTelegramDocumentFields = (doc) => {
+  let fileName = "file";
+  let duration = null;
+  let hasVideoAttribute = false;
+
+  for (const attr of doc.attributes || []) {
+    if (attr instanceof Api.DocumentAttributeFilename) {
+      fileName = attr.fileName || fileName;
+    }
+    if (attr instanceof Api.DocumentAttributeVideo) {
+      duration = attr.duration ?? duration;
+      hasVideoAttribute = true;
+    }
+  }
+
+  return {
+    fileName,
+    duration,
+    hasVideoAttribute,
+    mimeType: doc.mimeType || "application/octet-stream",
+    size: Number(doc.size || 0),
+  };
 };
+
+const resolveTelegramMediaDocument = (media) => {
+  if (!isMessageMediaDocument(media)) return null;
+  return media.document instanceof Api.Document ? media.document : null;
+};
+
+export const getTelegramMediaMeta = (message) => {
+  const media = message?.media;
+  if (!media) return null;
+
+  const doc = resolveTelegramMediaDocument(media);
+  if (!doc) return null;
+
+  const { fileName, duration, hasVideoAttribute, mimeType, size } =
+    extractTelegramDocumentFields(doc);
+  const mediaType = classifyTelegramMediaType({ mimeType, fileName, hasVideoAttribute });
+  if (!mediaType) return null;
+
+  const topicId = getTopicIdFromMessage(message);
+  const caption = extractPlainText(message);
+
+  return {
+    messageId: message.id,
+    fileName,
+    displayName: resolveTelegramMediaTitle({ fileName, caption }),
+    mimeType,
+    size,
+    uploadDate: message.date ? new Date(message.date * 1000).toISOString() : null,
+    duration,
+    mediaType,
+    thumbnail: null,
+    hasThumbnail: Boolean(doc.thumbs?.length),
+    topicId,
+    caption,
+  };
+};
+
+const THUMB_CACHE_TTL_MS = 60 * 60 * 1000;
+const THUMB_CACHE_MAX = 250;
+const telegramThumbnailCache = new Map();
+
+const pruneTelegramThumbnailCache = () => {
+  if (telegramThumbnailCache.size <= THUMB_CACHE_MAX) return;
+  const entries = [...telegramThumbnailCache.entries()].sort((a, b) => a[1].at - b[1].at);
+  const removeCount = telegramThumbnailCache.size - THUMB_CACHE_MAX;
+  for (let i = 0; i < removeCount; i += 1) {
+    telegramThumbnailCache.delete(entries[i][0]);
+  }
+};
+
+export const fetchTelegramThumbnail = async ({ channelId, messageId }) => {
+  const cacheKey = `${channelId}:${messageId}`;
+  const cached = telegramThumbnailCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < THUMB_CACHE_TTL_MS) {
+    return { buffer: cached.buffer, contentType: cached.contentType };
+  }
+
+  return withTelegramLock(async () => {
+    const hit = telegramThumbnailCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < THUMB_CACHE_TTL_MS) {
+      return { buffer: hit.buffer, contentType: hit.contentType };
+    }
+
+    const { client, message, meta } = await getTelegramMessageMedia({ channelId, messageId });
+    if (meta.mediaType !== "video") {
+      throw new Error("Telegram message is not a video.");
+    }
+
+    let raw = await client.downloadMedia(message, { thumb: "m" });
+    if (!raw?.length) {
+      raw = await client.downloadMedia(message, { thumb: 0 });
+    }
+    const buffer = Buffer.isBuffer(raw) ? raw : Buffer.from(raw || []);
+    if (!buffer.length) {
+      throw new Error("Telegram video has no thumbnail.");
+    }
+
+    const payload = { buffer, contentType: "image/jpeg", at: Date.now() };
+    telegramThumbnailCache.set(cacheKey, payload);
+    pruneTelegramThumbnailCache();
+    return { buffer: payload.buffer, contentType: payload.contentType };
+  });
+};
+
+/** @deprecated Use getTelegramMediaMeta */
+const getDocumentMeta = (message) => getTelegramMediaMeta(message);
 
 const applyCaptionToMeta = (meta, caption) => {
   if (!meta || !caption) return meta;
@@ -594,7 +704,7 @@ export const enrichCaptionsFromTopicContext = (rawMessages = []) => {
 
   for (const message of sorted) {
     const text = extractPlainText(message);
-    if (!text || !isLikelyLessonTitle(text) || hasMediaDocument(message)) continue;
+    if (!text || !isLikelyLessonTitle(text) || hasScannableMedia(message)) continue;
     if (message.groupedId) {
       const groupId = String(message.groupedId);
       if (!groupText.has(groupId)) groupText.set(groupId, text);
@@ -603,7 +713,7 @@ export const enrichCaptionsFromTopicContext = (rawMessages = []) => {
 
   for (let index = 0; index < sorted.length; index++) {
     const message = sorted[index];
-    if (!hasMediaDocument(message)) continue;
+    if (!hasScannableMedia(message)) continue;
 
     const messageId = Number(message.id);
     let caption = extractPlainText(message);
@@ -617,7 +727,7 @@ export const enrichCaptionsFromTopicContext = (rawMessages = []) => {
       const topicRootId = Number(message.replyTo.replyToTopId || 0);
       if (replyId && replyId !== topicRootId) {
         const replyMessage = byId.get(replyId);
-        if (replyMessage && !hasMediaDocument(replyMessage)) {
+        if (replyMessage && !hasScannableMedia(replyMessage)) {
           const replyText = extractPlainText(replyMessage);
           if (replyText && isLikelyLessonTitle(replyText)) caption = replyText;
         }
@@ -627,7 +737,7 @@ export const enrichCaptionsFromTopicContext = (rawMessages = []) => {
     if (!caption || !isLikelyLessonTitle(caption)) {
       for (let prevIndex = index - 1; prevIndex >= Math.max(0, index - 3); prevIndex--) {
         const prevMessage = sorted[prevIndex];
-        if (hasMediaDocument(prevMessage)) break;
+        if (hasScannableMedia(prevMessage)) break;
         const prevText = extractPlainText(prevMessage);
         if (prevText && isLikelyLessonTitle(prevText)) {
           caption = prevText;
@@ -639,7 +749,7 @@ export const enrichCaptionsFromTopicContext = (rawMessages = []) => {
     if (!caption || !isLikelyLessonTitle(caption)) {
       for (let nextIndex = index + 1; nextIndex < Math.min(sorted.length, index + 4); nextIndex++) {
         const nextMessage = sorted[nextIndex];
-        if (hasMediaDocument(nextMessage)) break;
+        if (hasScannableMedia(nextMessage)) break;
         const nextText = extractPlainText(nextMessage);
         if (nextText && isLikelyLessonTitle(nextText)) {
           caption = nextText;
@@ -654,50 +764,6 @@ export const enrichCaptionsFromTopicContext = (rawMessages = []) => {
   }
 
   return captionByMediaId;
-};
-
-const getDocumentMeta = (message) => {
-  const media = message?.media;
-  if (!(media instanceof Api.MessageMediaDocument)) return null;
-
-  const doc = media.document;
-  if (!(doc instanceof Api.Document)) return null;
-
-  let fileName = "file";
-  let duration = null;
-  for (const attr of doc.attributes || []) {
-    if (attr instanceof Api.DocumentAttributeFilename) {
-      fileName = attr.fileName || fileName;
-    }
-    if (attr instanceof Api.DocumentAttributeVideo) {
-      duration = attr.duration ?? null;
-    }
-  }
-
-  const mimeType = doc.mimeType || "application/octet-stream";
-  const size = Number(doc.size || 0);
-  const isVideo = mimeType.startsWith("video/") || /\.(mp4|webm|mkv|mov|m4v)$/i.test(fileName);
-  const isPdf = mimeType === "application/pdf" || /\.pdf$/i.test(fileName);
-
-  if (!isVideo && !isPdf) return null;
-
-  const topicId = getTopicIdFromMessage(message);
-
-  const caption = extractPlainText(message);
-
-  return {
-    messageId: message.id,
-    fileName,
-    displayName: resolveTelegramMediaTitle({ fileName, caption }),
-    mimeType,
-    size,
-    uploadDate: message.date ? new Date(message.date * 1000).toISOString() : null,
-    duration,
-    mediaType: isVideo ? "video" : "pdf",
-    thumbnail: null,
-    topicId,
-    caption,
-  };
 };
 
 export const getTopicIdFromMessage = (message) => {
@@ -1003,6 +1069,87 @@ export const getTelegramMessageMedia = async ({ channelId, messageId, topicId = 
   }
 
   return { client, message, meta };
+};
+
+/** Batch-resolve Telegram message metadata for curated imports (one GramJS lock, batched ids). */
+export const resolveTelegramImportMessageMetas = async ({
+  channelId,
+  items = [],
+  uploadId = null,
+  onItemProgress = null,
+}) => {
+  if (!Array.isArray(items) || !items.length) return [];
+
+  return withTelegramLock(async () => {
+    const client = await ensureTelegramClient();
+    const entity = await client.getEntity(channelId);
+    const { isVirtualFlatTopicId } = await import("../utils/telegramFlatChannel.js");
+
+    const normalized = items
+      .map((item) => ({
+        topicId: Number(item.topicId),
+        messageId: Number(item.messageId),
+        topicTitle: item.topicTitle || null,
+        preferredTitle: String(item.displayName || item.title || "").trim() || null,
+      }))
+      .filter((item) => item.topicId && item.messageId);
+
+    const captionByTopicId = new Map();
+    const topicsNeedingCaptions = [
+      ...new Set(
+        normalized
+          .filter((item) => !item.preferredTitle && !isVirtualFlatTopicId(item.topicId))
+          .map((item) => item.topicId)
+      ),
+    ];
+
+    for (const topicId of topicsNeedingCaptions) {
+      try {
+        const topicMessages = await client.getMessages(entity, {
+          replyTo: Number(topicId),
+          limit: 500,
+        });
+        captionByTopicId.set(topicId, enrichCaptionsFromTopicContext(topicMessages));
+      } catch {
+        captionByTopicId.set(topicId, new Map());
+      }
+    }
+
+    const messageIds = [...new Set(normalized.map((item) => item.messageId))];
+    const fetched = await client.getMessages(entity, { ids: messageIds });
+    const messageList = Array.isArray(fetched) ? fetched : fetched ? [fetched] : [];
+    const messageById = new Map(
+      messageList.filter(Boolean).map((message) => [Number(message.id), message])
+    );
+
+    const metas = [];
+    const total = normalized.length;
+
+    for (let index = 0; index < normalized.length; index += 1) {
+      const item = normalized[index];
+      onItemProgress?.({ index: index + 1, total, messageId: item.messageId, uploadId });
+
+      const message = messageById.get(item.messageId);
+      if (!message) continue;
+
+      const meta = getDocumentMeta(message);
+      if (!meta) continue;
+
+      if (!meta.caption && !item.preferredTitle) {
+        const extraCaption = captionByTopicId.get(item.topicId)?.get(item.messageId);
+        if (extraCaption) applyCaptionToMeta(meta, extraCaption);
+      }
+
+      metas.push({
+        ...meta,
+        topicId: item.topicId,
+        topicTitle: item.topicTitle || "Subject",
+        preferredTitle: item.preferredTitle,
+      });
+    }
+
+    return metas;
+  });
 };
 
 const writeWithBackpressure = (writable, chunk) =>

@@ -24,6 +24,7 @@ import {
   fetchTelegramChannels,
   fetchTelegramMessages,
   checkTelegramConnectionLive,
+  fetchTelegramThumbnail,
   getActiveSession,
   getTelegramMessageMedia,
   getTelegramDeploymentKey,
@@ -169,6 +170,30 @@ export const telegramMessages = async (req, res) => {
     res.json(result);
   } catch (error) {
     res.status(400).json({ message: error.message || "Could not fetch messages" });
+  }
+};
+
+export const telegramThumbnail = async (req, res) => {
+  const { messageId } = req.params;
+  const { channelId } = req.query;
+
+  if (!channelId) {
+    return res.status(400).json({ message: "channelId query parameter is required." });
+  }
+
+  try {
+    const { buffer, contentType } = await fetchTelegramThumbnail({ channelId, messageId });
+    res.setHeader("Content-Type", contentType || "image/jpeg");
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.send(buffer);
+  } catch (error) {
+    if (!res.headersSent) {
+      const base = telegramErrorText(error) || "Thumbnail unavailable";
+      const message = isAuthKeyDuplicated(error)
+        ? "Telegram session conflict: log in to Telegram in Settings on THIS site only (localhost and Render need separate logins)."
+        : base;
+      res.status(404).json({ message });
+    }
   }
 };
 

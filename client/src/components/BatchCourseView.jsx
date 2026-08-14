@@ -14,6 +14,7 @@ import SubjectGridCard from "./SubjectGridCard";
 import SubjectListRow from "./SubjectListRow";
 import SubjectLessonAccordion from "./SubjectLessonAccordion";
 import SubjectPlayAllPremium from "./SubjectPlayAllPremium";
+import { formatTotalStudyDuration, sumVideoDurationSeconds } from "../utils/media";
 
 const BatchCourseView = ({
   batchName,
@@ -130,6 +131,19 @@ const BatchCourseView = ({
     (c) => String(c.subjectId?._id || c.subjectId) === String(activeSubjectId)
   );
 
+  const subjectWatchTime = useMemo(() => {
+    const videos = subjectContents.filter((item) => item.type === "video");
+    const totalSeconds = sumVideoDurationSeconds(videos);
+    const timedCount = videos.filter((item) => Number(item.duration) > 0).length;
+    return {
+      videoCount: videos.length,
+      pdfCount: subjectContents.filter((item) => item.type === "pdf").length,
+      totalSeconds,
+      timedCount,
+      label: formatTotalStudyDuration(totalSeconds),
+    };
+  }, [subjectContents]);
+
   const subjectDetailBusy =
     updatingSubjectId === activeSubjectId ||
     renamingSubjectId === activeSubjectId ||
@@ -229,8 +243,22 @@ const BatchCourseView = ({
                 </div>
               )}
               <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 md:mt-1 md:text-sm">
-                {subjectContents.filter((c) => c.type === "video").length} videos ·{" "}
-                {subjectContents.filter((c) => c.type === "pdf").length} PDFs
+                {subjectWatchTime.videoCount} videos · {subjectWatchTime.pdfCount} PDFs
+                {subjectWatchTime.label ? (
+                  <>
+                    {" · "}
+                    <span
+                      className="font-semibold text-slate-700 dark:text-slate-200"
+                      title={
+                        subjectWatchTime.timedCount < subjectWatchTime.videoCount
+                          ? `Duration known for ${subjectWatchTime.timedCount} of ${subjectWatchTime.videoCount} videos`
+                          : "Total watch time for this subject"
+                      }
+                    >
+                      {subjectWatchTime.label} watch time
+                    </span>
+                  </>
+                ) : null}
               </p>
             </div>
             <div className="hidden shrink-0 flex-wrap gap-2 md:flex">

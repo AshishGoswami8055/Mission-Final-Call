@@ -5,6 +5,7 @@ import {
   isLikelyLessonTitle,
   resolveTelegramMediaTitle,
 } from "../src/services/telegramService.js";
+import { classifyTelegramMediaType } from "../src/utils/telegramMediaMeta.js";
 
 describe("telegram media helpers", () => {
   it("buildTelegramContentTitle humanizes file names", () => {
@@ -29,6 +30,33 @@ describe("telegram media helpers", () => {
     assert.equal(
       resolveTelegramMediaTitle({ fileName: "lesson_02.mp4", caption: "Download video" }),
       "lesson 02"
+    );
+  });
+
+  it("classifyTelegramMediaType detects videos by mime, extension, and attribute", () => {
+    assert.equal(
+      classifyTelegramMediaType({ mimeType: "video/mp4", fileName: "lecture.mp4" }),
+      "video"
+    );
+    assert.equal(
+      classifyTelegramMediaType({ mimeType: "application/octet-stream", fileName: "lecture.mkv" }),
+      "video"
+    );
+    assert.equal(
+      classifyTelegramMediaType({
+        mimeType: "application/octet-stream",
+        fileName: "file",
+        hasVideoAttribute: true,
+      }),
+      "video"
+    );
+    assert.equal(
+      classifyTelegramMediaType({ mimeType: "application/pdf", fileName: "notes.pdf" }),
+      "pdf"
+    );
+    assert.equal(
+      classifyTelegramMediaType({ mimeType: "application/zip", fileName: "archive.zip" }),
+      null
     );
   });
 });

@@ -16,6 +16,7 @@ import {
   revealSubjectMergedVideoHandler,
   replaceSubjectMergedVideoHandler,
   linkLocalFullCourseHandler,
+  pickLocalFullCourseHandler,
 } from "../controllers/subjectDownloadController.js";
 import protect from "../middlewares/authMiddleware.js";
 import protectStream from "../middlewares/streamAuthMiddleware.js";
@@ -34,7 +35,7 @@ router.post("/:id/merged-video/replace", assertSubjectLocalLibrary, (req, res, n
     if (error) {
       const message =
         error.code === "LIMIT_FILE_SIZE"
-          ? "File too large for browser upload (max 8 GB). Use Link from path below for large files like yours."
+          ? "File too large for browser upload (max 8 GB). Use Choose video from PC instead."
           : error.message || "Could not upload video file";
       return res.status(400).json({ message });
     }
@@ -42,6 +43,7 @@ router.post("/:id/merged-video/replace", assertSubjectLocalLibrary, (req, res, n
   });
 }, replaceSubjectMergedVideoHandler);
 router.post("/:id/merged-video/link-local", assertSubjectLocalLibrary, linkLocalFullCourseHandler);
+router.post("/:id/merged-video/pick-local", assertSubjectLocalLibrary, pickLocalFullCourseHandler);
 router.get("/:id/local-library/cached", assertSubjectLocalLibrary, getSubjectCachedLibraryIdsHandler);
 router.get("/:id/local-library", assertSubjectLocalLibrary, getSubjectLocalLibraryHandler);
 router.post("/:id/local-library", assertSubjectLocalLibrary, startSubjectLocalLibraryHandler);

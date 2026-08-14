@@ -19,6 +19,7 @@ import {
 import { getActiveSession } from "../services/telegramService.js";
 import { formatBytesLabel, isTelegramStreamContent } from "../utils/contentPlayback.js";
 import { streamLocalFile } from "../utils/streamLocalFile.js";
+import { pickVideoFilePath } from "../utils/pickVideoFileDialog.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -216,6 +217,31 @@ export const linkLocalFullCourseHandler = async (req, res) => {
       ...status,
       linked: true,
       message: "Full course video linked — no upload needed.",
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Could not link full course video" });
+  }
+};
+
+export const pickLocalFullCourseHandler = async (req, res) => {
+  try {
+    const subject = await getSubjectFullCourseStatus(req.params.id);
+    if (!subject) return res.status(404).json({ message: "Subject not found" });
+
+    const promptTitle = subject.subjectName
+      ? `Select full course video — ${subject.subjectName}`
+      : "Select full course video";
+
+    const pickedPath = await pickVideoFilePath({ title: promptTitle });
+    if (!pickedPath) {
+      return res.json({ cancelled: true, message: "No file selected." });
+    }
+
+    const status = await linkSubjectFullCourseFromPath(req.params.id, pickedPath);
+    res.json({
+      ...status,
+      linked: true,
+      message: "Full course video linked from your PC — no upload needed.",
     });
   } catch (error) {
     res.status(400).json({ message: error.message || "Could not link full course video" });

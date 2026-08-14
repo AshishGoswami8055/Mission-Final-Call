@@ -40,5 +40,8 @@ export const replaceFullCourseVideo = (subjectId, file, { onUploadProgress } = {
 export const linkFullCourseFromPath = (subjectId, filePath, originalName) =>
   api.post(`/subjects/${subjectId}/merged-video/link-local`, { filePath, originalName });
 
+export const pickFullCourseVideo = (subjectId) =>
+  api.post(`/subjects/${subjectId}/merged-video/pick-local`, {}, { timeout: 0 });
+
 export const toggleSubjectCompleted = (subjectId) =>
   api.post(`/progress/subject/${subjectId}/toggle-all`);

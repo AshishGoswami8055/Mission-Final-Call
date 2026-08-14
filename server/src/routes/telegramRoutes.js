@@ -16,6 +16,7 @@ import {
   telegramResetSession,
   telegramSessionStatus,
   telegramStream,
+  telegramThumbnail,
   telegramSyncAll,
   telegramSyncChannel,
   telegramBatchUpdates,
@@ -50,5 +51,6 @@ router.post("/update-subject", protect, telegramUpdateSubject);
 router.post("/update-batch", protect, telegramUpdateBatch);
 router.post("/progress/:uploadId/cancel", protect, telegramCancelProgress);
 router.get("/stream/:messageId", protectStream, telegramStream);
+router.get("/thumbnail/:messageId", protectStream, telegramThumbnail);
 
 export default router;

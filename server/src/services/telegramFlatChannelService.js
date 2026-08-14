@@ -80,6 +80,8 @@ export const fetchFlatChannelSubjectsPreview = async ({
 
   const enriched = topics.map((topic) => {
     const importedCount = topic.media.filter((m) => importedSet.has(Number(m.messageId))).length;
+    const videoCount = topic.media.filter((m) => m.mediaType === "video").length;
+    const pdfCount = topic.media.filter((m) => m.mediaType === "pdf").length;
     const inCourse =
       programmeId && scope
         ? topicInProgrammeCourse(scope, topic) || importedCount > 0
@@ -89,6 +91,8 @@ export const fetchFlatChannelSubjectsPreview = async ({
       title: topic.title,
       subjectKey: topic.subjectKey,
       mediaCount: topic.media.length,
+      videoCount,
+      pdfCount,
       importedCount,
       inCourse,
       newCount: topic.media.filter((m) => !importedSet.has(Number(m.messageId))).length,
@@ -117,15 +121,17 @@ export const fetchFlatChannelSubjectsPreview = async ({
   };
 };
 
-/** Faster flat-channel subject list (fewer messages scanned). */
+/** Faster flat-channel subject list (scan enough history to catch videos + PDFs). */
 export const fetchFlatChannelSubjectsPreviewSummary = async ({ channelId, programmeId = null }) => {
-  const result = await fetchFlatChannelSubjectsPreview({ channelId, programmeId, maxMessages: 500 });
+  const result = await fetchFlatChannelSubjectsPreview({ channelId, programmeId, maxMessages: 3000 });
   return {
     ...result,
     summaryOnly: true,
     totalNew: 0,
     topics: result.topics.map((topic) => ({
       ...topic,
+      videoCount: topic.videoCount ?? topic.media.filter((m) => m.mediaType === "video").length,
+      pdfCount: topic.pdfCount ?? topic.media.filter((m) => m.mediaType === "pdf").length,
       media: [],
       mediaLoaded: false,
     })),

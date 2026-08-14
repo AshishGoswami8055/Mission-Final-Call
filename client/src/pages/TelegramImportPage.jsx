@@ -8,6 +8,7 @@ import {
   FiDownload,
   FiEye,
   FiFileText,
+  FiImage,
   FiLoader,
   FiLogOut,
   FiPlay,
@@ -21,16 +22,18 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import api from "../api/client";
 import Layout from "../components/Layout";
 import OperationProgressOverlay from "../components/OperationProgressOverlay";
-import { buildTelegramPreviewStreamUrl, downloadTelegramMediaToPc, formatTelegramMediaMeta } from "../utils/media";
+import "../styles/telegram-import.css";
+import { buildTelegramPreviewStreamUrl, buildTelegramThumbnailUrl, downloadTelegramMediaToPc, formatTelegramMediaMeta } from "../utils/media";
 import {
   buildSelectedItemsFromPlans,
   countSelectedLessonsInPlan,
+  getLessonCaptionFields,
   orderedMediaForTopic,
-  titleFromTelegramFileName,
   suggestLessonTitle,
   syncLessonPlanForTopic,
+  titleFromTelegramFileName,
 } from "../utils/telegramLessonPlan";
-import { createUploadId, waitForUploadProgress } from "../utils/uploadProgress";
+import { createUploadId, cancelTelegramProgress, waitForUploadProgress } from "../utils/uploadProgress";
 
 const mediaDisplayName = (item) => item?.displayName || item?.fileName || "Untitled";
 
@@ -80,13 +83,17 @@ const TelegramImportPage = () => {
   const [topicMediaPrefs, setTopicMediaPrefs] = useState({});
   const [topicLessonPlans, setTopicLessonPlans] = useState({});
   const [topicSearch, setTopicSearch] = useState("");
+  const [channelSearch, setChannelSearch] = useState("");
   const [mediaSearch, setMediaSearch] = useState("");
   const [mediaFilter, setMediaFilter] = useState("all");
   const [previewFile, setPreviewFile] = useState(null);
+  const [videoThumbMenu, setVideoThumbMenu] = useState(null);
+  const [thumbLightbox, setThumbLightbox] = useState(null);
   const [downloadingPdfIds, setDownloadingPdfIds] = useState(() => new Set());
   const [previewError, setPreviewError] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(null);
+  const [activeUploadId, setActiveUploadId] = useState(null);
   const [mobilePanel, setMobilePanel] = useState("topics");
 
   const loadSession = useCallback(async () => {
@@ -281,7 +288,14 @@ const TelegramImportPage = () => {
     [preview?.topics, topicSearch]
   );
 
+  const filteredChannels = useMemo(() => {
+    const query = channelSearch.trim().toLowerCase();
+    if (!query) return channels;
+    return channels.filter((ch) => String(ch.title || "").toLowerCase().includes(query));
+  }, [channels, channelSearch]);
+
   const topicSearchActive = Boolean(topicSearch.trim());
+  const channelSearchActive = Boolean(channelSearch.trim());
   const totalTopicCount = preview?.topics?.length ?? 0;
 
   const activeTopic = preview?.topics?.find((t) => t.id === selectedTopicId);
@@ -368,6 +382,41 @@ const TelegramImportPage = () => {
       topicTitle: topic.title,
     });
   };
+
+  const openVideoThumbMenu = (item, topic) => {
+    const planEntry = topicLessonPlans[topicMediaPrefKey(topic.id)]?.entries?.[item.messageId];
+    const displayName =
+      planEntry?.displayName ??
+      (item.imported ? mediaDisplayName(item) : suggestLessonTitle(item));
+    setVideoThumbMenu({ item, topic, displayName });
+  };
+
+  const playVideoFromThumbMenu = () => {
+    if (!videoThumbMenu) return;
+    openPreview(videoThumbMenu.item, videoThumbMenu.topic);
+    setVideoThumbMenu(null);
+  };
+
+  const previewThumbInLightbox = () => {
+    if (!videoThumbMenu || !selectedChannel?.id) return;
+    if (videoThumbMenu.item.hasThumbnail === false) return;
+    setThumbLightbox({
+      url: buildTelegramThumbnailUrl(selectedChannel.id, videoThumbMenu.item.messageId),
+      title: videoThumbMenu.displayName,
+    });
+    setVideoThumbMenu(null);
+  };
+
+  useEffect(() => {
+    if (!videoThumbMenu && !thumbLightbox) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key !== "Escape") return;
+      if (thumbLightbox) setThumbLightbox(null);
+      else if (videoThumbMenu) setVideoThumbMenu(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [videoThumbMenu, thumbLightbox]);
 
   const openPdfInNewTab = (item) => {
     if (!selectedChannel?.id || item.mediaType !== "pdf") return;
@@ -560,12 +609,35 @@ const TelegramImportPage = () => {
   };
 
   const finishAndRefresh = async (message) => {
+    setActiveUploadId(null);
     setProgress({ active: true, phase: "done", percent: 100, message });
     toast.success(message);
     await loadPreview();
     setTimeout(() => {
       navigate("/", { state: { refreshCourse: true } });
     }, 1200);
+  };
+
+  const cancelActiveImport = async () => {
+    if (!activeUploadId) {
+      setProgress(null);
+      setBusy(false);
+      return;
+    }
+    try {
+      await cancelTelegramProgress(activeUploadId);
+    } catch {
+      // ignore
+    }
+    setActiveUploadId(null);
+    setBusy(false);
+    setProgress({
+      active: true,
+      phase: "cancelled",
+      percent: 0,
+      message: "Import cancelled",
+    });
+    toast("Import cancelled");
   };
 
   /** Download new lessons for subjects already in the course. */
@@ -659,6 +731,7 @@ const TelegramImportPage = () => {
     }
 
     const uploadId = createUploadId();
+    setActiveUploadId(uploadId);
     setBusy(true);
     setProgress({
       active: true,
@@ -676,6 +749,8 @@ const TelegramImportPage = () => {
           percent: Math.min(99, Number(data.percent) || 5),
           message: data.message || "Adding subjects…",
           currentFile: data.currentFile,
+          current: data.fileIndex || 0,
+          total: data.filesTotal || 0,
         });
       };
 
@@ -714,13 +789,14 @@ const TelegramImportPage = () => {
       }
     } catch (error) {
       if (progressWait) progressWait.cancel();
+      setActiveUploadId(null);
       setProgress({
         active: true,
         phase: "error",
         percent: 0,
-        message: error.response?.data?.message || "Could not add subjects",
+        message: error.response?.data?.message || error.message || "Could not add subjects",
       });
-      toast.error(error.response?.data?.message || "Could not add subjects");
+      toast.error(error.response?.data?.message || error.message || "Could not add subjects");
     } finally {
       setBusy(false);
     }
@@ -771,7 +847,10 @@ const TelegramImportPage = () => {
     }
   };
 
-  const dismissProgress = () => setProgress(null);
+  const dismissProgress = () => {
+    setActiveUploadId(null);
+    setProgress(null);
+  };
 
   const addableSelectedCount = [...selectedToAddIds].filter((id) => {
     const t = preview?.topics?.find((x) => x.id === id);
@@ -812,8 +891,14 @@ const TelegramImportPage = () => {
 
   return (
     <Layout
-      title="Add content from Telegram"
-      subtitle={`${programmeName} · Pick subjects once — new lessons download automatically`}
+      title={selectedChannel ? "Telegram import" : "Add content from Telegram"}
+      subtitle={
+        selectedChannel
+          ? undefined
+          : `${programmeName} · Pick subjects once — new lessons download automatically`
+      }
+      mobileCompactHeader={Boolean(selectedChannel)}
+      showSearch={false}
       actions={
         <Link to="/" className="btn-secondary text-sm">
           <FiArrowLeft size={14} /> Dashboard
@@ -822,10 +907,13 @@ const TelegramImportPage = () => {
     >
       <OperationProgressOverlay
         progress={progress}
-        onDismiss={progress?.phase === "error" ? dismissProgress : undefined}
+        onDismiss={
+          progress?.phase === "error" || progress?.phase === "cancelled" ? dismissProgress : undefined
+        }
+        onCancel={activeUploadId && busy ? cancelActiveImport : undefined}
       />
 
-      <div className="space-y-4">
+      <div className={selectedChannel ? "flex min-h-0 flex-1 flex-col" : "space-y-4"}>
         {!session.connected ? (
           <div className="card mx-auto max-w-lg p-6">
             <h2 className="text-lg font-semibold">Connect Telegram</h2>
@@ -870,17 +958,61 @@ const TelegramImportPage = () => {
                     <FiLogOut size={12} /> Logout
                   </button>
                 </div>
-                <h2 className="font-semibold">Choose your Telegram channel</h2>
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <h2 className="font-semibold">Choose your Telegram channel</h2>
+                  {!channelsLoading && channels.length > 0 ? (
+                    <span className="text-xs tabular-nums text-slate-400">
+                      {channelSearchActive ? `${filteredChannels.length} of ${channels.length}` : channels.length}
+                    </span>
+                  ) : null}
+                </div>
+                {!channelsLoading && channels.length > 0 ? (
+                  <div className="relative mb-3">
+                    <FiSearch
+                      className="pointer-events-none absolute left-3.5 top-1/2 z-10 -translate-y-1/2 text-slate-400"
+                      size={14}
+                    />
+                    <input
+                      className="input w-full !pl-10 pr-10 text-sm"
+                      placeholder="Search channels…"
+                      value={channelSearch}
+                      onChange={(e) => setChannelSearch(e.target.value)}
+                      aria-label="Search Telegram channels"
+                    />
+                    {channelSearchActive ? (
+                      <button
+                        type="button"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-white/10"
+                        onClick={() => setChannelSearch("")}
+                        aria-label="Clear channel search"
+                      >
+                        <FiX size={14} />
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
                 {channelsLoading ? (
                   <p className="py-8 text-center text-sm text-slate-400">Loading…</p>
+                ) : channels.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-slate-400">No channels found.</p>
+                ) : filteredChannels.length === 0 ? (
+                  <div className="py-8 text-center text-sm text-slate-400">
+                    <p>No channels match &ldquo;{channelSearch.trim()}&rdquo;</p>
+                    <button type="button" className="btn-ghost mt-2 text-xs" onClick={() => setChannelSearch("")}>
+                      Clear search
+                    </button>
+                  </div>
                 ) : (
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    {channels.map((ch) => (
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {filteredChannels.map((ch) => (
                       <button
                         key={ch.id}
                         type="button"
-                        className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 text-left transition hover:border-teal-500 dark:border-slate-700"
-                        onClick={() => setSelectedChannel(ch)}
+                        className="tg-import-channel-card flex items-center gap-3 text-left"
+                        onClick={() => {
+                          setChannelSearch("");
+                          setSelectedChannel(ch);
+                        }}
                       >
                         {ch.photo ? (
                           <img src={ch.photo} alt="" className="h-10 w-10 rounded-full object-cover" />
@@ -896,9 +1028,9 @@ const TelegramImportPage = () => {
             )}
 
             {selectedChannel && (
-              <div className="flex max-h-[calc(100dvh-7rem)] min-h-[320px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-[#1a1a1a]">
-                <div className="border-b border-slate-200 px-3 py-3 sm:px-4 dark:border-slate-800">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+              <div className="flex h-[calc(100dvh-5.25rem)] min-h-[520px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white tg-import-panel sm:h-[calc(100dvh-6rem)] lg:h-[calc(100dvh-5.5rem)] dark:border-slate-800 dark:bg-[#1a1a1a]">
+                <div className="shrink-0 border-b border-slate-200 px-3 py-2 sm:px-4 dark:border-slate-800">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                     <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
                       <button
                         type="button"
@@ -964,33 +1096,33 @@ const TelegramImportPage = () => {
                           Add to course ({addableSelectedCount})
                         </button>
                       )}
+                      {programmeId && (
+                        <button
+                          type="button"
+                          className="btn-ghost w-full text-xs text-rose-600 sm:w-auto dark:text-rose-400"
+                          disabled={busy}
+                          onClick={handleClearCourse}
+                        >
+                          {busy ? <FiLoader size={12} className="inline animate-spin" /> : null}{" "}
+                          Remove all from batch
+                        </button>
+                      )}
                     </div>
                   </div>
 
-                  <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-white/5 dark:text-slate-400">
-                    <strong className="font-semibold text-slate-800 dark:text-slate-200">How it works:</strong>{" "}
-                    Check the subjects you want, then click <em>Add to course</em>. Use{" "}
-                    <em>Select all</em> or <em>Unselect all</em> in the list — nothing is checked by default. After
-                    import, new Telegram uploads sync automatically.
-                  </p>
-                  {preview?.channelMode === "flat" && (
-                    <p className="mt-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800 dark:border-sky-900/40 dark:bg-sky-950/30 dark:text-sky-200">
-                      This channel has no forum topics — subjects are grouped from PDF captions (Topic / Batch fields).
-                    </p>
-                  )}
-                </div>
-
-                <div className="flex justify-end border-b border-slate-100 px-4 py-2 dark:border-slate-800">
-                  {programmeId && (
-                    <button
-                      type="button"
-                      className="text-xs font-medium text-rose-600 hover:underline disabled:opacity-50 dark:text-rose-400"
-                      disabled={busy}
-                      onClick={handleClearCourse}
-                    >
-                      {busy ? <FiLoader size={12} className="inline animate-spin" /> : null}{" "}
-                      Remove all subjects from this batch
-                    </button>
+                  {!activeTopic && (
+                    <>
+                      <p className="mt-2 rounded-lg bg-slate-50 px-3 py-1.5 text-[11px] leading-snug text-slate-600 dark:bg-white/5 dark:text-slate-400 sm:text-xs">
+                        <strong className="font-semibold text-slate-800 dark:text-slate-200">How it works:</strong>{" "}
+                        Check subjects → <em>Add to course</em>. New Telegram uploads sync automatically.
+                      </p>
+                      {preview?.channelMode === "flat" && (
+                        <p className="mt-1.5 rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-[11px] leading-snug text-sky-800 dark:border-sky-900/40 dark:bg-sky-950/30 dark:text-sky-200 sm:text-xs">
+                          Flat channel — subjects grouped from captions (Topic / Batch) and file names. Videos and PDFs
+                          both included.
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
 
@@ -1000,9 +1132,9 @@ const TelegramImportPage = () => {
                     <p className="text-sm">Loading subjects…</p>
                   </div>
                 ) : (
-                  <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(240px,300px)_1fr] lg:overflow-hidden">
+                  <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(220px,260px)_1fr] lg:overflow-hidden">
                     <div
-                      className={`flex min-h-0 flex-col overflow-hidden border-b border-slate-200 lg:border-r lg:border-b-0 dark:border-slate-800 ${
+                      className={`tg-import-subjects flex min-h-0 flex-col overflow-hidden border-b border-slate-200 lg:border-r lg:border-b-0 dark:border-slate-800 ${
                         mobilePanel === "detail" ? "hidden lg:flex" : "flex"
                       }`}
                     >
@@ -1073,18 +1205,15 @@ const TelegramImportPage = () => {
                           const canAdd = !topicInCourse(topic);
                           const inCourse = topicInCourse(topic);
                           const isChecked = selectedToAddIds.has(topic.id);
-                          const rowClass = inCourse
-                            ? isActive
-                              ? "border-l-4 border-emerald-500 bg-emerald-100/90 dark:border-emerald-400 dark:bg-emerald-950/50"
-                              : "border-l-4 border-emerald-400/80 bg-emerald-50/80 dark:border-emerald-600 dark:bg-emerald-950/25"
-                            : isActive
-                              ? "border-l-4 border-teal-500 bg-teal-50 dark:border-teal-400 dark:bg-teal-950/30"
-                              : "border-l-4 border-transparent hover:bg-slate-50 dark:hover:bg-white/3";
+                          const rowClass = [
+                            "tg-import-subject-row flex items-start gap-2.5 border-b border-slate-200/80 px-3 py-2.5 dark:border-slate-800/80",
+                            isActive ? "tg-import-subject-row--active" : "",
+                            inCourse ? "tg-import-subject-row--in-course" : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" ");
                           return (
-                            <div
-                              key={topic.id}
-                              className={`flex items-start gap-2 border-b border-slate-100 px-3 py-3 transition dark:border-slate-800/80 ${rowClass}`}
-                            >
+                            <div key={topic.id} className={rowClass}>
                               {canAdd ? (
                                 <input
                                   type="checkbox"
@@ -1107,18 +1236,30 @@ const TelegramImportPage = () => {
                                 }}
                               >
                                 <span className="flex flex-wrap items-center gap-1.5">
-                                  <span className="font-medium text-slate-800 dark:text-slate-100">{topic.title}</span>
-                                  {inCourse && (
-                                    <span className="rounded bg-emerald-600/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300">
-                                      In batch
-                                    </span>
-                                  )}
-                                </span>
-                                <span className="mt-0.5 flex flex-wrap items-center gap-2">
-                                  <StatusBadge topic={topic} />
-                                  <span className="text-xs text-slate-400">
-                                    {topic.mediaCount} lesson{topic.mediaCount === 1 ? "" : "s"}
+                                  <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                                    {topic.title}
                                   </span>
+                                  {inCourse ? (
+                                    <span className="tg-import-chip tg-import-chip--done">In batch</span>
+                                  ) : null}
+                                </span>
+                                <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                                  {topic.newCount > 0 ? (
+                                    <span className="tg-import-chip tg-import-chip--new">
+                                      {topic.newCount} new
+                                    </span>
+                                  ) : null}
+                                  {topic.videoCount > 0 ? (
+                                    <span className="tg-import-chip tg-import-chip--video">
+                                      {topic.videoCount} video{topic.videoCount === 1 ? "" : "s"}
+                                    </span>
+                                  ) : null}
+                                  {topic.pdfCount > 0 ? (
+                                    <span className="tg-import-chip tg-import-chip--pdf">
+                                      {topic.pdfCount} PDF{topic.pdfCount === 1 ? "" : "s"}
+                                    </span>
+                                  ) : null}
+                                  <span className="text-[11px] text-slate-400">{topic.mediaCount} total</span>
                                 </span>
                               </button>
                             </div>
@@ -1166,7 +1307,7 @@ const TelegramImportPage = () => {
                     >
                       {activeTopic ? (
                         <>
-                          <div className="shrink-0 space-y-3 p-3 sm:p-4">
+                          <div className="tg-import-toolbar shrink-0 space-y-2.5 p-3 sm:p-4">
                           <button
                             type="button"
                             className="btn-ghost text-sm lg:hidden"
@@ -1174,13 +1315,16 @@ const TelegramImportPage = () => {
                           >
                             <FiArrowLeft size={14} /> All subjects
                           </button>
-                          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
-                            <div>
-                              <h3 className="text-base font-semibold sm:text-lg">{activeTopic.title}</h3>
-                              <div className="mt-1">
-                                <StatusBadge topic={activeTopic} />
-                              </div>
+                          <div className="flex flex-col gap-2.5 lg:flex-row lg:items-center lg:justify-between">
+                            <div className="min-w-0">
+                              <h3 className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-50">
+                                {activeTopic.title}
+                              </h3>
+                              <p className="mt-0.5 text-xs text-slate-500">
+                                {mediaCounts.all} lessons · {mediaCounts.video} videos · {mediaCounts.pdf} PDFs
+                              </p>
                             </div>
+                            <div className="flex flex-wrap gap-2">
                             {activeTopic.newCount > 0 && topicInCourse(activeTopic) && (
                               <button
                                 type="button"
@@ -1220,17 +1364,12 @@ const TelegramImportPage = () => {
                                 Add to course
                               </button>
                             )}
+                            </div>
                           </div>
 
-                          <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3 dark:border-slate-700 dark:bg-slate-900/40">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                              Import to course
-                            </p>
-                            <p className="mt-1 text-xs text-slate-500">
-                              Choose videos, PDFs, or both. Future &quot;Download new&quot; syncs use the same choice.
-                            </p>
-                            <div className="mt-2 flex flex-wrap gap-4">
-                              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                          <div className="flex flex-col gap-2.5 xl:flex-row xl:items-center xl:justify-between">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <label className="tg-import-toggle cursor-pointer">
                                 <input
                                   type="checkbox"
                                   className="shrink-0"
@@ -1243,10 +1382,10 @@ const TelegramImportPage = () => {
                                     setTopicMediaPref(activeTopic.id, "includeVideos", e.target.checked)
                                   }
                                 />
-                                <FiPlay size={14} className="text-teal-600" />
+                                <FiPlay size={13} />
                                 Videos ({mediaCounts.video})
                               </label>
-                              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                              <label className="tg-import-toggle cursor-pointer">
                                 <input
                                   type="checkbox"
                                   className="shrink-0"
@@ -1259,29 +1398,12 @@ const TelegramImportPage = () => {
                                     setTopicMediaPref(activeTopic.id, "includePdfs", e.target.checked)
                                   }
                                 />
-                                <FiFileText size={14} className="text-teal-600" />
+                                <FiFileText size={13} />
                                 PDFs ({mediaCounts.pdf})
                               </label>
                             </div>
-                            {!activeTopicPrefs.includeVideos && !activeTopicPrefs.includePdfs && (
-                              <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">
-                                Select at least one type to import.
-                              </p>
-                            )}
-                            {activeTopic.mediaLoaded && activeImportableCount > 0 && (
-                              <p className="mt-2 text-xs text-slate-500">
-                                Will import {activeImportableCount} selected lesson
-                                {activeImportableCount === 1 ? "" : "s"} in the order shown below.
-                              </p>
-                            )}
-                            {activeTopic.mediaLoaded && activeImportableCount === 0 && (
-                              <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">
-                                Select at least one lesson in the list below.
-                              </p>
-                            )}
-                          </div>
 
-                          <div className="mt-3 flex w-full flex-wrap gap-1 rounded-lg border border-slate-200 p-0.5 sm:w-auto dark:border-slate-700">
+                            <div className="tg-import-segment">
                             {[
                               { id: "all", label: "All", count: mediaCounts.all },
                               { id: "video", label: "Videos", count: mediaCounts.video },
@@ -1290,33 +1412,30 @@ const TelegramImportPage = () => {
                               <button
                                 key={tab.id}
                                 type="button"
-                                className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition sm:flex-none sm:px-3 ${
-                                  mediaFilter === tab.id
-                                    ? "bg-teal-600 text-white"
-                                    : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/5"
+                                className={`tg-import-segment__btn ${
+                                  mediaFilter === tab.id ? "tg-import-segment__btn--active" : ""
                                 }`}
                                 onClick={() => setMediaFilter(tab.id)}
                               >
                                 {tab.label} ({tab.count})
                               </button>
                             ))}
-                          </div>
+                            </div>
 
-                          {activeTopic?.mediaLoaded ? (
-                            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-                              <div className="relative min-w-0 flex-1">
+                            {activeTopic?.mediaLoaded ? (
+                              <div className="relative min-w-0 flex-1 lg:min-w-[200px]">
                                 <FiSearch
-                                  className="pointer-events-none absolute left-3.5 top-1/2 z-10 -translate-y-1/2 text-slate-400"
+                                  className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 text-slate-400"
                                   size={14}
                                 />
                                 <input
-                                  className="input w-full !pl-10 pr-10 text-sm"
+                                  className="input w-full !py-1.5 !pl-9 pr-9 text-sm"
                                   placeholder={
                                     mediaFilter === "pdf"
-                                      ? "Search PDF file names…"
+                                      ? "Search PDFs…"
                                       : mediaFilter === "video"
-                                        ? "Search video names…"
-                                        : "Search file names…"
+                                        ? "Search videos…"
+                                        : "Search files…"
                                   }
                                   value={mediaSearch}
                                   onChange={(e) => setMediaSearch(e.target.value)}
@@ -1333,13 +1452,16 @@ const TelegramImportPage = () => {
                                   </button>
                                 ) : null}
                               </div>
-                              {mediaSearchActive ? (
-                                <p className="shrink-0 text-xs text-slate-500">
-                                  {filteredMedia.length} of {baseFilteredMedia.length} match
-                                  {filteredMedia.length === 1 ? "" : "es"}
-                                </p>
-                              ) : null}
-                            </div>
+                            ) : null}
+                          </div>
+
+                          {(!activeTopicPrefs.includeVideos && !activeTopicPrefs.includePdfs) ||
+                          (activeTopic.mediaLoaded && activeImportableCount === 0) ? (
+                            <p className="text-xs text-rose-600 dark:text-rose-400">
+                              {!activeTopicPrefs.includeVideos && !activeTopicPrefs.includePdfs
+                                ? "Select at least one type (videos or PDFs) to import."
+                                : "Select at least one lesson in the list below."}
+                            </p>
                           ) : null}
 
                           {previewFile && previewStreamUrl && previewFile.mediaType === "video" && (
@@ -1373,7 +1495,7 @@ const TelegramImportPage = () => {
                           )}
                           </div>
 
-                          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 pb-4 sm:px-4">
+                          <div className="tg-import-lesson-list min-h-0 flex-1 space-y-2 overflow-y-auto px-3 pb-4 pt-2 sm:px-4">
                             {topicMediaLoading && !activeTopic?.mediaLoaded && (
                               <div className="flex items-center justify-center gap-2 py-8 text-sm text-slate-400">
                                 <FiLoader className="animate-spin" size={16} />
@@ -1381,9 +1503,10 @@ const TelegramImportPage = () => {
                               </div>
                             )}
                             {activeTopic?.mediaLoaded && selectableMediaInView.length > 0 && (
-                              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40">
-                                <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
-                                  Pick lessons, rename titles, and set playback order
+                              <div className="tg-import-lesson-bar mb-1 flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5">
+                                <p className="text-[11px] font-medium text-slate-600 dark:text-slate-300">
+                                  {filteredMedia.length} lesson{filteredMedia.length === 1 ? "" : "s"} shown
+                                  {mediaSearchActive ? ` · filtered` : ""}
                                 </p>
                                 <div className="flex gap-2">
                                   <button
@@ -1405,30 +1528,29 @@ const TelegramImportPage = () => {
                                 </div>
                               </div>
                             )}
-                            {filteredMedia.map((item, index) => {
+                            {filteredMedia.map((item) => {
                               const planEntry = activeLessonPlan?.entries[item.messageId];
                               const orderIndex = activeLessonPlan?.order?.indexOf(item.messageId) ?? -1;
                               const canReorder = !item.imported && orderIndex >= 0;
+                              const captionFields = getLessonCaptionFields(item);
                               const displayTitle =
                                 planEntry?.displayName ??
                                 (item.imported ? mediaDisplayName(item) : suggestLessonTitle(item));
+                              const lessonClass = [
+                                "tg-import-lesson flex items-start gap-2.5 p-2.5 sm:gap-3",
+                                item.imported ? "tg-import-lesson--imported" : "",
+                                !item.imported && planEntry?.selected === false ? "tg-import-lesson--muted" : "",
+                              ]
+                                .filter(Boolean)
+                                .join(" ");
 
                               return (
-                              <div
-                                key={item.messageId}
-                                className={`flex flex-col gap-2 rounded-xl border p-3 sm:flex-row sm:items-start sm:gap-3 ${
-                                  item.imported
-                                    ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/40 dark:bg-emerald-950/20"
-                                    : planEntry?.selected === false
-                                      ? "border-slate-200 opacity-70 dark:border-slate-700"
-                                      : "border-slate-200 dark:border-slate-700"
-                                }`}
-                              >
-                                <div className="flex min-w-0 flex-1 items-start gap-3">
+                              <div key={item.messageId} className={lessonClass}>
+                                <div className="flex shrink-0 flex-col items-center gap-1.5 pt-0.5">
                                   {!item.imported ? (
                                     <input
                                       type="checkbox"
-                                      className="mt-1 shrink-0"
+                                      className="shrink-0"
                                       checked={planEntry?.selected !== false}
                                       disabled={busy}
                                       onChange={(e) =>
@@ -1436,81 +1558,113 @@ const TelegramImportPage = () => {
                                       }
                                     />
                                   ) : (
-                                    <span className="mt-1 flex h-4 w-4 shrink-0 items-center justify-center text-emerald-600">
-                                      <FiCheck size={14} />
-                                    </span>
+                                    <FiCheck size={14} className="text-emerald-600" />
                                   )}
-                                  {!item.imported && canReorder && (
-                                    <span className="mt-0.5 w-5 shrink-0 text-center text-xs font-semibold text-slate-400">
-                                      {orderIndex + 1}
+                                  {!item.imported && canReorder ? (
+                                    <span className="tg-import-lesson__index">{orderIndex + 1}</span>
+                                  ) : null}
+                                </div>
+
+                                {item.mediaType === "video" ? (
+                                  <button
+                                    type="button"
+                                    className={[
+                                      "tg-import-lesson__thumb shrink-0",
+                                      item.hasThumbnail === false ? "tg-import-lesson__thumb--fallback" : "",
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" ")}
+                                    disabled={busy}
+                                    onClick={() => openVideoThumbMenu(item, activeTopic)}
+                                    title="Video options"
+                                  >
+                                    {selectedChannel?.id && item.hasThumbnail !== false ? (
+                                      <img
+                                        src={buildTelegramThumbnailUrl(selectedChannel.id, item.messageId)}
+                                        alt=""
+                                        loading="lazy"
+                                        decoding="async"
+                                        onError={(e) => {
+                                          e.currentTarget.hidden = true;
+                                          e.currentTarget.closest(".tg-import-lesson__thumb")?.classList.add(
+                                            "tg-import-lesson__thumb--fallback"
+                                          );
+                                        }}
+                                      />
+                                    ) : null}
+                                    <span className="tg-import-lesson__thumb-play" aria-hidden="true">
+                                      <FiPlay size={16} />
                                     </span>
-                                  )}
-                                  {item.mediaType === "video" ? (
+                                  </button>
+                                ) : (
+                                  <div className="flex shrink-0 flex-col gap-1">
                                     <button
                                       type="button"
-                                      className="btn-ghost shrink-0 px-2 py-1 text-xs"
+                                      className="btn-secondary px-2 py-1 text-[11px]"
                                       disabled={busy}
-                                      onClick={() => openPreview(item, activeTopic)}
-                                      title="Preview video"
+                                      onClick={() => openPdfInNewTab(item)}
+                                      title="Open PDF"
                                     >
-                                      <FiPlay size={14} />
+                                      <FiEye size={12} />
                                     </button>
+                                    <button
+                                      type="button"
+                                      className="btn-ghost px-2 py-1 text-[11px]"
+                                      disabled={busy || downloadingPdfIds.has(item.messageId)}
+                                      onClick={() => downloadPdfToPc(item)}
+                                      title="Download PDF"
+                                    >
+                                      {downloadingPdfIds.has(item.messageId) ? (
+                                        <FiLoader size={12} className="animate-spin" />
+                                      ) : (
+                                        <FiDownload size={12} />
+                                      )}
+                                    </button>
+                                  </div>
+                                )}
+
+                                <div className="min-w-0 flex-1">
+                                  {!item.imported ? (
+                                    <input
+                                      className="tg-import-lesson__title-input input w-full text-sm"
+                                      value={displayTitle}
+                                      disabled={busy}
+                                      onChange={(e) =>
+                                        setLessonDisplayName(
+                                          activeTopic.id,
+                                          item.messageId,
+                                          e.target.value
+                                        )
+                                      }
+                                      placeholder="Lesson title in your course"
+                                    />
                                   ) : (
-                                    <div className="flex shrink-0 flex-col gap-1 sm:flex-row">
-                                      <button
-                                        type="button"
-                                        className="btn-secondary px-2 py-1 text-xs"
-                                        disabled={busy}
-                                        onClick={() => openPdfInNewTab(item)}
-                                        title="Open PDF in a new tab"
-                                      >
-                                        <FiEye size={12} /> View
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="btn-ghost px-2 py-1 text-xs"
-                                        disabled={busy || downloadingPdfIds.has(item.messageId)}
-                                        onClick={() => downloadPdfToPc(item)}
-                                        title="Download PDF to your PC"
-                                      >
-                                        {downloadingPdfIds.has(item.messageId) ? (
-                                          <FiLoader size={12} className="animate-spin" />
-                                        ) : (
-                                          <FiDownload size={12} />
-                                        )}{" "}
-                                        Save
-                                      </button>
-                                    </div>
-                                  )}
-                                  <div className="min-w-0 flex-1 space-y-1">
-                                    {!item.imported ? (
-                                      <input
-                                        className="input w-full text-sm"
-                                        value={displayTitle}
-                                        disabled={busy}
-                                        onChange={(e) =>
-                                          setLessonDisplayName(
-                                            activeTopic.id,
-                                            item.messageId,
-                                            e.target.value
-                                          )
-                                        }
-                                        placeholder="Lesson title in your course"
-                                      />
-                                    ) : (
-                                      <p className="truncate font-medium">{displayTitle}</p>
-                                    )}
-                                    <p className="text-xs text-slate-500">
-                                      {formatTelegramMediaMeta(item)}
-                                      {item.mediaType === "pdf" && item.fileName ? (
-                                        <span className="text-slate-400"> · Telegram: {item.fileName}</span>
-                                      ) : null}
+                                    <p className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
+                                      {displayTitle}
                                     </p>
+                                  )}
+                                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                    <span
+                                      className={`tg-import-chip ${
+                                        item.mediaType === "video"
+                                          ? "tg-import-chip--video"
+                                          : "tg-import-chip--pdf"
+                                      }`}
+                                    >
+                                      {item.mediaType === "video" ? "Video" : "PDF"}
+                                    </span>
+                                    {captionFields.index ? (
+                                      <span className="tg-import-lesson__meta">#{captionFields.index}</span>
+                                    ) : null}
+                                    <span className="tg-import-lesson__meta">
+                                      {formatTelegramMediaMeta(item)}
+                                    </span>
                                   </div>
                                 </div>
-                                <div className="flex shrink-0 items-center gap-1 self-start sm:self-center">
+
+                                <div className="flex shrink-0 flex-col items-end gap-1 self-start">
                                   {!item.imported && canReorder && (
-                                    <>
+                                    <div className="flex gap-0.5">
                                       <button
                                         type="button"
                                         className="btn-ghost p-1"
@@ -1518,7 +1672,7 @@ const TelegramImportPage = () => {
                                         onClick={() => moveLessonInPlan(activeTopic.id, item.messageId, -1)}
                                         aria-label="Move up"
                                       >
-                                        <FiChevronUp size={16} />
+                                        <FiChevronUp size={15} />
                                       </button>
                                       <button
                                         type="button"
@@ -1531,16 +1685,14 @@ const TelegramImportPage = () => {
                                         onClick={() => moveLessonInPlan(activeTopic.id, item.messageId, 1)}
                                         aria-label="Move down"
                                       >
-                                        <FiChevronDown size={16} />
+                                        <FiChevronDown size={15} />
                                       </button>
-                                    </>
+                                    </div>
                                   )}
                                   {item.imported ? (
-                                    <span className="flex items-center gap-1 text-xs font-semibold text-emerald-600">
-                                      <FiCheck size={12} /> In course
-                                    </span>
+                                    <span className="tg-import-chip tg-import-chip--done">In course</span>
                                   ) : (
-                                    <span className="text-xs font-medium text-amber-600">New</span>
+                                    <span className="tg-import-chip tg-import-chip--new">New</span>
                                   )}
                                 </div>
                               </div>
@@ -1567,7 +1719,9 @@ const TelegramImportPage = () => {
                           </div>
                         </>
                       ) : (
-                        <p className="py-12 text-center text-sm text-slate-400">Select a subject on the left</p>
+                        <div className="tg-import-detail-empty">
+                          <p>Select a subject from the left to browse lessons</p>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -1581,6 +1735,103 @@ const TelegramImportPage = () => {
           <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
             Open a coaching batch on the Dashboard first, then use Import batch again.
           </p>
+        )}
+
+        {videoThumbMenu && (
+          <div
+            className="modal-overlay z-[60]"
+            role="presentation"
+            onClick={() => setVideoThumbMenu(null)}
+          >
+            <div
+              className="tg-import-thumb-menu modal-card max-w-sm"
+              role="dialog"
+              aria-labelledby="tg-thumb-menu-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p id="tg-thumb-menu-title" className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    Video options
+                  </p>
+                  <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">
+                    {videoThumbMenu.displayName}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn-ghost shrink-0 p-1"
+                  onClick={() => setVideoThumbMenu(null)}
+                  aria-label="Close"
+                >
+                  <FiX size={16} />
+                </button>
+              </div>
+
+              {selectedChannel?.id && videoThumbMenu.item.hasThumbnail !== false ? (
+                <div className="tg-import-thumb-menu__preview mt-3 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
+                  <img
+                    src={buildTelegramThumbnailUrl(selectedChannel.id, videoThumbMenu.item.messageId)}
+                    alt=""
+                    className="h-28 w-full object-cover"
+                  />
+                </div>
+              ) : null}
+
+              <div className="mt-4 grid gap-2">
+                <button type="button" className="tg-import-thumb-menu__action" onClick={playVideoFromThumbMenu}>
+                  <FiPlay size={16} />
+                  Play video
+                </button>
+                <button
+                  type="button"
+                  className="tg-import-thumb-menu__action"
+                  disabled={videoThumbMenu.item.hasThumbnail === false}
+                  onClick={previewThumbInLightbox}
+                  title={
+                    videoThumbMenu.item.hasThumbnail === false
+                      ? "No thumbnail available for this video"
+                      : "Open thumbnail in a larger view"
+                  }
+                >
+                  <FiImage size={16} />
+                  Preview thumbnail
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {thumbLightbox && (
+          <div
+            className="modal-overlay z-[70] tg-import-thumb-lightbox"
+            role="presentation"
+            onClick={() => setThumbLightbox(null)}
+          >
+            <div
+              className="tg-import-thumb-lightbox__panel"
+              role="dialog"
+              aria-label="Video thumbnail preview"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="tg-import-thumb-lightbox__header">
+                <p className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  {thumbLightbox.title}
+                </p>
+                <button
+                  type="button"
+                  className="btn-ghost shrink-0 p-1"
+                  onClick={() => setThumbLightbox(null)}
+                  aria-label="Close thumbnail preview"
+                >
+                  <FiX size={18} />
+                </button>
+              </div>
+              <div className="tg-import-thumb-lightbox__body">
+                <img src={thumbLightbox.url} alt="" className="tg-import-thumb-lightbox__image" />
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </Layout>
