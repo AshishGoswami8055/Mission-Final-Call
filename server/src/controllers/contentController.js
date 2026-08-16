@@ -52,6 +52,12 @@ import {
   startLocalLibraryDownload,
 } from "../services/localLibraryService.js";
 import { ensureBrowserPlayableAbsolute } from "../services/browserPlayableVideoService.js";
+import {
+  ensureYoutubePlaybackCache,
+  getYoutubePlaybackCacheStatus,
+  removeYoutubePlaybackCache,
+  resolveYoutubeLessonUrl,
+} from "../services/youtubePlaybackCacheService.js";
 import { streamLocalFile } from "../utils/streamLocalFile.js";
 import { formatBytesLabel, isTelegramStreamContent } from "../utils/contentPlayback.js";
 import { getStreamCacheStatusByMessage, getCompleteStreamCacheFile } from "../services/telegramStreamCacheService.js";
@@ -1137,6 +1143,120 @@ export const replaceContentLocalLibrary = async (req, res) => {
       }
     }
     res.status(400).json({ message: error.message || "Could not replace PC library file" });
+  }
+};
+
+export const getYoutubePlaybackStatus = async (req, res) => {
+  try {
+    const content = await Content.findById(req.params.id);
+    if (!content) return res.status(404).json({ message: "Content not found" });
+
+    const sourceUrl = resolveYoutubeLessonUrl(content);
+    if (!sourceUrl) {
+      return res.status(400).json({ message: "This lesson is not a YouTube link." });
+    }
+
+    const status = getYoutubePlaybackCacheStatus(content._id);
+    res.json({
+      ...status,
+      eligible: isLocalLibraryEnabled(),
+      sourceUrl,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Could not read YouTube playback status" });
+  }
+};
+
+export const prepareYoutubePlayback = async (req, res) => {
+  try {
+    if (!isLocalLibraryEnabled()) {
+      return res.status(403).json({
+        message: "CDS player for YouTube is only available on the local study server.",
+      });
+    }
+
+    const content = await Content.findById(req.params.id);
+    if (!content) return res.status(404).json({ message: "Content not found" });
+
+    const sourceUrl = resolveYoutubeLessonUrl(content);
+    if (!sourceUrl) {
+      return res.status(400).json({ message: "This lesson is not a YouTube link." });
+    }
+
+    const status = getYoutubePlaybackCacheStatus(content._id);
+    if (status.ready) {
+      return res.json({ ...status, eligible: true, sourceUrl });
+    }
+
+    if (status.preparing) {
+      return res.status(202).json({ ...status, eligible: true, sourceUrl });
+    }
+
+    void ensureYoutubePlaybackCache(content._id).catch(() => {});
+    res.status(202).json({
+      ...getYoutubePlaybackCacheStatus(content._id),
+      eligible: true,
+      sourceUrl,
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Could not prepare YouTube playback" });
+  }
+};
+
+export const streamYoutubePlayback = async (req, res) => {
+  try {
+    if (!isLocalLibraryEnabled()) {
+      return res.status(403).json({ message: "YouTube CDS playback is only available on localhost." });
+    }
+
+    const absolute = await ensureYoutubePlaybackCache(req.params.id);
+    const ext = path.extname(absolute).toLowerCase();
+    const contentType =
+      ext === ".webm"
+        ? "video/webm"
+        : ext === ".mkv"
+          ? "video/x-matroska"
+          : ext === ".mov"
+            ? "video/quicktime"
+            : "video/mp4";
+
+    streamLocalFile({
+      req,
+      res,
+      absolutePath: absolute,
+      contentType,
+      fileName: `${req.params.id}_youtube${ext || ".mp4"}`,
+      asAttachment: false,
+    });
+  } catch (error) {
+    if (!res.headersSent) {
+      res.status(400).json({ message: error.message || "Could not stream YouTube playback" });
+    }
+  }
+};
+
+export const deleteYoutubePlayback = async (req, res) => {
+  try {
+    if (!isLocalLibraryEnabled()) {
+      return res.status(403).json({ message: "YouTube CDS playback is only available on localhost." });
+    }
+
+    const content = await Content.findById(req.params.id);
+    if (!content) return res.status(404).json({ message: "Content not found" });
+
+    const sourceUrl = resolveYoutubeLessonUrl(content);
+    if (!sourceUrl) {
+      return res.status(400).json({ message: "This lesson is not a YouTube link." });
+    }
+
+    const result = removeYoutubePlaybackCache(content._id);
+    res.json({
+      ...result,
+      ...getYoutubePlaybackCacheStatus(content._id),
+      message: "YouTube playback cache cleared. Re-open the lesson to download at full quality.",
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Could not clear YouTube playback cache" });
   }
 };
 

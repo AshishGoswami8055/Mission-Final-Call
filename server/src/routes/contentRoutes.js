@@ -9,6 +9,10 @@ import {
   deleteContentLocalLibrary,
   replaceContentLocalLibrary,
   streamBrowserPlayableVideo,
+  getYoutubePlaybackStatus,
+  prepareYoutubePlayback,
+  streamYoutubePlayback,
+  deleteYoutubePlayback,
   deleteContentPlaybackCache,
   getContentById,
   getContentLocalLibrary,
@@ -33,6 +37,7 @@ const router = express.Router();
 
 router.get("/:id/download-file", protectStream, downloadContentFile);
 router.get("/:id/browser-playable/stream", protectStream, streamBrowserPlayableVideo);
+router.get("/:id/youtube-playback/stream", protectStream, streamYoutubePlayback);
 router.get("/:id/stream-cache/play", protectStream, streamContentCachePlay);
 router.use(protect);
 router.get("/upload-progress/:uploadId", getUploadProgress);
@@ -44,6 +49,9 @@ router.patch("/reorder", reorderContent);
 router.get("/:id/playback-cache", getContentPlaybackCache);
 router.post("/:id/playback-cache", startContentPlaybackCache);
 router.delete("/:id/playback-cache", deleteContentPlaybackCache);
+router.get("/:id/youtube-playback", getYoutubePlaybackStatus);
+router.post("/:id/youtube-playback", prepareYoutubePlayback);
+router.delete("/:id/youtube-playback", deleteYoutubePlayback);
 router.get("/:id/local-library", assertLocalLibrary, getContentLocalLibrary);
 router.get("/:id/stream-cache", assertLocalLibrary, getContentStreamCache);
 router.post("/:id/local-library", assertLocalLibrary, startContentLocalLibrary);

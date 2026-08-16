@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_UPLOAD_FOLDER } from "../config/cdsCourses.js";
+import { getYoutubeCookiesPath } from "../config/mediaStorage.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -82,10 +83,11 @@ export const getDownloaderCommand = async () => {
     const home = os.homedir();
     const localAppData = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
     const winApps = path.join(localAppData, "Microsoft", "WindowsApps", "yt-dlp.exe");
+    const pipUser314 = path.join(home, "AppData", "Local", "Python", "pythoncore-3.14-64", "Scripts", "yt-dlp.exe");
     const pipUser = path.join(home, "AppData", "Roaming", "Python", "Python313", "Scripts", "yt-dlp.exe");
     const pipUser312 = path.join(home, "AppData", "Roaming", "Python", "Python312", "Scripts", "yt-dlp.exe");
     const pipUser311 = path.join(home, "AppData", "Roaming", "Python", "Python311", "Scripts", "yt-dlp.exe");
-    [winApps, pipUser, pipUser312, pipUser311].forEach((fullPath) => {
+    [winApps, pipUser314, pipUser, pipUser312, pipUser311].forEach((fullPath) => {
       candidates.push({ cmd: fullPath, prefixArgs: [] });
     });
 
@@ -238,6 +240,170 @@ const resolveFfmpegLocation = async () => {
   return null;
 };
 
+let cachedJsRuntimeArgs = null;
+
+const resolveJsRuntimeArgs = async () => {
+  const fromEnv = String(process.env.YT_DLP_JS_RUNTIMES || "").trim();
+  if (fromEnv) {
+    return ["--js-runtimes", fromEnv];
+  }
+
+  const nodeCandidates = [
+    process.execPath,
+    "node",
+    "node.exe",
+    path.join(process.env.ProgramFiles || "C:\\Program Files", "nodejs", "node.exe"),
+    path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "nodejs", "node.exe"),
+    "D:\\Nodejs\\node.exe",
+  ].filter(Boolean);
+
+  for (const cmd of nodeCandidates) {
+    const hasPathSeparator = /[\\/]/.test(cmd);
+    if (hasPathSeparator && !fs.existsSync(cmd)) continue;
+    try {
+      await run(cmd, ["--version"]);
+      return hasPathSeparator ? ["--js-runtimes", `node:${cmd}`] : ["--js-runtimes", "node"];
+    } catch {
+      // try next
+    }
+  }
+
+  if (process.platform === "win32") {
+    try {
+      const where = await run("where", ["node"]);
+      const firstLine = String(where.stdout || "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find(Boolean);
+      if (firstLine && fs.existsSync(firstLine)) {
+        return ["--js-runtimes", `node:${firstLine}`];
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return [];
+};
+
+const getJsRuntimeArgs = async () => {
+  if (cachedJsRuntimeArgs) return cachedJsRuntimeArgs;
+  cachedJsRuntimeArgs = await resolveJsRuntimeArgs();
+  return cachedJsRuntimeArgs;
+};
+
+let cachedCookieArgs = null;
+
+const looksLikeCookiesFile = (absolutePath) => {
+  try {
+    const text = fs.readFileSync(absolutePath, "utf8");
+    if (!/youtube\.com/i.test(text)) return false;
+    return /^# Netscape HTTP Cookie File/m.test(text) || text.includes("\t");
+  } catch {
+    return false;
+  }
+};
+
+export const resolveYoutubeCookieArgs = () => {
+  if (cachedCookieArgs) return cachedCookieArgs;
+
+  const fromEnvFile = String(process.env.YT_DLP_COOKIES_FILE || "").trim();
+  const candidates = [
+    fromEnvFile,
+    getYoutubeCookiesPath(),
+    path.resolve(__dirname, "..", "..", "data", "youtube_cookies.txt"),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const absolute = path.resolve(candidate);
+    if (fs.existsSync(absolute) && looksLikeCookiesFile(absolute)) {
+      cachedCookieArgs = ["--cookies", absolute];
+      return cachedCookieArgs;
+    }
+  }
+
+  const fromBrowser = String(process.env.YT_DLP_COOKIES_FROM_BROWSER || "").trim();
+  if (fromBrowser) {
+    cachedCookieArgs = ["--cookies-from-browser", fromBrowser];
+    return cachedCookieArgs;
+  }
+
+  cachedCookieArgs = [];
+  return cachedCookieArgs;
+};
+
+export const resetYoutubeCookieArgsCache = () => {
+  cachedCookieArgs = null;
+};
+
+export const getYoutubeCookiesStatus = () => {
+  const pathOnDisk = getYoutubeCookiesPath();
+  const args = resolveYoutubeCookieArgs();
+  const configured = args.length > 0;
+  let source = "none";
+  if (args[0] === "--cookies") source = "file";
+  if (args[0] === "--cookies-from-browser") source = "browser";
+
+  return {
+    configured,
+    source,
+    path: args[0] === "--cookies" ? args[1] : pathOnDisk,
+    expectedPath: pathOnDisk,
+    hasFileAtExpectedPath: fs.existsSync(pathOnDisk) && looksLikeCookiesFile(pathOnDisk),
+  };
+};
+
+export const saveYoutubeCookiesFile = (contents) => {
+  const text = String(contents || "");
+  if (!/youtube\.com/i.test(text)) {
+    throw new Error("This cookies file does not contain youtube.com entries.");
+  }
+  const absolute = getYoutubeCookiesPath();
+  fs.mkdirSync(path.dirname(absolute), { recursive: true });
+  fs.writeFileSync(absolute, text, "utf8");
+  resetYoutubeCookieArgsCache();
+  return getYoutubeCookiesStatus();
+};
+
+export const formatYoutubeBotError = (message = "") => {
+  const text = String(message || "");
+  if (!/bot|cookies|sign in to confirm/i.test(text)) return text;
+  const status = getYoutubeCookiesStatus();
+  const expected = status.expectedPath;
+  return (
+    "YouTube blocked the server download (bot check). Export cookies while logged into YouTube: " +
+    "install the browser extension \"Get cookies.txt LOCALLY\", export for youtube.com, then upload the file below " +
+    `(or save it as ${expected}).`
+  );
+};
+
+const getYtDlpAuthArgs = async () => [...(await getJsRuntimeArgs()), ...resolveYoutubeCookieArgs()];
+
+export const probeVideoStream = async (absolutePath) => {
+  const probeRes = await run("ffprobe", [
+    "-v",
+    "error",
+    "-select_streams",
+    "v:0",
+    "-show_entries",
+    "stream=width,height,codec_name",
+    "-of",
+    "json",
+    absolutePath,
+  ]);
+  const parsed = parseJsonSafe(probeRes.stdout);
+  const stream = parsed?.streams?.[0];
+  const width = Number(stream?.width) || 0;
+  const height = Number(stream?.height) || 0;
+  const codec = String(stream?.codec_name || "").trim();
+  if (!width || !height) {
+    throw new Error("Could not read video resolution from downloaded file.");
+  }
+  return { width, height, codec };
+};
+
+const MIN_MAX_QUALITY_HEIGHT = 720;
+
 export const downloadYouTubeVideo = async ({
   url,
   titleHint = "",
@@ -245,6 +411,9 @@ export const downloadYouTubeVideo = async ({
   courseFolder = DEFAULT_UPLOAD_FOLDER,
   batchFolder = "Main",
   targetDir = null,
+  outputBase = null,
+  /** `upload` = H.264-friendly for Cloudinary; `max` = highest YouTube quality (stream copy, no re-encode). */
+  qualityProfile = "upload",
 }) => {
   if (!url) throw new Error("YouTube URL is required");
   const videosDir =
@@ -253,8 +422,21 @@ export const downloadYouTubeVideo = async ({
       : getVideosDirForSubject(courseFolder, batchFolder, subjectLabel);
   ensureVideosDir(videosDir);
   const { cmd, prefixArgs } = await getDownloaderCommand();
+  const authArgs = await getYtDlpAuthArgs();
+  const cookieArgs = resolveYoutubeCookieArgs();
 
-  const infoRes = await run(cmd, [...prefixArgs, "--dump-single-json", "--no-playlist", url]);
+  const useMaxQuality = qualityProfile === "max";
+  if (useMaxQuality && cookieArgs.length === 0) {
+    throw new Error(formatYoutubeBotError("Sign in to confirm you're not a bot"));
+  }
+
+  const infoRes = await run(cmd, [
+    ...prefixArgs,
+    ...authArgs,
+    "--dump-single-json",
+    "--no-playlist",
+    url,
+  ]);
   const info = parseJsonSafe(infoRes.stdout);
   if (!info?.id) {
     throw new Error("Could not read YouTube video information");
@@ -262,9 +444,11 @@ export const downloadYouTubeVideo = async ({
 
   // Prefer browser-safe MP4/H.264 + AAC at highest available quality, then fallback.
   const baseName = sanitizeFileBase(titleHint || info.title || info.id);
-  const finalBase = `${baseName}_${Date.now()}`;
+  const finalBase = outputBase ? sanitizeFileBase(outputBase) : `${baseName}_${Date.now()}`;
   const outputTemplate = path.join(videosDir, `${finalBase}.%(ext)s`);
-  const preferredFormat =
+  const ffmpegLocation = await resolveFfmpegLocation();
+
+  const uploadFormat =
     [
       "bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[acodec^=mp4a][ext=m4a]",
       "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]",
@@ -275,14 +459,30 @@ export const downloadYouTubeVideo = async ({
     ].join("/");
   const progressiveFormat =
     "best[ext=mp4][vcodec!=none][acodec!=none]/best[vcodec!=none][acodec!=none]";
-  const ffmpegLocation = await resolveFfmpegLocation();
+
+  const formatSelector = useMaxQuality
+    ? ffmpegLocation
+      ? "bestvideo*[height>=1080]+bestaudio/bestvideo*[height>=720]+bestaudio/bestvideo*+bestaudio/best"
+      : "best[height>=720][vcodec!=none][acodec!=none]/best[vcodec!=none][acodec!=none]"
+    : ffmpegLocation
+      ? uploadFormat
+      : progressiveFormat;
 
   const downloadArgs = [
     ...prefixArgs,
+    ...authArgs,
     "--no-playlist",
     "--format",
-    ffmpegLocation ? preferredFormat : progressiveFormat,
-    ...(ffmpegLocation ? ["--ffmpeg-location", ffmpegLocation, "--merge-output-format", "mp4"] : []),
+    formatSelector,
+    ...(ffmpegLocation
+      ? [
+          "--ffmpeg-location",
+          ffmpegLocation,
+          "--merge-output-format",
+          useMaxQuality ? "webm" : "mp4",
+          ...(useMaxQuality ? ["--postprocessor-args", "Merger+ffmpeg:-c copy"] : []),
+        ]
+      : []),
     "--output",
     outputTemplate,
     url,
@@ -306,7 +506,39 @@ export const downloadYouTubeVideo = async ({
   const absoluteOut = path.join(videosDir, match);
   const insideUploads = absoluteOut.startsWith(uploadRoot);
   const relativePath = insideUploads ? toUploadsWebPath(absoluteOut) : null;
-  const height = Number(info.height) || null;
+
+  let height = null;
+  let width = null;
+  let codec = null;
+  try {
+    const probe = await probeVideoStream(absoluteOut);
+    width = probe.width;
+    height = probe.height;
+    codec = probe.codec;
+  } catch (error) {
+    if (useMaxQuality) {
+      try {
+        fs.unlinkSync(absoluteOut);
+      } catch {
+        // ignore
+      }
+      throw error;
+    }
+    height = Number(info.height) || null;
+    width = Number(info.width) || null;
+  }
+
+  if (useMaxQuality && height < MIN_MAX_QUALITY_HEIGHT) {
+    try {
+      fs.unlinkSync(absoluteOut);
+    } catch {
+      // ignore
+    }
+    throw new Error(
+      `Downloaded video is only ${height}p. Full YouTube quality needs at least ${MIN_MAX_QUALITY_HEIGHT}p — try again or use Open on YouTube.`
+    );
+  }
+
   const used1080OrHigher = height ? height >= 1080 : null;
   const durationSeconds = Number(info.duration) || null;
 
@@ -318,6 +550,9 @@ export const downloadYouTubeVideo = async ({
       videoId: info.id,
       ext,
       height,
+      width,
+      codec,
+      qualityProfile,
       used1080OrHigher,
       durationSeconds,
       originalFilename: match,

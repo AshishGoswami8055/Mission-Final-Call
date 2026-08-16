@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { jsPDF } from "jspdf";
 import {
@@ -15,6 +15,7 @@ import {
   FiTrash2,
 } from "react-icons/fi";
 import { Link, useParams } from "react-router-dom";
+import ReactPlayer from "react-player";
 import api from "../api/client";
 import { useTelegramPlaybackStatus } from "../hooks/useTelegramPlaybackStatus";
 import MobileCollapsibleSection from "../components/MobileCollapsibleSection";
@@ -26,10 +27,12 @@ import SmoothPlaybackPanel from "../components/SmoothPlaybackPanel";
 import VideoPlaybackCachePanel from "../components/VideoPlaybackCachePanel";
 import { useStudy } from "../context/StudyContext";
 import { useTheme } from "../context/ThemeContext";
-import { buildStreamCachePlayUrl, getTelegramVideoUrl, isLocalFrontend, isTelegramLinkVideo, isTelegramStreamContent, isYouTubeUrl, preferSameOriginMediaUrl, resolveContentSrc, resolveVideoPlaybackUrl, toAbsoluteMediaUrl } from "../utils/media";
+import { buildStreamCachePlayUrl, buildYoutubePlaybackStreamUrl, getTelegramVideoUrl, isLocalFrontend, isTelegramLinkVideo, isTelegramStreamContent, isYouTubeUrl, preferSameOriginMediaUrl, resolveContentSrc, resolveVideoPlaybackUrl, toAbsoluteMediaUrl } from "../utils/media";
 import { captureVideoFrameDataUrl, resolvePlyrVideoElement, seekVideoTo, reloadVideoPreservingTime } from "../utils/videoScreenshot";
 import { fetchLocalLibraryStatus } from "../utils/localLibraryApi";
 import { fetchContentStreamCache } from "../utils/mediaStorageApi";
+import { fetchYoutubePlaybackStatus, startYoutubePlaybackPrepare } from "../utils/youtubePlaybackApi";
+import { uploadYoutubeCookiesFile } from "../utils/youtubeCookiesApi";
 import { downloadDataUrl, loadScreenshotNotes, saveScreenshotNotes } from "../utils/screenshotNotes";
 import { getYouTubeThumbnailDataUrl } from "../utils/youtubeThumbnail";
 
@@ -142,11 +145,22 @@ const VideoPlayerPage = () => {
   const [playbackStalled, setPlaybackStalled] = useState(false);
   const [cacheRefreshToken, setCacheRefreshToken] = useState(0);
   const [streamCacheComplete, setStreamCacheComplete] = useState(false);
+  const [youtubePlyrUrl, setYoutubePlyrUrl] = useState(null);
+  const [youtubePreparing, setYoutubePreparing] = useState(false);
+  const [youtubePrepareFailed, setYoutubePrepareFailed] = useState(false);
+  const [youtubeNeedsCookies, setYoutubeNeedsCookies] = useState(false);
+  const [youtubePrepareError, setYoutubePrepareError] = useState("");
+  const [youtubeCookiesUploading, setYoutubeCookiesUploading] = useState(false);
+  const [youtubeRetryToken, setYoutubeRetryToken] = useState(0);
   const [mobilePdfShowAll, setMobilePdfShowAll] = useState(false);
   const usingCacheRef = useRef(false);
   const usingLocalLibraryRef = useRef(false);
   const usingStreamCacheDiskRef = useRef(false);
   const videoRef = useRef(null);
+  const youtubePlayerRef = useRef(null);
+  const youtubeTimeRef = useRef(0);
+  const youtubeResumeAppliedRef = useRef(false);
+  const youtubeUiTickRef = useRef(0);
   const playerRef = useRef(null);
   const handleCaptureRef = useRef(() => {});
   const cachedPlayUrlRef = useRef(null);
@@ -172,20 +186,27 @@ const VideoPlayerPage = () => {
   const telegramLink = item ? getTelegramVideoUrl(item) : "";
   const rawSrc = item ? resolveContentSrc(item) : "";
   const isYoutube = !isTelegramLink && !isTelegramStream && isYouTubeUrl(rawSrc);
+  const useYoutubePlyr = Boolean(youtubePlyrUrl);
+  const showYoutubeEmbed = isYoutube && !useYoutubePlyr && !youtubePreparing;
   const canCachePlayback = Boolean(
     item &&
       (isTelegramStream ||
         item.sourceType === "cloudinary" ||
         (item.sourceType === "upload" && item.filePath))
   );
-  const src = isTelegramLink || isYoutube ? "" : preferSameOriginMediaUrl(rawSrc);
-  const playbackSrc = cachedPlayUrl
-    ? resolveVideoPlaybackUrl(cachedPlayUrl)
-    : streamCachePlayUrl
-      ? resolveVideoPlaybackUrl(streamCachePlayUrl)
-      : src;
+  const src = isTelegramLink || (isYoutube && !useYoutubePlyr) ? "" : preferSameOriginMediaUrl(rawSrc);
+  const playbackSrc = useYoutubePlyr
+    ? resolveVideoPlaybackUrl(youtubePlyrUrl)
+    : cachedPlayUrl
+      ? resolveVideoPlaybackUrl(cachedPlayUrl)
+      : streamCachePlayUrl
+        ? resolveVideoPlaybackUrl(streamCachePlayUrl)
+        : src;
   const playingFromDisk =
-    Boolean(cachedPlayUrl) || Boolean(streamCachePlayUrl) || usingStreamCacheDiskRef.current;
+    Boolean(cachedPlayUrl) ||
+    Boolean(streamCachePlayUrl) ||
+    usingStreamCacheDiskRef.current ||
+    useYoutubePlyr;
 
   const {
     telegramStatus,
@@ -196,9 +217,7 @@ const VideoPlayerPage = () => {
   } = useTelegramPlaybackStatus({ item, itemRef, isTelegramStream });
 
   const youtubeVideoId = isYoutube ? extractYoutubeVideoId(rawSrc) : "";
-  const youtubeThumb =
-    item?.thumbnail ||
-    (youtubeVideoId ? `https://img.youtube.com/vi/${youtubeVideoId}/hqdefault.jpg` : "");
+  const youtubePlayerConfig = useMemo(() => ({ youtube: { rel: 0 } }), []);
 
   const hintedDuration = Number(item?.duration) || 0;
   const hasVideoDuration = duration > 0 && Number.isFinite(duration);
@@ -213,8 +232,8 @@ const VideoPlayerPage = () => {
     !telegramBlocksStream &&
     (!hasVideoDuration || playbackStalled);
   const showStreamLoadingOverlay = showInitialLoader || showTelegramStreamLoader;
-  const scrubPreviewEnabled = Boolean(cachedPlayUrl || streamCacheComplete);
-  const showNativePlayer = !isTelegramLink && !isYoutube;
+  const scrubPreviewEnabled = Boolean(cachedPlayUrl || streamCacheComplete || useYoutubePlyr);
+  const showNativePlayer = !isTelegramLink && (!isYoutube || useYoutubePlyr);
   const showLibraryCheckOverlay =
     showNativePlayer && !playbackSourceReady && isLocalFrontend() && isTelegramStream && canCachePlayback;
 
@@ -265,6 +284,13 @@ const VideoPlayerPage = () => {
       return undefined;
     }
 
+    if (isYoutube) {
+      if (!isLocalFrontend()) {
+        setPlaybackSourceReady(true);
+      }
+      return undefined;
+    }
+
     let cancelled = false;
 
     const resolvePlaybackSource = async () => {
@@ -310,7 +336,85 @@ const VideoPlayerPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [id, item, canCachePlayback, isTelegramStream]);
+  }, [id, item, canCachePlayback, isTelegramStream, isYoutube]);
+
+  useEffect(() => {
+    if (!id || !item || !isYoutube || !isLocalFrontend()) {
+      setYoutubePlyrUrl(null);
+      setYoutubePreparing(false);
+      setYoutubePrepareFailed(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    let pollTimer = null;
+
+    const finishReady = () => {
+      if (cancelled) return;
+      setYoutubePlyrUrl(buildYoutubePlaybackStreamUrl(id));
+      setYoutubePreparing(false);
+      setYoutubePrepareFailed(false);
+      setPlaybackSourceReady(true);
+    };
+
+    const failToEmbed = (message) => {
+      if (cancelled) return;
+      setYoutubePlyrUrl(null);
+      setYoutubePreparing(false);
+      setYoutubePrepareFailed(true);
+      setYoutubePrepareError(message || "");
+      setYoutubeNeedsCookies(/cookies|bot|sign in/i.test(message || ""));
+      setPlaybackSourceReady(true);
+      if (message && !/cookies|bot|sign in/i.test(message)) toast.error(message);
+    };
+
+    const pollStatus = async () => {
+      if (cancelled) return;
+      try {
+        const { data } = await fetchYoutubePlaybackStatus(id);
+        if (cancelled) return;
+        if (data.ready) {
+          finishReady();
+          return;
+        }
+        if (data.error && !data.preparing) {
+          failToEmbed(data.error);
+          return;
+        }
+        setYoutubePreparing(true);
+        pollTimer = window.setTimeout(pollStatus, 2000);
+      } catch {
+        pollTimer = window.setTimeout(pollStatus, 3000);
+      }
+    };
+
+    const prepare = async () => {
+      setPlaybackSourceReady(false);
+      setYoutubePlyrUrl(null);
+      setYoutubePrepareFailed(false);
+      try {
+        const { data } = await fetchYoutubePlaybackStatus(id);
+        if (cancelled) return;
+        if (data.ready) {
+          finishReady();
+          return;
+        }
+        setYoutubePreparing(true);
+        if (!data.preparing) {
+          await startYoutubePlaybackPrepare(id);
+        }
+        pollTimer = window.setTimeout(pollStatus, 1500);
+      } catch (error) {
+        failToEmbed(error.response?.data?.message || "Could not prepare CDS player for YouTube");
+      }
+    };
+
+    void prepare();
+    return () => {
+      cancelled = true;
+      if (pollTimer) window.clearTimeout(pollTimer);
+    };
+  }, [id, item, isYoutube, youtubeRetryToken]);
 
   useEffect(() => {
     setPlayerGeneration(0);
@@ -320,12 +424,20 @@ const VideoPlayerPage = () => {
     setStreamCachePlayUrl(null);
     setStreamCacheComplete(false);
     setPlaybackSourceReady(false);
+    setYoutubePlyrUrl(null);
+    setYoutubePreparing(false);
+    setYoutubePrepareFailed(false);
+    setYoutubeNeedsCookies(false);
+    setYoutubePrepareError("");
     usingCacheRef.current = false;
     usingLocalLibraryRef.current = false;
     usingStreamCacheDiskRef.current = false;
     streamCacheCompleteRef.current = false;
     videoErrorRetriesRef.current = 0;
     resumeAppliedRef.current = false;
+    youtubeResumeAppliedRef.current = false;
+    youtubeTimeRef.current = 0;
+    youtubeUiTickRef.current = 0;
     pendingMidPlaybackRestoreRef.current = 0;
     hasStartedPlayingRef.current = false;
   }, [id]);
@@ -765,10 +877,36 @@ const VideoPlayerPage = () => {
     fetchRelatedPdfs();
   }, [item?.chapterId?._id]);
 
+  const handleYoutubeCookiesUpload = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setYoutubeCookiesUploading(true);
+    try {
+      await uploadYoutubeCookiesFile(file);
+      toast.success("YouTube cookies saved — retrying full-quality CDS download…");
+      setYoutubePrepareFailed(false);
+      setYoutubeNeedsCookies(false);
+      setYoutubePrepareError("");
+      setYoutubeRetryToken((token) => token + 1);
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Could not save YouTube cookies");
+    } finally {
+      setYoutubeCookiesUploading(false);
+    }
+  };
+
+  const handleRetryYoutubePlyr = () => {
+    setYoutubePrepareFailed(false);
+    setYoutubeNeedsCookies(false);
+    setYoutubePrepareError("");
+    setYoutubeRetryToken((token) => token + 1);
+  };
+
   const jumpToMoment = (timecode) => {
     const sec = parseTimecodeToSeconds(timecode);
     if (Number.isNaN(sec) || sec < 0) return;
-    if (!isYoutube && !isTelegramLink && videoRef.current) {
+    if ((!isYoutube || useYoutubePlyr) && !isTelegramLink && videoRef.current) {
       videoRef.current.currentTime = sec;
       setCurrentTime(sec);
       return;
@@ -780,9 +918,72 @@ const VideoPlayerPage = () => {
     }
     if (isYoutube) {
       setCurrentTime(sec);
+      youtubeTimeRef.current = sec;
+      const ytVideo = youtubePlayerRef.current;
+      if (ytVideo && Number.isFinite(ytVideo.currentTime)) {
+        ytVideo.currentTime = sec;
+        void ytVideo.play?.().catch(() => {});
+        return;
+      }
       window.open(buildYoutubeWatchUrl(rawSrc, sec), "_blank", "noopener,noreferrer");
+      return;
     }
   };
+
+  const handleYoutubeTimeUpdate = useCallback(
+    (event) => {
+      const t = event?.currentTarget?.currentTime;
+      if (!Number.isFinite(t)) return;
+      youtubeTimeRef.current = t;
+
+      const now = Date.now();
+      if (now - youtubeUiTickRef.current >= 1000) {
+        youtubeUiTickRef.current = now;
+        setCurrentTime(t);
+      }
+
+      if (id && Math.abs(t - lastSavedPositionRef.current) >= 5) {
+        lastSavedPositionRef.current = t;
+        saveVideoPosition(id, t);
+      }
+    },
+    [id]
+  );
+
+  const handleYoutubeSeeked = useCallback(
+    (event) => {
+      const t = event?.currentTarget?.currentTime;
+      if (!Number.isFinite(t)) return;
+      youtubeTimeRef.current = t;
+      setCurrentTime(t);
+      if (id) saveVideoPosition(id, t);
+    },
+    [id]
+  );
+
+  const handleYoutubeReady = useCallback(() => {
+    setPlaybackSourceReady(true);
+    if (youtubeResumeAppliedRef.current) return;
+    youtubeResumeAppliedRef.current = true;
+
+    const saved = loadVideoPosition(id);
+    const ytVideo = youtubePlayerRef.current;
+    if (saved != null && saved > 0 && ytVideo) {
+      ytVideo.currentTime = saved;
+      youtubeTimeRef.current = saved;
+      setCurrentTime(saved);
+      lastSavedPositionRef.current = saved;
+    }
+  }, [id]);
+
+  const openYoutubeExternally = useCallback(
+    (event) => {
+      event.preventDefault();
+      const sec = youtubePlayerRef.current?.currentTime ?? youtubeTimeRef.current ?? 0;
+      window.open(buildYoutubeWatchUrl(rawSrc, sec), "_blank", "noopener,noreferrer");
+    },
+    [rawSrc]
+  );
 
   const handleCaptureScreenshot = async () => {
     if (!id) return;
@@ -790,8 +991,8 @@ const VideoPlayerPage = () => {
       toast.error("Open the video in Telegram to capture frames.");
       return;
     }
-    if (isYoutube) {
-      const sec = currentTime;
+    if (isYoutube && !useYoutubePlyr) {
+      const sec = youtubePlayerRef.current?.currentTime ?? youtubeTimeRef.current ?? currentTime;
       if (!youtubeVideoId) {
         toast.error("YouTube video ID not found.");
         return;
@@ -946,7 +1147,7 @@ const VideoPlayerPage = () => {
     const onKeyDown = (event) => {
       const tag = document.activeElement?.tagName?.toLowerCase();
       if (tag === "input" || tag === "textarea") return;
-      if (isYoutube || isTelegramLink) return;
+      if ((isYoutube && !useYoutubePlyr) || isTelegramLink) return;
       if (event.key.toLowerCase() === "s" && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
         void handleCaptureRef.current?.();
@@ -954,7 +1155,7 @@ const VideoPlayerPage = () => {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isYoutube, isTelegramLink]);
+  }, [isYoutube, useYoutubePlyr, isTelegramLink]);
 
   return (
     <div
@@ -1021,35 +1222,80 @@ const VideoPlayerPage = () => {
                   </a>
                 </div>
               </div>
-            ) : isYoutube ? (
+            ) : isYoutube && youtubePreparing ? (
+              <div className="relative flex aspect-video w-full flex-col items-center justify-center gap-3 overflow-hidden bg-black text-white">
+                <FiLoader className="animate-spin text-sky-400" size={28} />
+                <p className="text-sm font-medium">Preparing CDS player…</p>
+                <p className="max-w-sm px-6 text-center text-xs text-slate-400">
+                  Downloading full 1080p YouTube quality (~800MB for this 6.5h video). First time only — please keep this tab open.
+                </p>
+              </div>
+            ) : showYoutubeEmbed ? (
               <div className="relative aspect-video w-full overflow-hidden bg-black">
-                {youtubeThumb ? (
-                  <img
-                    src={youtubeThumb}
-                    alt=""
-                    className="absolute inset-0 h-full w-full object-cover opacity-60"
-                  />
-                ) : null}
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/55 px-6 text-center">
-                  <p className="text-sm font-medium text-white">Hosted on YouTube (Unlisted)</p>
-                  <p className="max-w-md text-xs text-slate-300">
-                    Playback opens on YouTube in a new tab. Study time on this page still counts toward your
-                    tracker.
-                  </p>
-                  <a
-                    href={buildYoutubeWatchUrl(rawSrc, currentTime)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="rounded-lg bg-red-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:bg-red-500"
-                  >
-                    Watch on YouTube
-                  </a>
-                  {currentTime > 0 ? (
-                    <p className="text-xs text-slate-400">
-                      Last jump position: {formatTime(currentTime)} (included in the link above)
+                <ReactPlayer
+                  key={`youtube-${id}`}
+                  ref={youtubePlayerRef}
+                  src={rawSrc}
+                  width="100%"
+                  height="100%"
+                  className="absolute inset-0 [&>video]:h-full [&>video]:w-full"
+                  controls
+                  playsInline
+                  onReady={handleYoutubeReady}
+                  onTimeUpdate={handleYoutubeTimeUpdate}
+                  onSeeked={handleYoutubeSeeked}
+                  onDurationChange={(event) => {
+                    const d = event?.currentTarget?.duration;
+                    if (Number.isFinite(d) && d > 0) setDuration(d);
+                  }}
+                  onPlay={() => setIsPlaying(true)}
+                  onPause={() => setIsPlaying(false)}
+                  config={youtubePlayerConfig}
+                />
+                <a
+                  href={rawSrc}
+                  onClick={openYoutubeExternally}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="absolute bottom-3 right-3 rounded-lg bg-black/65 px-3 py-1.5 text-xs font-medium text-white backdrop-blur transition hover:bg-black/80"
+                >
+                  Open on YouTube
+                </a>
+                {youtubeNeedsCookies ? (
+                  <div className="absolute inset-x-3 top-3 z-10 max-w-lg rounded-xl border border-amber-500/40 bg-black/85 p-4 text-white backdrop-blur">
+                    <p className="text-sm font-semibold text-amber-200">YouTube login required for CDS player</p>
+                    <p className="mt-2 text-xs leading-relaxed text-slate-300">
+                      YouTube blocked the server download. While logged into YouTube in Chrome/Edge, install the extension{" "}
+                      <strong>Get cookies.txt LOCALLY</strong>, export cookies for youtube.com, then upload the file here.
                     </p>
-                  ) : null}
-                </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <label className="cursor-pointer rounded-lg bg-sky-600 px-3 py-2 text-xs font-semibold text-white hover:bg-sky-500">
+                        {youtubeCookiesUploading ? "Uploading…" : "Upload cookies.txt"}
+                        <input
+                          type="file"
+                          accept=".txt,text/plain"
+                          className="hidden"
+                          disabled={youtubeCookiesUploading}
+                          onChange={handleYoutubeCookiesUpload}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="rounded-lg border border-slate-500 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-white/10"
+                        onClick={handleRetryYoutubePlyr}
+                      >
+                        Retry CDS download
+                      </button>
+                    </div>
+                    {youtubePrepareError ? (
+                      <p className="mt-2 text-[11px] text-slate-400">{youtubePrepareError}</p>
+                    ) : null}
+                  </div>
+                ) : youtubePrepareFailed ? (
+                  <p className="absolute bottom-3 left-3 max-w-xs rounded-lg bg-black/65 px-3 py-1.5 text-[11px] text-amber-200 backdrop-blur">
+                    CDS player unavailable — using YouTube embed.
+                  </p>
+                ) : null}
               </div>
             ) : showNativePlayer ? (
               <div ref={playerRef} className="cds-plyr-shell group relative aspect-video w-full overflow-hidden bg-black">
@@ -1351,7 +1597,7 @@ const VideoPlayerPage = () => {
               <p className={`mt-2 hidden text-xs md:block ${isDark ? "text-slate-400" : "text-slate-500"}`}>
                 Capture key frames while watching. Tap a timestamp to jump in the video.
               </p>
-              {(isYoutube || isTelegramLink) && (
+              {(showYoutubeEmbed || isTelegramLink) && (
                 <p className="mt-2 hidden text-xs text-sky-500 dark:text-sky-400 md:block">
                   For externally hosted videos, notes use thumbnails where available.
                 </p>

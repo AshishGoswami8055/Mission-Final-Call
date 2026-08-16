@@ -138,4 +138,29 @@ export const revealStreamCacheFolderHandler = async (_req, res) => {
   }
 };
 
+export const getYoutubeCookiesHandler = async (_req, res) => {
+  try {
+    const { getYoutubeCookiesStatus } = await import("../services/youtubeDownloadService.js");
+    res.json(getYoutubeCookiesStatus());
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Could not read YouTube cookies status" });
+  }
+};
+
+export const uploadYoutubeCookiesHandler = async (req, res) => {
+  try {
+    const { saveYoutubeCookiesFile } = await import("../services/youtubeDownloadService.js");
+    const body = req.file?.buffer
+      ? req.file.buffer.toString("utf8")
+      : String(req.body?.cookiesText || "");
+    const status = saveYoutubeCookiesFile(body);
+    res.json({
+      ...status,
+      message: "YouTube cookies saved. Refresh the video page to retry the full-quality download.",
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Could not save YouTube cookies" });
+  }
+};
+
 export { assertLocalMediaSettings };

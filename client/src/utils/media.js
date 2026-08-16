@@ -196,6 +196,20 @@ export const buildStreamCachePlayUrl = (contentId, playWebPath = null) => {
   return url;
 };
 
+/** Cached YouTube download streamed through the CDS Plyr player (localhost only). */
+export const buildYoutubePlaybackStreamUrl = (contentId) => {
+  if (!contentId) return "";
+  const apiBase = getMediaApiBaseUrl();
+  let url = `${apiBase}/contents/${encodeURIComponent(contentId)}/youtube-playback/stream`;
+  try {
+    const token = localStorage.getItem("cds_token");
+    if (token) url += `?token=${encodeURIComponent(token)}`;
+  } catch {
+    // ignore storage errors
+  }
+  return url;
+};
+
 /** Legacy Telegram t.me link stored when the video file is not on the server. */
 export const getTelegramVideoUrl = (item) => {
   if (!item || item.type !== "video") return "";

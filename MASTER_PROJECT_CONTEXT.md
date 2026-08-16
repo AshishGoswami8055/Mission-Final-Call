@@ -23,7 +23,7 @@ The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, p
 | **Course organization** | CDS cycle → coaching batch (Programme) → Subject → Chapter → Content (video/PDF) |
 | **Content ingestion** | File upload, URL, YouTube download→Cloudinary (dev), Telegram import (forum/flat channels), Telegram video links (prod) |
 | **Telegram** | GramJS login, channel browse, batch import, auto-sync, stream proxy, optional cloudify to Cloudinary |
-| **Video playback** | **Plyr** player (`CdsPlyrPlayer`, sky-blue theme), HTML5 local, Cloudinary CDN, Telegram stream, YouTube embed, screenshot notes, resume position, stall watchdog + retry, Telegram live-connection banner, **timeline scrub previews** when fully cached or PC-library downloaded (disabled on full-course stream page) |
+| **Video playback** | **Plyr** player (`CdsPlyrPlayer`, sky-blue theme), HTML5 local, Cloudinary CDN, Telegram stream, YouTube embed **or localhost CDS Plyr** (yt-dlp cache), screenshot notes, resume position, stall watchdog + retry, Telegram live-connection banner, **timeline scrub previews** when fully cached, PC-library downloaded, or **YouTube playback cache** (disabled on full-course stream page) |
 | **PDF / PYQ** | Inline viewer, course PDFs on disk, PYQ on Cloudinary, **AI question extract** (`POST /papers/:id/extract`), optional OCR via `ocrmypdf` on upload |
 | **Progress** | Per-content completion, chapter stats, paper attempted tracking, **mark entire subject complete** (bulk toggle-all) |
 | **Dashboard** | Lazy course loading — subject stats from `/chapters/stats`; lesson rows fetched only when a subject is opened; library view paginated (`limit=20`); **↑↓ lesson reorder**; mark-as-done on lesson rows; **mark entire subject complete** (bulk progress); **subject total watch time** (sum of video `duration` in subject header + Videos tab) |
@@ -36,7 +36,8 @@ The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, p
 | **Analytics** | Study intelligence (`/history/intelligence`), weekly charts, mock trends, video streak (60 min/day goal) |
 | **Local PC library** | Download videos to `{LOCAL_MEDIA_ROOT}/_local_library/` for smooth playback (local server only) |
 | **Stream cache** | Auto disk cache while streaming Telegram on localhost (`{LOCAL_MEDIA_ROOT}/_stream_cache/`, `TELEGRAM_STREAM_CACHE=1`, play-first — no blocking on cache miss) |
-| **Playback cache** | Server-side Telegram stream cache for smoother seeking (`_playback_cache/`) |
+| **Playback cache** | Server-side Telegram stream cache for smoother seeking (`_playback_cache/`); **YouTube localhost cache** (`{id}_youtube.webm`) for CDS Plyr on URL-only YouTube lessons |
+| **YouTube CDS player (localhost)** | URL-only YouTube lessons: one-time **1080p** download via yt-dlp → stream through **`CdsPlyrPlayer`**; requires **`youtube_cookies.txt`** (bot check); falls back to ReactPlayer embed if prepare fails |
 | **Cloudinary multi-account** | Per-subject cloud mapping, **`/cloudinary` storage dashboard** (usage, remaining space, console links), automatic asset delete on content/paper removal, PYQ on dedicated cloud |
 | **Telegram UX** | Live connection check on video refresh, “Check for updates” with progress overlay, optimized batch update scan (`fetchNewChannelMediaSince`), **curated import** (pick lessons per topic), **duplicate/skip-aware updates** (no false “N new” for intentionally skipped duplicates) |
 | **Admin auth** | Single JWT-protected admin (auto-seeded from env) |
@@ -167,7 +168,7 @@ d:\1. Projects\CDS JOURNEY OTA\
 | File | Role |
 |------|------|
 | `client/src/utils/contentSort.js` | **`sortSubjectContents()`** — shared lesson order (dashboard, Play all, player playlist); uses `importSortOrder` then `telegramMessageId` |
-| `client/src/utils/timelineScrubPreview.js` | YouTube-style hover thumbnails on progress bar when video is fully stream-cached or PC-library downloaded |
+| `client/src/utils/timelineScrubPreview.js` | YouTube-style hover thumbnails on progress bar when video is fully stream-cached, PC-library downloaded, or **YouTube playback cache** active |
 | `client/src/components/SubjectPlayAllPremium.jsx` | Subject banner — **Link from path**, Replace (≤8 GB), Locate, Play full course, mark subject complete |
 | `client/src/pages/SubjectFullVideoPage.jsx` | Full-subject single-file player (`/subject/:subjectId/full-video`) — streams linked MP4 via API |
 | `client/src/api/client.js` | Axios + **`getStreamBackendBaseUrl()`** — full-course `<video>` must hit Express, not Vite :5173 |
@@ -180,12 +181,16 @@ d:\1. Projects\CDS JOURNEY OTA\
 | `client/src/pages/LocalMediaStoragePage.jsx` | `/settings/pc-media` — LOCAL_MEDIA_ROOT path, disk usage for library/stream/playback caches |
 | `server/src/utils/contentSort.js` | Server mirror of client sort (reorder API) |
 | `server/src/utils/telegramImportFilters.js` | Duplicate title detection, user-skipped Telegram message IDs, update-count filtering |
-| `server/src/config/mediaStorage.js` | `LOCAL_MEDIA_ROOT`, paths for `_local_library`, `_merged_subjects`, `_stream_cache`, `_playback_cache` |
-| `client/src/utils/videoScreenshot.js` | Frame capture for Plyr; `applyVideoCrossOrigin`, `applyVideoSource`, `resolvePlyrVideoElement` |
-| `client/src/components/CdsPlyrPlayer.jsx` | Plyr wrapper — sky-blue theme, imperative `<video>` (avoids React StrictMode DOM conflicts); stall watchdog |
-| `client/src/utils/media.js` | **`resolveContentSrc()`**, `buildTelegramPreviewStreamUrl()`, **`buildTelegramThumbnailUrl()`**, **`formatTotalStudyDuration()`**, **`sumVideoDurationSeconds()`**, **`downloadTelegramMediaToPc()`** — canonical playback/download/thumbnail URLs |
+| `server/src/config/mediaStorage.js` | `LOCAL_MEDIA_ROOT`, paths for `_local_library`, `_merged_subjects`, `_stream_cache`, `_playback_cache`, **`getYoutubeCookiesPath()`** |
+| `server/src/services/youtubePlaybackCacheService.js` | Localhost YouTube → CDS Plyr: cache to `_playback_cache/{contentId}_youtube.*`, quality version gate, prepare/status/stream |
+| `server/src/services/youtubeDownloadService.js` | yt-dlp wrapper — **`qualityProfile: max|upload`**, Node JS runtime (`--js-runtimes node`), cookies file, post-download **ffprobe** ≥720p validation |
+| `client/src/utils/youtubePlaybackApi.js` | Poll `GET/POST /contents/:id/youtube-playback` for prepare status |
+| `client/src/utils/youtubeCookiesApi.js` | Upload **`youtube_cookies.txt`** via `POST /settings/youtube-cookies` |
+| `client/src/utils/media.js` | **`resolveContentSrc()`**, `buildTelegramPreviewStreamUrl()`, **`buildYoutubePlaybackStreamUrl()`**, **`buildTelegramThumbnailUrl()`**, **`formatTotalStudyDuration()`**, **`sumVideoDurationSeconds()`**, **`downloadTelegramMediaToPc()`** — canonical playback/download/thumbnail URLs |
 | `client/src/utils/telegramLessonPlan.js` | Telegram import lesson titles, selection plans, caption parsing, `buildSelectedItemsFromPlans()` |
 | `client/src/styles/telegram-import.css` | Telegram import page — subject chips, lesson cards, thumbnails, thumb menu/lightbox |
+| `client/src/utils/videoScreenshot.js` | Frame capture for Plyr; `applyVideoCrossOrigin`, `applyVideoSource`, `resolvePlyrVideoElement` |
+| `client/src/components/CdsPlyrPlayer.jsx` | Plyr wrapper — sky-blue theme, imperative `<video>` (avoids React StrictMode DOM conflicts); stall watchdog; scrub preview attach |
 | `client/src/components/FullCoursePlaybackPanel.jsx` | Full-course link/status UI panel (subject banner flow) |
 | `server/src/utils/telegramMediaMeta.js` | Classify Telegram documents as video/PDF (mime, extension, video attribute; GramJS has no `MessageMediaVideo` type) |
 | `server/src/utils/pickVideoFileDialog.js` | Localhost Windows file picker for linking full-course MP4 by path |
@@ -412,6 +417,23 @@ VideoPlayerPage loads content → resolveContentSrc() → /api/telegram/stream/:
   → protectStream middleware validates JWT from ?token=
   → telegramService.streamTelegramMediaDirect (byte-range)
 ```
+
+## Video playback flow (YouTube URL → CDS Plyr, localhost only)
+
+```
+VideoPlayerPage detects isYouTubeUrl(resolveContentSrc(item))
+  → isLocalFrontend(): prepare via GET/POST /api/contents/:id/youtube-playback
+  → youtubePlaybackCacheService.ensureYoutubePlaybackCache()
+       → youtubeDownloadService (yt-dlp qualityProfile=max, cookies, Node JS runtime)
+       → saves {LOCAL_MEDIA_ROOT}/_playback_cache/{contentId}_youtube.webm (1080p AV1, stream-copy)
+       → rejects download if ffprobe height < 720p (qualityVersion gate)
+  → stream: GET /api/contents/:id/youtube-playback/stream?token= (protectStream)
+  → CdsPlyrPlayer with scrubPreviewEnabled=true
+  → On bot/cookies failure: upload panel for youtube_cookies.txt (POST /api/settings/youtube-cookies)
+  → Fallback: ReactPlayer YouTube embed (same quality as YouTube.com, no CDS controls)
+```
+
+**Requirements (dev PC):** `pip install "yt-dlp[default]"`, **ffmpeg**, **`{LOCAL_MEDIA_ROOT}/youtube_cookies.txt`** (export while logged into YouTube — extension *Get cookies.txt LOCALLY*). Optional env: `YT_DLP_COOKIES_FILE`, `YT_DLP_JS_RUNTIMES`, `YT_DLP_COOKIES_FROM_BROWSER`.
 
 ## Cloudinary storage dashboard flow
 
@@ -640,7 +662,9 @@ Base URL: `/api` via Vite proxy in dev (→ `http://127.0.0.1:5001`), or `VITE_A
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| GET | `/:id/download-file` | Stream | Download content file (local library file) |
+| GET | `/:id/browser-playable/stream` | Stream | PC-library browser-playable remux (localhost) |
+| GET | `/:id/youtube-playback/stream` | Stream | **YouTube CDS cache stream** (localhost; `protectStream`) |
+| GET | `/:id/stream-cache/play` | Stream | Play from completed Telegram stream cache on disk |
 | GET | `/upload-progress/:uploadId` | Yes | Poll upload/compress/download/import progress (**`Cache-Control: no-store`** — do not rely on browser 304) |
 | GET | `/playback-cache/storage` | Yes | Playback cache disk usage |
 | GET | `/local-library/storage` | Yes | PC library disk usage (local only) |
@@ -652,6 +676,9 @@ Base URL: `/api` via Vite proxy in dev (→ `http://127.0.0.1:5001`), or `VITE_A
 | GET | `/:id/playback-cache` | Yes | Cache status for content |
 | POST | `/:id/playback-cache` | Yes | Start Telegram playback cache download |
 | DELETE | `/:id/playback-cache` | Yes | Remove cache |
+| GET | `/:id/youtube-playback` | Yes | **YouTube CDS cache status** (localhost) |
+| POST | `/:id/youtube-playback` | Yes | **Start YouTube → CDS prepare** (async download) |
+| DELETE | `/:id/youtube-playback` | Yes | Clear YouTube playback cache for one lesson |
 | GET | `/:id/local-library` | Yes | PC library status for one video |
 | POST | `/:id/local-library` | Yes | Download video to PC library |
 | DELETE | `/:id/local-library` | Yes | Remove from PC library |
@@ -762,6 +789,8 @@ Base URL: `/api` via Vite proxy in dev (→ `http://127.0.0.1:5001`), or `VITE_A
 | POST | `/stream-cache/reveal-folder` | Localhost — open `_stream_cache` in File Explorer |
 | POST | `/stream-cache/:cacheKey/reveal` | Localhost — select one cache file in Explorer |
 | DELETE | `/stream-cache` | Clear stream cache |
+| GET | `/youtube-cookies` | YouTube cookies file status (`youtube_cookies.txt` path, configured flag) |
+| POST | `/youtube-cookies` | Upload **`cookies.txt`** multipart (localhost; for yt-dlp bot bypass) |
 
 ## Mission (`/api/mission`)
 
@@ -1029,10 +1058,11 @@ CDS cycle (cds-1-2026, cds-2-2026)
 - Per-content status: `GET /api/contents/:id/stream-cache`
 - Global stats/clear: `GET|DELETE /api/settings/stream-cache`; **Locate** via `POST .../reveal` (PowerShell explorer)
 
-## Playback cache (`videoPlaybackCacheService.js`)
+## Playback cache (`videoPlaybackCacheService.js` + `youtubePlaybackCacheService.js`)
 
-- Server-side cache for Telegram streams under `{LOCAL_MEDIA_ROOT}/_playback_cache/`
-- `PLAYBACK_CACHE_MAX_MB` (default 512), warn ratio configurable
+- Server-side cache under `{LOCAL_MEDIA_ROOT}/_playback_cache/`
+- **Telegram:** `videoPlaybackCacheService.js` — manual/on-demand stream download; `PLAYBACK_CACHE_MAX_MB` (default 512), warn ratio configurable
+- **YouTube (localhost):** `youtubePlaybackCacheService.js` — `{contentId}_youtube.webm` + `.meta.json`; **`YOUTUBE_PLAYBACK_CACHE_VERSION`** invalidates stale low-quality files; requires valid **`youtube_cookies.txt`**
 
 ## Upload progress bus
 
@@ -1112,6 +1142,9 @@ CDS cycle (cds-1-2026, cds-2-2026)
 | `LOCAL_LIBRARY_WARN_RATIO` | Warn threshold ratio (default 0.8) |
 | `PLAYBACK_CACHE_MAX_MB` | Max playback cache (default 512 MB) |
 | `PLAYBACK_CACHE_WARN_RATIO` | Cache warn ratio (default 0.8) |
+| `YT_DLP_COOKIES_FILE` | Optional absolute path to Netscape **`cookies.txt`** for YouTube downloads |
+| `YT_DLP_COOKIES_FROM_BROWSER` | Optional `edge`/`chrome`/… for `--cookies-from-browser` (often blocked on Windows DPAPI) |
+| `YT_DLP_JS_RUNTIMES` | Optional yt-dlp JS runtime (default: auto-detect Node via `process.execPath`) |
 | `GOOGLE_CLIENT_ID` | YouTube OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | YouTube OAuth secret |
 | `GOOGLE_REDIRECT_URI` | OAuth callback URL |
@@ -1165,7 +1198,7 @@ Use this checklist when copying the project folder to a new machine. **No featur
 | **`server/.env`** | **Yes** | Secrets: `MONGO_URI`, `JWT_SECRET`, `ADMIN_*`, Telegram, Cloudinary, OpenAI, Google OAuth — **not in git** |
 | **`client/.env`** | If used | Usually optional in dev; set `VITE_API_URL` / `VITE_SERVER_URL` for split deploy |
 | **MongoDB data** | **Yes** | Export/import database (see below) — course structure, progress, vocab, Telegram mappings live here |
-| **`uploads/`** or **`LOCAL_MEDIA_ROOT`** | If local media | PDFs on disk, `_local_library/`, `_merged_subjects/`, `_stream_cache/`, `_playback_cache/`, linked full-course MP4s |
+| **`uploads/`** or **`LOCAL_MEDIA_ROOT`** | If local media | PDFs on disk, `_local_library/`, `_merged_subjects/`, `_stream_cache/`, `_playback_cache/`, **`youtube_cookies.txt`**, linked full-course MP4s |
 | **`server/eng.traineddata`** | If vocab OCR | Tesseract model (in repo) |
 | **`server/cloudflare/`** | If using tunnel | Named tunnel credentials (`config.yml` is gitignored) |
 
@@ -1181,7 +1214,8 @@ Use this checklist when copying the project folder to a new machine. **No featur
 
 - **Node.js ≥ 20**, **npm ≥ 10**
 - **MongoDB** running locally or **MongoDB Atlas** URI in `.env`
-- Optional (dev): **ffmpeg**, **yt-dlp** (YouTube download), **ocrmypdf** (PYQ OCR)
+- Optional (dev): **ffmpeg**, **yt-dlp** (`pip install "yt-dlp[default]"` + **Node.js ≥22** for EJS), **ocrmypdf** (PYQ OCR)
+- Export **`youtube_cookies.txt`** to `{LOCAL_MEDIA_ROOT}/` for YouTube CDS player (logged-in YouTube session)
 - Windows: PowerShell for **Locate in Explorer** / full-course path picker
 
 ### 2. Install dependencies
@@ -1495,8 +1529,21 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | **importSortOrder** | Numeric lesson order; set by import or manual ↑↓ reorder |
 | **Subject watch time** | Sum of `Content.duration` (seconds) for videos in a subject — shown in dashboard subject header |
 | **CDS PYQ (AI)** | Practice mode that generates UPSC CDS English paper-style vocabulary MCQs via OpenAI (with local fallback) |
+| **YouTube CDS player** | Localhost: yt-dlp downloads full-quality YouTube → `_playback_cache` → **CdsPlyrPlayer** (not embed) |
+| **youtube_cookies.txt** | Netscape cookie file at `{LOCAL_MEDIA_ROOT}/youtube_cookies.txt` — required for YouTube bot bypass on dev server |
 
 ---
+
+# Recent Changes Log (chat sessions — 2026-08-14 / 2026-08-16)
+
+| Area | Change |
+|------|--------|
+| **YouTube → CDS Plyr (localhost)** | `youtubePlaybackCacheService.js` + API `GET/POST/DELETE /contents/:id/youtube-playback`, stream route; `VideoPlayerPage` prepares cache then plays via `CdsPlyrPlayer`; ReactPlayer embed fallback |
+| **Full-quality download** | `qualityProfile: max` — `bestvideo*+bestaudio`, webm stream-copy; **ffprobe ≥720p** validation; cache version gate rejects stale 360p files |
+| **yt-dlp auth** | Node `--js-runtimes`, `yt-dlp[default]` EJS; **`youtube_cookies.txt`** (full-file scan — not just first 4KB); upload via **`POST /settings/youtube-cookies`**; in-player cookies panel on bot error |
+| **Scrub preview (YouTube cache)** | `scrubPreviewEnabled` when `useYoutubePlyr` — timeline hover thumbnails on cached YouTube files |
+| **Plyr speed menu UI** | Centered radio dots in settings menu (`plyr-overrides.css`) — fixes misaligned blue selection indicator |
+| **ReactPlayer YouTube embed** | Stable resume (no dynamic `config.start`); `onSeeked` position save; used when CDS prepare fails or non-localhost |
 
 # Recent Changes Log (chat sessions — 2026-08-13 / 2026-08-14)
 
@@ -1557,4 +1604,4 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 
 ---
 
-*Last comprehensive audit: 2026-08-14 (includes backup/migration guide, Telegram import thumbnails, flat-channel video fix, subject watch time, import progress fixes). Repository path: `d:\1. Projects\CDS JOURNEY OTA`.*
+*Last comprehensive audit: 2026-08-16 (includes YouTube CDS Plyr player, full-quality yt-dlp cache, youtube_cookies.txt, scrub preview + speed menu fixes). Repository path: `d:\1. Projects\CDS JOURNEY OTA`.*

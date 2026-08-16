@@ -64,6 +64,8 @@ export const getLocalLibraryDir = () => path.join(getLocalMediaRoot(), "_local_l
 export const getMergedSubjectsDir = () => path.join(getLocalMediaRoot(), "_merged_subjects");
 export const getMergedPartsDir = () => path.join(getMergedSubjectsDir(), "parts");
 export const getPlaybackCacheDir = () => path.join(getLocalMediaRoot(), "_playback_cache");
+/** Netscape cookies.txt for yt-dlp YouTube auth (bot check bypass). */
+export const getYoutubeCookiesPath = () => path.join(getLocalMediaRoot(), "youtube_cookies.txt");
 /** Progressive byte cache while streaming Telegram videos (rewind without re-fetch). */
 export const getStreamCacheDir = () => path.join(getLocalMediaRoot(), "_stream_cache");
 
