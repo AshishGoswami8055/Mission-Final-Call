@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import {
+  FiAward,
   FiCopy,
   FiFolder,
   FiHardDrive,
@@ -19,6 +20,7 @@ import {
   fetchStreamCache,
   revealStreamCacheFolder,
   revealStreamCacheItem,
+  syncStreamCache,
   updateLocalMediaStorage,
 } from "../utils/mediaStorageApi";
 
@@ -40,20 +42,36 @@ const LocalMediaStoragePage = () => {
   const [clearingCache, setClearingCache] = useState(false);
   const [revealingKey, setRevealingKey] = useState(null);
   const [revealingFolder, setRevealingFolder] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState(() => new Set());
   const [rootPath, setRootPath] = useState("");
   const [migrate, setMigrate] = useState(true);
 
-  const loadStreamCache = useCallback(async () => {
+  const refreshStorageStats = useCallback(async () => {
+    const { data } = await fetchLocalMediaStorage();
+    setStatus(data);
+    return data;
+  }, []);
+
+  const loadStreamCache = useCallback(async ({ announceSync = false } = {}) => {
     setCacheLoading(true);
     try {
       const { data } = await fetchStreamCache();
       setStreamCache(data);
+      if (announceSync && data.sync?.removedFiles > 0) {
+        toast.success(
+          `Removed ${data.sync.removedFiles} orphan video file(s) from your PC — freed ${data.sync.freedLabel}`
+        );
+        await refreshStorageStats();
+      } else if (announceSync && data.migration?.migrated > 0) {
+        toast.success(`Organized ${data.migration.migrated} cached video(s) into subject folders on your PC`);
+        await refreshStorageStats();
+      }
     } catch (error) {
       toast.error(error.response?.data?.message || "Could not load stream cache");
     } finally {
       setCacheLoading(false);
     }
-  }, []);
+  }, [refreshStorageStats]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -61,7 +79,7 @@ const LocalMediaStoragePage = () => {
       const { data } = await fetchLocalMediaStorage();
       setStatus(data);
       setRootPath(data.rootPath || "");
-      await loadStreamCache();
+      await loadStreamCache({ announceSync: true });
     } catch (error) {
       toast.error(error.response?.data?.message || "Could not load storage settings");
     } finally {
@@ -72,6 +90,36 @@ const LocalMediaStoragePage = () => {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const cacheItems = streamCache?.items || [];
+  const selectedCount = selectedKeys.size;
+  const allSelected = cacheItems.length > 0 && selectedCount === cacheItems.length;
+  const someSelected = selectedCount > 0 && !allSelected;
+
+  useEffect(() => {
+    const validKeys = new Set(cacheItems.map((item) => item.cacheKey));
+    setSelectedKeys((current) => {
+      const next = new Set([...current].filter((key) => validKeys.has(key)));
+      return next.size === current.size ? current : next;
+    });
+  }, [cacheItems]);
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedKeys(new Set());
+      return;
+    }
+    setSelectedKeys(new Set(cacheItems.map((item) => item.cacheKey)));
+  };
+
+  const toggleSelect = (cacheKey) => {
+    setSelectedKeys((current) => {
+      const next = new Set(current);
+      if (next.has(cacheKey)) next.delete(cacheKey);
+      else next.add(cacheKey);
+      return next;
+    });
+  };
 
   if (!isLocalFrontend()) {
     return <Navigate to="/" replace />;
@@ -104,13 +152,59 @@ const LocalMediaStoragePage = () => {
     try {
       const { data } = await clearStreamCache(cacheKey);
       setStreamCache(data);
+      if (cacheKey) {
+        setSelectedKeys((current) => {
+          const next = new Set(current);
+          next.delete(cacheKey);
+          return next;
+        });
+      } else {
+        setSelectedKeys(new Set());
+      }
       toast.success(data.message || "Stream cache cleared");
-      const { data: storage } = await fetchLocalMediaStorage();
-      setStatus(storage);
+      await refreshStorageStats();
     } catch (error) {
       toast.error(error.response?.data?.message || "Could not clear cache");
     } finally {
       setClearingCache(false);
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    const keys = [...selectedKeys];
+    if (!keys.length) return;
+    if (
+      !window.confirm(
+        `Remove ${keys.length} selected cached video${keys.length === 1 ? "" : "s"}? You can re-cache by watching again.`
+      )
+    ) {
+      return;
+    }
+    setClearingCache(true);
+    try {
+      const { data } = await clearStreamCache(keys);
+      setStreamCache(data);
+      setSelectedKeys(new Set());
+      toast.success(data.message || "Selected cache entries removed");
+      await refreshStorageStats();
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Could not delete selected cache entries");
+    } finally {
+      setClearingCache(false);
+    }
+  };
+
+  const handleSyncStreamCache = async () => {
+    setCacheLoading(true);
+    try {
+      const { data } = await syncStreamCache();
+      setStreamCache(data);
+      await refreshStorageStats();
+      toast.success(data.message || "Stream cache synced with your PC folder");
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Could not sync stream cache");
+    } finally {
+      setCacheLoading(false);
     }
   };
 
@@ -225,6 +319,30 @@ const LocalMediaStoragePage = () => {
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
+                {selectedCount > 0 ? (
+                  <button
+                    type="button"
+                    className="btn-secondary text-xs text-rose-600 dark:text-rose-400"
+                    disabled={clearingCache}
+                    onClick={() => void handleDeleteSelected()}
+                  >
+                    {clearingCache ? (
+                      <FiLoader size={14} className="animate-spin" />
+                    ) : (
+                      <FiTrash2 size={14} />
+                    )}
+                    Delete selected ({selectedCount})
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn-secondary text-xs"
+                  disabled={cacheLoading}
+                  onClick={() => void handleSyncStreamCache()}
+                >
+                  {cacheLoading ? <FiLoader size={14} className="animate-spin" /> : <FiHardDrive size={14} />}
+                  Sync folder
+                </button>
                 <button
                   type="button"
                   className="btn-secondary text-xs"
@@ -290,10 +408,27 @@ const LocalMediaStoragePage = () => {
                 No cached videos yet. Open a lecture and seek — video chunks will appear here.
               </p>
             ) : (
-              <div className="overflow-x-auto rounded-xl border border-slate-200/90 dark:border-white/10">
+              <>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  <span className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500/80 align-middle" />
+                  Green rows are lessons you marked as done in their subject.
+                </p>
+                <div className="overflow-x-auto rounded-xl border border-slate-200/90 dark:border-white/10">
                 <table className="min-w-full text-left text-sm">
                   <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500 dark:bg-white/5">
                     <tr>
+                      <th className="w-10 px-3 py-2.5">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-slate-300"
+                          checked={allSelected}
+                          ref={(input) => {
+                            if (input) input.indeterminate = someSelected;
+                          }}
+                          onChange={toggleSelectAll}
+                          aria-label="Select all cached videos"
+                        />
+                      </th>
                       <th className="px-3 py-2.5 font-semibold">Lesson</th>
                       <th className="px-3 py-2.5 font-semibold">Cached</th>
                       <th className="px-3 py-2.5 font-semibold">Status</th>
@@ -302,11 +437,43 @@ const LocalMediaStoragePage = () => {
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-white/10">
                     {streamCache.items.map((item) => (
-                      <tr key={item.cacheKey} className="bg-white dark:bg-[#1a1a1a]">
+                      <tr
+                        key={item.cacheKey}
+                        className={
+                          item.completed
+                            ? "stream-cache-row-complete"
+                            : selectedKeys.has(item.cacheKey)
+                              ? "bg-sky-50/80 dark:bg-sky-950/20"
+                              : "bg-white dark:bg-[#1a1a1a]"
+                        }
+                      >
                         <td className="px-3 py-3">
-                          <p className="font-medium text-slate-800 dark:text-slate-100">{item.title}</p>
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-slate-300"
+                            checked={selectedKeys.has(item.cacheKey)}
+                            onChange={() => toggleSelect(item.cacheKey)}
+                            aria-label={`Select ${item.title}`}
+                          />
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-medium text-slate-800 dark:text-slate-100">{item.title}</p>
+                            {item.completed ? (
+                              <span className="lesson-victory-badge inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-800 dark:text-emerald-100">
+                                <FiAward size={10} className="text-emerald-600 dark:text-emerald-300" />
+                                Conquered
+                              </span>
+                            ) : null}
+                          </div>
                           {item.subjectName ? (
                             <p className="mt-0.5 text-xs text-slate-500">{item.subjectName}</p>
+                          ) : null}
+                          {item.storageRelDir ? (
+                            <p className="mt-0.5 font-mono text-[10px] text-slate-400">
+                              {item.storageRelDir}/
+                              {item.storageBaseName ? `${item.storageBaseName}.mp4` : ""}
+                            </p>
                           ) : null}
                         </td>
                         <td className="px-3 py-3 tabular-nums text-slate-600 dark:text-slate-300">
@@ -373,6 +540,7 @@ const LocalMediaStoragePage = () => {
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </section>
 

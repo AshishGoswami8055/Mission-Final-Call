@@ -6,13 +6,19 @@ export const updateLocalMediaStorage = (payload) => api.put("/settings/local-med
 
 export const fetchStreamCache = () => api.get("/settings/stream-cache");
 
+export const syncStreamCache = () => api.post("/settings/stream-cache/sync");
+
 export const fetchContentStreamCache = (contentId) =>
   api.get(`/contents/${contentId}/stream-cache`);
 
-export const clearStreamCache = (cacheKey = null) =>
-  api.delete("/settings/stream-cache", {
-    params: cacheKey ? { cacheKey } : undefined,
+export const clearStreamCache = (cacheKeyOrKeys = null) => {
+  if (Array.isArray(cacheKeyOrKeys)) {
+    return api.delete("/settings/stream-cache", { data: { cacheKeys: cacheKeyOrKeys } });
+  }
+  return api.delete("/settings/stream-cache", {
+    params: cacheKeyOrKeys ? { cacheKey: cacheKeyOrKeys } : undefined,
   });
+};
 
 export const revealStreamCacheItem = (cacheKey) =>
   api.post(`/settings/stream-cache/${encodeURIComponent(cacheKey)}/reveal`);

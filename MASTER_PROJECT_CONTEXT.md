@@ -23,19 +23,19 @@ The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, p
 | **Course organization** | CDS cycle → coaching batch (Programme) → Subject → Chapter → Content (video/PDF) |
 | **Content ingestion** | File upload, URL, YouTube download→Cloudinary (dev), Telegram import (forum/flat channels), Telegram video links (prod) |
 | **Telegram** | GramJS login, channel browse, batch import, auto-sync, stream proxy, optional cloudify to Cloudinary |
-| **Video playback** | **Plyr** player (`CdsPlyrPlayer`, sky-blue theme), HTML5 local, Cloudinary CDN, Telegram stream, YouTube embed **or localhost CDS Plyr** (yt-dlp cache), screenshot notes, resume position, stall watchdog + retry, Telegram live-connection banner, **timeline scrub previews** when fully cached, PC-library downloaded, or **YouTube playback cache** (disabled on full-course stream page) |
+| **Video playback** | **Plyr** player (`CdsPlyrPlayer`, sky-blue theme), HTML5 local, Cloudinary CDN, Telegram stream, YouTube embed **or localhost CDS Plyr** (yt-dlp cache), screenshot notes, resume position, stall watchdog + retry, Telegram live-connection banner, **timeline scrub previews** when fully cached, PC-library downloaded, or **YouTube playback cache** (disabled on full-course stream page); **double-click fullscreen** only on video surface (ignores extensions/overlays via `elementsFromPoint`) |
 | **PDF / PYQ** | Inline viewer, course PDFs on disk, PYQ on Cloudinary, **AI question extract** (`POST /papers/:id/extract`), optional OCR via `ocrmypdf` on upload |
 | **Progress** | Per-content completion, chapter stats, paper attempted tracking, **mark entire subject complete** (bulk toggle-all) |
 | **Dashboard** | Lazy course loading — subject stats from `/chapters/stats`; lesson rows fetched only when a subject is opened; library view paginated (`limit=20`); **↑↓ lesson reorder**; mark-as-done on lesson rows; **mark entire subject complete** (bulk progress); **subject total watch time** (sum of video `duration` in subject header + Videos tab) |
 | **Full course video** | Per-subject **linked MP4** (manual edit, no auto-stitch); **Link from path** for 20GB+ files; **Play full course** via byte-range stream API; **Locate in Explorer**; no quality loss (direct file stream) |
 | **CDS Vocabulary Arena** | Active-practice dashboard; **CDS PYQ (AI)** paper-style MCQs (default practice mode); mixed/MCQ/reverse/typing/context/weak/root/exam drills; deterministic SRS; session analytics; root families; CSV/Excel/OCR/text preview import; idioms + one-word substitution share the same corpus |
 | **Telegram Import UX** | Dedicated **`/import/telegram`** page; channel search; curated topic media; lesson plans with clean titles from bot captions; **video thumbnails** in lesson list; thumbnail click → **Play video** or **Preview thumbnail** (lightbox); PDF **View** (new tab) + **Save** (full PC download); import progress with **Cancel**; batch GramJS metadata fetch; PDF filenames from Telegram document name; filename search; full-height lesson workspace |
-| **PC Media Storage** | Configure `LOCAL_MEDIA_ROOT`; stream-cache inventory (**videos only**); **Locate / Show in folder** via File Explorer (localhost PowerShell reveal) |
+| **PC Media Storage** | Configure `LOCAL_MEDIA_ROOT`; **organized stream cache** by subject folder + titled filenames; multi-select delete; **Sync folder** (migrate + orphan cleanup); green **Conquered** rows for lessons marked done; **Locate / Show in folder** via File Explorer (localhost PowerShell reveal) |
 | **Study tracker** | Daily minutes, per-subject targets, watch history, exam countdown, celebration overlays |
 | **Daily Mission** (`/mission`) | Auto-generated daily plan: 1 English + 1 Maths + 1 GS video + reading; Sunday mock; AI briefing; discipline score; streaks |
 | **Analytics** | Study intelligence (`/history/intelligence`), weekly charts, mock trends, video streak (60 min/day goal) |
 | **Local PC library** | Download videos to `{LOCAL_MEDIA_ROOT}/_local_library/` for smooth playback (local server only) |
-| **Stream cache** | Auto disk cache while streaming Telegram on localhost (`{LOCAL_MEDIA_ROOT}/_stream_cache/`, `TELEGRAM_STREAM_CACHE=1`, play-first — no blocking on cache miss) |
+| **Stream cache** | Auto disk cache while streaming Telegram on localhost — stored under **`{LOCAL_MEDIA_ROOT}/_stream_cache/{SubjectName}/`** with readable **`{Title}__{cacheKey}.mp4|.bin|.meta.json`**; play-first; `_index.json` lookup; migrate legacy flat files on sync |
 | **Playback cache** | Server-side Telegram stream cache for smoother seeking (`_playback_cache/`); **YouTube localhost cache** (`{id}_youtube.webm`) for CDS Plyr on URL-only YouTube lessons |
 | **YouTube CDS player (localhost)** | URL-only YouTube lessons: one-time **1080p** download via yt-dlp → stream through **`CdsPlyrPlayer`**; requires **`youtube_cookies.txt`** (bot check); falls back to ReactPlayer embed if prepare fails |
 | **Cloudinary multi-account** | Per-subject cloud mapping, **`/cloudinary` storage dashboard** (usage, remaining space, console links), automatic asset delete on content/paper removal, PYQ on dedicated cloud |
@@ -130,7 +130,7 @@ d:\1. Projects\CDS JOURNEY OTA\
 │       ├── pages/                # Route-level pages (incl. SubjectFullVideoPage, CloudinaryStoragePage, LocalMediaStoragePage)
 │       ├── config/navItems.js    # Sidebar nav (incl. PC Media Storage — localOnly)
 │       ├── styles/               # plyr-overrides.css (sky-blue Plyr theme), telegram-import.css
-│       └── utils/                # media.js, contentSort.js, subjectFullCourse.js, telegramLessonPlan.js, videoScreenshot.js, timelineScrubPreview.js, …
+│       └── utils/                # media.js, contentSort.js, subjectFullCourse.js, telegramLessonPlan.js, videoScreenshot.js, timelineScrubPreview.js, mediaStorageApi.js, …
 │
 ├── server/                       # Express backend (MVC)
 │   ├── package.json
@@ -148,15 +148,15 @@ d:\1. Projects\CDS JOURNEY OTA\
 │       ├── middlewares/          # auth, streamAuth, upload, error
 │       ├── models/               # Mongoose schemas
 │       ├── routes/               # Express routers
-│       ├── services/             # Business logic (Telegram, Cloudinary, mission, cleanup, etc.)
-│       └── utils/                # Helpers (content, contentSort, telegramImportFilters, telegramMediaMeta, telegramFlatChannel, pickVideoFileDialog, chapters, cloudinaryAsset, slugify, buckets)
+│       ├── services/             # Business logic (Telegram, Cloudinary, mission, cleanup, telegramStreamCacheService, …)
+│       └── utils/                # Helpers + **`streamCachePaths.js`** (subject-folder stream cache layout)
 │
 └── uploads/                      # Default local media root (override with LOCAL_MEDIA_ROOT env)
     ├── _tmp_videos/              # Multer scratch before YouTube→Cloudinary or delete
     ├── _tmp_papers/              # Multer scratch before PYQ→Cloudinary
     ├── _local_library/           # PC library downloads (meta.json + video files)
     ├── _merged_subjects/         # Full-course link meta ({subjectId}.meta.json); linked MP4 may live anywhere under LOCAL_MEDIA_ROOT
-    ├── _stream_cache/            # Auto Telegram stream cache while watching (localhost)
+    ├── _stream_cache/            # Auto Telegram stream cache — **subject subfolders** + titled files + `_index.json`
     ├── _playback_cache/          # Manual/on-demand Telegram playback cache files
     ├── CDS 2 2026/               # Default active cycle folder
     │   └── <BatchSlug>/subjects/<Subject>/pdfs/<file>.pdf
@@ -178,7 +178,10 @@ d:\1. Projects\CDS JOURNEY OTA\
 | `server/src/middlewares/mediaStaticMiddleware.js` | Subdir handlers + **`createLocalMediaRootStaticHandler`** (files at CDS UPLOAD root, e.g. `Complete Indian Geography.mp4`) |
 | `server/src/utils/streamLocalFile.js` | HTTP Range streaming incl. **suffix ranges** (`bytes=-N`) for huge MP4 metadata |
 | `client/src/components/SubjectLessonAccordion.jsx` | Subject lesson list — Videos/PDFs tabs, mark done, rename, delete, **↑↓ reorder** |
-| `client/src/pages/LocalMediaStoragePage.jsx` | `/settings/pc-media` — LOCAL_MEDIA_ROOT path, disk usage for library/stream/playback caches |
+| `client/src/pages/LocalMediaStoragePage.jsx` | `/settings/pc-media` — LOCAL_MEDIA_ROOT path, disk usage, **stream cache table** (multi-select delete, Conquered highlight, Sync folder, subject path column) |
+| `client/src/components/VideoCacheStatusBar.jsx` | On-video cache badges — **only while caching** (bottom-left); completed state in panel below |
+| `server/src/utils/streamCachePaths.js` | Stream cache disk layout — `{Subject}/{Title}__{cacheKey}.*`, `_index.json`, migrate, reconcile orphans, accurate byte measure |
+| `server/src/services/telegramStreamCacheService.js` | Telegram stream + **subject-organized** `_stream_cache`; play-first; content lookup at cache start for folder/title |
 | `server/src/utils/contentSort.js` | Server mirror of client sort (reorder API) |
 | `server/src/utils/telegramImportFilters.js` | Duplicate title detection, user-skipped Telegram message IDs, update-count filtering |
 | `server/src/config/mediaStorage.js` | `LOCAL_MEDIA_ROOT`, paths for `_local_library`, `_merged_subjects`, `_stream_cache`, `_playback_cache`, **`getYoutubeCookiesPath()`** |
@@ -190,7 +193,7 @@ d:\1. Projects\CDS JOURNEY OTA\
 | `client/src/utils/telegramLessonPlan.js` | Telegram import lesson titles, selection plans, caption parsing, `buildSelectedItemsFromPlans()` |
 | `client/src/styles/telegram-import.css` | Telegram import page — subject chips, lesson cards, thumbnails, thumb menu/lightbox |
 | `client/src/utils/videoScreenshot.js` | Frame capture for Plyr; `applyVideoCrossOrigin`, `applyVideoSource`, `resolvePlyrVideoElement` |
-| `client/src/components/CdsPlyrPlayer.jsx` | Plyr wrapper — sky-blue theme, imperative `<video>` (avoids React StrictMode DOM conflicts); stall watchdog; scrub preview attach |
+| `client/src/components/CdsPlyrPlayer.jsx` | Plyr wrapper — sky-blue theme, imperative `<video>`; stall watchdog; scrub preview; **dblclick fullscreen** only on video/poster (`elementsFromPoint`, ignores `[data-cds-ignore-fs-dblclick]`) |
 | `client/src/components/FullCoursePlaybackPanel.jsx` | Full-course link/status UI panel (subject banner flow) |
 | `server/src/utils/telegramMediaMeta.js` | Classify Telegram documents as video/PDF (mime, extension, video attribute; GramJS has no `MessageMediaVideo` type) |
 | `server/src/utils/pickVideoFileDialog.js` | Localhost Windows file picker for linking full-course MP4 by path |
@@ -785,10 +788,11 @@ Base URL: `/api` via Vite proxy in dev (→ `http://127.0.0.1:5001`), or `VITE_A
 |--------|------|---------|
 | GET | `/local-media` | Current `LOCAL_MEDIA_ROOT`, disk usage breakdown |
 | PUT | `/local-media` | Update media root path |
-| GET | `/stream-cache` | Stream cache inventory (`_stream_cache`; UI lists **videos only**) |
+| GET | `/stream-cache` | Stream cache inventory (`_stream_cache`; UI lists **videos only**; includes `completed` from Progress) |
+| POST | `/stream-cache/sync` | **Migrate** flat cache → subject folders + **reconcile** orphan `.mp4`/`.bin` files |
 | POST | `/stream-cache/reveal-folder` | Localhost — open `_stream_cache` in File Explorer |
 | POST | `/stream-cache/:cacheKey/reveal` | Localhost — select one cache file in Explorer |
-| DELETE | `/stream-cache` | Clear stream cache |
+| DELETE | `/stream-cache` | Clear stream cache — query `?cacheKey=` one item, body `{ cacheKeys: [] }` bulk, or all if empty |
 | GET | `/youtube-cookies` | YouTube cookies file status (`youtube_cookies.txt` path, configured flag) |
 | POST | `/youtube-cookies` | Upload **`cookies.txt`** multipart (localhost; for yt-dlp bot bypass) |
 
@@ -1047,16 +1051,33 @@ CDS cycle (cds-1-2026, cds-2-2026)
 - **Range requests** — `streamLocalFile.parseRangeHeader` supports suffix ranges (`bytes=-65536`) required for 20GB+ MP4 duration probing
 - Purge legacy `{subjectId}_{hash}.mp4` auto-stitch files on new link
 
-## Stream cache (`telegramStreamCacheService.js`)
+## Stream cache (`telegramStreamCacheService.js` + `streamCachePaths.js`)
 
-- Localhost / `LOCAL_LIBRARY_ENABLED=1` only; dir `{LOCAL_MEDIA_ROOT}/_stream_cache/`
+- Localhost / `LOCAL_LIBRARY_ENABLED=1` only; root dir `{LOCAL_MEDIA_ROOT}/_stream_cache/`
 - Enabled via `TELEGRAM_STREAM_CACHE=1` (default on when local media enabled)
+- **On-disk layout (2026-08-17):**
+  ```
+  _stream_cache/
+  ├── _index.json                          # cacheKey → { storageRelDir, storageBaseName }
+  ├── English practice/
+  │   ├── Full mock 01 Explanation__-1003309425932_3395.mp4
+  │   ├── Full mock 01 Explanation__-1003309425932_3395.bin
+  │   └── Full mock 01 Explanation__-1003309425932_3395.meta.json
+  ├── A to z vocabulary/
+  └── Unsorted/                            # lesson not linked to Content yet
+  ```
+- **Internal ID unchanged:** `cacheKey = {telegramChannelId}_{telegramMessageId}` — suffix on filename keeps lookups stable
+- **At cache start:** `resolveStreamCacheContentMeta()` loads subject + title from MongoDB `Content` → files go directly into subject folder
+- **Migration:** `migrateStreamCacheLayouts()` on inventory load / **Sync folder** — moves legacy flat `{cacheKey}.*` files into subject folders
+- **Delete (fixed):** removes **`.meta.json` + `.bin` + `.mp4`** (previously `.mp4` orphans inflated disk usage)
+- **Reconcile:** `reconcileStreamCacheFolder()` drops orphan bin/mp4 without meta; rebuilds `_index.json`; `measureStreamCacheUsedBytes()` skips double-counting hard-linked mp4+bin
 - **Play-first:** streams directly from Telegram on cache miss; background warmup deferred (~20s)
-- Preview/stream responses may cap a single fetch (`TELEGRAM_STREAM_FETCH_MB`, default **8 MB** on localhost) — OK for video scrubbing
+- Preview/stream responses may cap a single fetch (`TELEGRAM_STREAM_FETCH_MB`, default **8 MB** on localhost) — OK for video scrubbing
 - **PC Save / `?download=1`:** `streamTelegramAttachmentDownload()` always serves the **full** file (complete disk cache or full Telegram stream) — prevents truncated/corrupt PDFs
 - Client `downloadTelegramMediaToPc()` rejects HTTP 206, size mismatches, and non-`%PDF` headers
 - Per-content status: `GET /api/contents/:id/stream-cache`
-- Global stats/clear: `GET|DELETE /api/settings/stream-cache`; **Locate** via `POST .../reveal` (PowerShell explorer)
+- Global stats/clear: `GET|DELETE /api/settings/stream-cache`; bulk delete body `{ cacheKeys: [...] }`; **Sync** via `POST /api/settings/stream-cache/sync`; **Locate** via `POST .../reveal` (PowerShell explorer)
+- **PC Media UI:** multi-select checkboxes + **Delete selected**; green row + **Conquered** badge when lesson marked done in subject (`Progress` model); on-video overlay badge only during active caching (not at 100%)
 
 ## Playback cache (`videoPlaybackCacheService.js` + `youtubePlaybackCacheService.js`)
 
@@ -1130,7 +1151,19 @@ CDS cycle (cds-1-2026, cds-2-2026)
 | `TELEGRAM_STREAM_WAIT_MS` | Stream wait timeout (default 45000) |
 | `TELEGRAM_STREAM_TAIL_MB` | Tail buffer for seeking (default 8 MB) |
 | `TELEGRAM_STREAM_WARMUP_DEFER_MS` | Delay before background cache warmup after play starts (default ~20000) |
-| `LOCAL_MEDIA_ROOT` | Override media root (e.g. `C:\Users\...\CDS UPLOAD`); holds `_local_library`, `_merged_subjects`, `_stream_cache`, `_playback_cache`, and optionally root-level linked MP4s |
+| `LOCAL_MEDIA_ROOT` | Override media root (e.g. `C:\Users\...\CDS UPLOAD`); see **folder layout** below |
+
+### `LOCAL_MEDIA_ROOT` folder layout (e.g. CDS UPLOAD)
+
+| Path | Keep? | Purpose |
+|------|-------|---------|
+| `_local_library/` | Yes | Permanent **Smooth playback** downloads |
+| `_stream_cache/` | Yes (managed) | Temp Telegram cache — **subject subfolders**; delete unneeded via PC Media Storage |
+| `_playback_cache/` | Yes (managed) | YouTube CDS player cache (`{contentId}_youtube.webm`) — re-downloads on next watch |
+| `_merged_subjects/` | Yes | Full-course linked MP4 metadata + merged parts |
+| `youtube_cookies.txt` | Yes (YouTube) | yt-dlp auth for full-quality YouTube downloads |
+| Loose `.mp4` at root | Optional | Supported for **Link from path** full course (e.g. 20 GB Geography file) — prefer keeping in a subfolder for tidiness |
+| `_index.json` | Auto | Inside `_stream_cache/` only — do not delete manually while app is running |
 | `VIDEO_COMPRESS_ALWAYS` | `0` skips compression when not needed |
 | `VIDEO_COMPRESS_HEIGHT` | Target height (default 720) |
 | `VIDEO_COMPRESS_CRF` | ffmpeg CRF (default 23) |
@@ -1495,7 +1528,7 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | Lesson order / reorder | `SubjectLessonAccordion.jsx`, `contentSort.js` (client + server), `PATCH /contents/reorder` |
 | **Full course video (link + play)** | `SubjectPlayAllPremium.jsx`, `SubjectFullVideoPage.jsx`, `subjectFullCourse.js`, `subjectFullCourseService.js`, `subjectDownloadController.js`, `streamLocalFile.js`, `getStreamBackendBaseUrl()` |
 | **Mark entire subject complete** | `SubjectPlayAllPremium.jsx`, `POST /api/progress/subject/:subjectId/toggle-all`, `progressController.js` |
-| PC media / stream cache | `LocalMediaStoragePage.jsx`, `mediaStorage.js`, `telegramStreamCacheService.js`, `mediaStorageController.js` |
+| PC media / stream cache | `LocalMediaStoragePage.jsx`, `streamCachePaths.js`, `mediaStorage.js`, `telegramStreamCacheService.js`, `mediaStorageController.js`, `VideoCacheStatusBar.jsx`, `CdsPlyrPlayer.jsx` |
 | Vocabulary Arena UI | `Vocabulary*Page.jsx`, `components/vocabulary/*` (incl. `CdsPyqBody.jsx`), `hooks/useVocabulary*.js`, `utils/vocabularyArena.js` |
 | Vocabulary questions/sessions | `vocabularyQuestionService.js`, `vocabularySessionService.js`, `VocabularyPracticeSession.js`, `VocabularyReviewLog.js` |
 | **CDS PYQ (AI) MCQs** | `vocabularyCdsPyqService.js`, mode `cds_pyq` in session start, `QuestionCard` / `CdsPyqBody`, tests `vocabularyCdsPyq.test.js` |
@@ -1524,7 +1557,9 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | **PC library** | Local smooth-playback download feature (`_local_library/`) |
 | **Full course video** | One user-linked MP4 per subject (`linkedSourcePath` in `_merged_subjects/{id}.meta.json`); no ffmpeg stitch; stream via `/merged-video/stream` |
 | **Link from path** | Register an existing Windows file path as full course (no browser upload — for 20GB+ MP4s) |
-| **Stream cache** | Auto disk cache while watching Telegram streams (`_stream_cache/`) |
+| **Stream cache** | Auto disk cache while watching Telegram — **`_stream_cache/{Subject}/{Title}__{cacheKey}.*`** |
+| **Stream cache index** | `_stream_cache/_index.json` — maps internal cacheKey to folder + filename base |
+| **Stream cache sync** | `POST /settings/stream-cache/sync` — migrate legacy flat files + remove orphans |
 | **Curated import** | Pick specific Telegram lessons; unselected → `telegramSkippedMessageIds` |
 | **importSortOrder** | Numeric lesson order; set by import or manual ↑↓ reorder |
 | **Subject watch time** | Sum of `Content.duration` (seconds) for videos in a subject — shown in dashboard subject header |
@@ -1533,6 +1568,18 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | **youtube_cookies.txt** | Netscape cookie file at `{LOCAL_MEDIA_ROOT}/youtube_cookies.txt` — required for YouTube bot bypass on dev server |
 
 ---
+
+# Recent Changes Log (chat sessions — 2026-08-17)
+
+| Area | Change |
+|------|--------|
+| **Stream cache organization** | `streamCachePaths.js` — subject subfolders + `{Title}__{cacheKey}.mp4\|.bin\|.meta.json`; `_index.json`; auto-migrate on load/sync |
+| **Stream cache delete fix** | Delete now removes `.mp4` + `.bin` + `.meta.json` (orphan `.mp4` no longer leaves ~10 GB ghost usage) |
+| **Stream cache sync** | `POST /settings/stream-cache/sync`; reconcile orphans; accurate byte measure (no mp4+bin double count) |
+| **PC Media Storage UI** | Multi-select + **Delete selected**; **Sync folder** button; green **Conquered** rows (Progress completion); folder path under lesson name |
+| **Video overlay badges** | `VideoCacheStatusBar` — hide "Cached 100%" / "On PC" on player; show progress badge bottom-left **only while caching** |
+| **Plyr double-click fullscreen** | `CdsPlyrPlayer` — `elementsFromPoint` hit test; ignores extensions, controls, `[data-cds-ignore-fs-dblclick]` overlays |
+| **Cache at watch time** | `resolveStreamCacheContentMeta()` — new caches go straight to subject folder when Content is linked |
 
 # Recent Changes Log (chat sessions — 2026-08-14 / 2026-08-16)
 
@@ -1604,4 +1651,4 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 
 ---
 
-*Last comprehensive audit: 2026-08-16 (includes YouTube CDS Plyr player, full-quality yt-dlp cache, youtube_cookies.txt, scrub preview + speed menu fixes). Repository path: `d:\1. Projects\CDS JOURNEY OTA`.*
+*Last comprehensive audit: 2026-08-17 (includes organized subject-folder stream cache, delete/sync fixes, PC Media multi-select + Conquered highlight, Plyr dblclick fullscreen guard). Repository path: `d:\1. Projects\CDS JOURNEY OTA`.*

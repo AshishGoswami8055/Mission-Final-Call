@@ -5,6 +5,19 @@ import { createRequire } from "node:module";
 import { applyCorsHeaders } from "../config/cors.js";
 import { ensureLocalMediaDirs, getStreamCacheDir, toMediaWebPath } from "../config/mediaStorage.js";
 import {
+  buildStreamCacheLayout,
+  collectStreamCacheMetaFiles,
+  ensureStreamCacheLayout,
+  measureStreamCacheUsedBytes,
+  migrateStreamCacheLayouts,
+  pathsFromLayout,
+  readMetaAtPath,
+  reconcileStreamCacheFolder,
+  removeStreamCacheFiles,
+  resolveStreamCachePaths,
+  streamCacheWebRelPath,
+} from "../utils/streamCachePaths.js";
+import {
   beginTelegramPlayback,
   beginTelegramStreamWait,
   endTelegramPlayback,
@@ -55,9 +68,11 @@ const cacheEnabled = () => String(process.env.TELEGRAM_STREAM_CACHE ?? "1") !== 
 const entries = new Map();
 
 const cacheKeyFor = (channelId, messageId) => `${channelId}_${messageId}`;
-const metaPathFor = (cacheKey) => path.join(getStreamCacheDir(), `${cacheKey}.meta.json`);
-const binPathFor = (cacheKey) => path.join(getStreamCacheDir(), `${cacheKey}.bin`);
-const mp4PathFor = (cacheKey) => path.join(getStreamCacheDir(), `${cacheKey}.mp4`);
+const metaPathFor = (cacheKey) => resolveStreamCachePaths(cacheKey).metaPath;
+const binPathFor = (cacheKey) => resolveStreamCachePaths(cacheKey).binPath;
+const mp4PathFor = (cacheKey) => resolveStreamCachePaths(cacheKey).mp4Path;
+
+export { reconcileStreamCacheFolder, measureStreamCacheUsedBytes, migrateStreamCacheLayouts };
 
 /** Hard-link complete cache to .mp4 so browsers stream it reliably from /uploads. */
 const ensureStreamCacheMp4Link = (cacheKey) => {
@@ -163,11 +178,13 @@ const loadMeta = (cacheKey) => {
 
 const saveMeta = (entry) => {
   ensureLocalMediaDirs();
+  const paths = resolveStreamCachePaths(entry.cacheKey);
+  fs.mkdirSync(paths.dir, { recursive: true });
   if (entry.complete) {
     ensureStreamCacheMp4Link(entry.cacheKey);
   }
   fs.writeFileSync(
-    metaPathFor(entry.cacheKey),
+    paths.metaPath,
     JSON.stringify({
       cacheKey: entry.cacheKey,
       channelId: entry.channelId,
@@ -175,6 +192,11 @@ const saveMeta = (entry) => {
       totalSize: entry.totalSize,
       mimeType: entry.mimeType,
       fileName: entry.fileName,
+      storageRelDir: paths.storageRelDir,
+      storageBaseName: paths.storageBaseName,
+      title: entry.title || null,
+      subjectName: entry.subjectName || null,
+      contentId: entry.contentId || null,
       contiguousBytes: entry.contiguousBytes,
       complete: entry.complete,
       lastAccessAt: entry.lastAccessAt,
@@ -200,7 +222,7 @@ const restoreEntry = (cacheKey, meta) => {
     totalSize: meta.totalSize,
     mimeType: meta.mimeType,
     fileName: meta.fileName,
-    binPath: binPathFor(cacheKey),
+    binPath: resolveStreamCachePaths(cacheKey).binPath,
     chunkMap,
     contiguousBytes: meta.contiguousBytes || 0,
     complete: Boolean(meta.complete),
@@ -215,7 +237,41 @@ const restoreEntry = (cacheKey, meta) => {
   };
 };
 
-const getOrCreateEntry = ({ cacheKey, channelId, messageId, meta }) => {
+/** @type {Map<string, object|null>} */
+const streamContentMetaCache = new Map();
+
+const resolveStreamCacheContentMeta = async (channelId, messageId) => {
+  const lookupKey = `${channelId}_${messageId}`;
+  if (streamContentMetaCache.has(lookupKey)) {
+    return streamContentMetaCache.get(lookupKey);
+  }
+
+  try {
+    const Content = (await import("../models/Content.js")).default;
+    const row = await Content.findOne({
+      telegramChannelId: String(channelId),
+      telegramMessageId: Number(messageId),
+    })
+      .select("_id title subjectId")
+      .populate("subjectId", "name")
+      .lean();
+
+    const contentMeta = row
+      ? {
+          contentId: String(row._id),
+          title: row.title,
+          subjectName: row.subjectId?.name || null,
+        }
+      : null;
+    streamContentMetaCache.set(lookupKey, contentMeta);
+    return contentMeta;
+  } catch {
+    streamContentMetaCache.set(lookupKey, null);
+    return null;
+  }
+};
+
+const getOrCreateEntry = ({ cacheKey, channelId, messageId, meta, contentMeta = null }) => {
   let entry = entries.get(cacheKey);
   if (entry) {
     entry.lastAccessAt = Date.now();
@@ -237,7 +293,20 @@ const getOrCreateEntry = ({ cacheKey, channelId, messageId, meta }) => {
     totalSize: meta.size,
     mimeType: meta.mimeType,
     fileName: meta.fileName,
-    binPath: binPathFor(cacheKey),
+    title: contentMeta?.title || null,
+    subjectName: contentMeta?.subjectName || null,
+    contentId: contentMeta?.contentId || null,
+    binPath: (() => {
+      const layout = buildStreamCacheLayout({
+        cacheKey,
+        subjectName: contentMeta?.subjectName,
+        title: contentMeta?.title,
+        fileName: meta.fileName,
+      });
+      const paths = pathsFromLayout(layout);
+      fs.mkdirSync(paths.dir, { recursive: true });
+      return paths.binPath;
+    })(),
     chunkMap: createChunkMap(meta.size),
     contiguousBytes: 0,
     complete: false,
@@ -655,7 +724,8 @@ const streamTelegramAttachmentDownload = async ({ channelId, messageId, req, res
   if (!meta?.totalSize && !meta?.size) {
     const { meta: liveMeta } = await getMedia({ channelId, messageId });
     meta = liveMeta;
-    entry = getOrCreateEntry({ cacheKey, channelId, messageId, meta: liveMeta });
+    const contentMeta = await resolveStreamCacheContentMeta(channelId, messageId);
+    entry = getOrCreateEntry({ cacheKey, channelId, messageId, meta: liveMeta, contentMeta });
   }
 
   const totalSize = Number(meta?.totalSize || meta?.size || entry?.totalSize) || 0;
@@ -813,7 +883,8 @@ export const streamTelegramMediaWithCache = async ({ channelId, messageId, req, 
     if (!totalSize) {
       return res.status(416).json({ message: "Unknown file size." });
     }
-    entry = getOrCreateEntry({ cacheKey, channelId, messageId, meta });
+    const contentMeta = await resolveStreamCacheContentMeta(channelId, messageId);
+    entry = getOrCreateEntry({ cacheKey, channelId, messageId, meta, contentMeta });
     deferBackgroundWarmup(entry, 0);
   }
 
@@ -925,15 +996,7 @@ export const streamTelegramMediaWithCache = async ({ channelId, messageId, req, 
   }
 };
 
-const readMetaFile = (cacheKey) => {
-  const metaPath = metaPathFor(cacheKey);
-  if (!fs.existsSync(metaPath)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(metaPath, "utf8"));
-  } catch {
-    return null;
-  }
-};
+const readMetaFile = (cacheKey) => readMetaAtPath(metaPathFor(cacheKey));
 
 const estimateCachedBytes = (meta) => {
   if (!meta?.totalSize) return 0;
@@ -975,6 +1038,8 @@ const isStreamCachePdfMeta = (meta, linkedContent = null) => {
 export const getStreamCacheInventory = async () => {
   ensureLocalMediaDirs();
   const dir = getStreamCacheDir();
+  const migration = await migrateStreamCacheLayouts();
+  const sync = reconcileStreamCacheFolder();
   if (!fs.existsSync(dir)) {
     return {
       enabled: cacheEnabled(),
@@ -983,22 +1048,25 @@ export const getStreamCacheInventory = async () => {
       usedBytes: 0,
       itemCount: 0,
       items: [],
+      sync,
+      migration,
     };
   }
 
   const Content = (await import("../models/Content.js")).default;
-  const metaFiles = fs.readdirSync(dir).filter((name) => name.endsWith(".meta.json"));
+  const metaFiles = collectStreamCacheMetaFiles(dir);
   const items = [];
 
-  for (const fileName of metaFiles) {
-    const cacheKey = fileName.replace(/\.meta\.json$/, "");
-    const meta = readMetaFile(cacheKey);
-    if (!meta) continue;
+  for (const metaPath of metaFiles) {
+    const meta = readMetaAtPath(metaPath);
+    if (!meta?.cacheKey) continue;
     if (isStreamCachePdfMeta(meta)) continue;
 
+    const cacheKey = meta.cacheKey;
     const cachedBytes = estimateCachedBytes(meta);
     const totalSize = Number(meta.totalSize) || 0;
     const cachedPercent = totalSize > 0 ? Math.min(100, Math.round((cachedBytes / totalSize) * 100)) : 0;
+    const paths = resolveStreamCachePaths(cacheKey);
 
     items.push({
       cacheKey,
@@ -1012,6 +1080,8 @@ export const getStreamCacheInventory = async () => {
       complete: Boolean(meta.complete),
       lastAccessAt: meta.lastAccessAt || null,
       diskPath: resolveStreamCacheDiskPath(cacheKey, meta),
+      storageRelDir: paths.storageRelDir || meta.storageRelDir || null,
+      storageBaseName: paths.storageBaseName || meta.storageBaseName || null,
     });
   }
 
@@ -1038,19 +1108,22 @@ export const getStreamCacheInventory = async () => {
     item.contentId = linked?._id ? String(linked._id) : null;
     item.title = linked?.title || item.fileName;
     item.subjectName = linked?.subjectId?.name || null;
+    if (linked) {
+      const meta = readMetaFile(item.cacheKey);
+      ensureStreamCacheLayout(item.cacheKey, meta, {
+        contentId: item.contentId,
+        title: item.title,
+        subjectName: item.subjectName,
+      });
+      item.diskPath = resolveStreamCacheDiskPath(item.cacheKey, readMetaFile(item.cacheKey));
+      const paths = resolveStreamCachePaths(item.cacheKey);
+      item.storageRelDir = paths.storageRelDir;
+      item.storageBaseName = paths.storageBaseName;
+    }
     videoItems.push(item);
   }
 
-  let usedBytes = 0;
-  for (const name of fs.readdirSync(dir)) {
-    const full = path.join(dir, name);
-    try {
-      const stat = fs.statSync(full);
-      if (stat.isFile()) usedBytes += stat.size;
-    } catch {
-      /* ignore */
-    }
-  }
+  let usedBytes = measureStreamCacheUsedBytes(dir);
 
   return {
     enabled: cacheEnabled(),
@@ -1059,6 +1132,8 @@ export const getStreamCacheInventory = async () => {
     usedBytes,
     itemCount: videoItems.length,
     items: videoItems,
+    sync,
+    migration,
   };
 };
 
@@ -1089,36 +1164,46 @@ export const revealStreamCacheFolderOnDisk = async () => {
   return { path: dir };
 };
 
-export const clearStreamCache = ({ cacheKey = null } = {}) => {
+export const clearStreamCache = ({ cacheKey = null, cacheKeys = null } = {}) => {
   ensureLocalMediaDirs();
-  const dir = getStreamCacheDir();
 
-  const removeKey = (key) => {
-    entries.delete(key);
-    for (const suffix of [".meta.json", ".bin"]) {
-      try {
-        fs.unlinkSync(path.join(dir, `${key}${suffix}`));
-      } catch {
-        /* ignore */
-      }
-    }
-  };
+  const keys = Array.isArray(cacheKeys)
+    ? [...new Set(cacheKeys.map((key) => String(key).trim()).filter(Boolean))]
+    : [];
+
+  if (keys.length > 0) {
+    keys.forEach((key) => {
+      entries.delete(key);
+      removeStreamCacheFiles(key);
+    });
+    reconcileStreamCacheFolder();
+    return { cleared: keys.length };
+  }
 
   if (cacheKey) {
-    removeKey(String(cacheKey));
+    entries.delete(String(cacheKey));
+    removeStreamCacheFiles(String(cacheKey));
+    reconcileStreamCacheFolder();
     return { cleared: 1 };
   }
 
+  const dir = getStreamCacheDir();
   if (fs.existsSync(dir)) {
     for (const name of fs.readdirSync(dir)) {
+      const full = path.join(dir, name);
       try {
-        fs.unlinkSync(path.join(dir, name));
+        if (fs.statSync(full).isDirectory()) {
+          fs.rmSync(full, { recursive: true, force: true });
+        } else {
+          fs.unlinkSync(full);
+        }
       } catch {
         /* ignore */
       }
     }
   }
   entries.clear();
+  reconcileStreamCacheFolder();
   return { cleared: "all" };
 };
 
@@ -1268,9 +1353,10 @@ export const getCompleteStreamCacheFile = ({ channelId, messageId }) => {
   const mp4Path = mp4PathFor(cacheKey);
   if (!fs.existsSync(mp4Path)) return null;
 
+  const paths = resolveStreamCachePaths(cacheKey);
   return {
     absolutePath: mp4Path,
-    playWebPath: toMediaWebPath("_stream_cache", `${cacheKey}.mp4`),
+    playWebPath: toMediaWebPath("_stream_cache", streamCacheWebRelPath(paths, ".mp4")),
     mimeType: meta.mimeType || "video/mp4",
     fileName: meta.fileName || "video.mp4",
     totalSize: Number(meta.totalSize) || 0,

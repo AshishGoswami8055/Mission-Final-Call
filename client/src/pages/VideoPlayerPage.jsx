@@ -1184,7 +1184,12 @@ const VideoPlayerPage = () => {
       ) : (
         <>
           <div className="watch-stage">
-            <div className="watch-float-nav md:hidden" aria-hidden={false}>
+            <div
+              className="watch-float-nav md:hidden"
+              aria-hidden={false}
+              data-cds-ignore-fs-dblclick
+              onDoubleClick={(event) => event.stopPropagation()}
+            >
               <Link to="/" className="watch-float-btn" aria-label="Back">
                 <FiArrowLeft size={20} />
               </Link>
@@ -1262,7 +1267,11 @@ const VideoPlayerPage = () => {
                   Open on YouTube
                 </a>
                 {youtubeNeedsCookies ? (
-                  <div className="absolute inset-x-3 top-3 z-10 max-w-lg rounded-xl border border-amber-500/40 bg-black/85 p-4 text-white backdrop-blur">
+                  <div
+                    className="absolute inset-x-3 top-3 z-10 max-w-lg rounded-xl border border-amber-500/40 bg-black/85 p-4 text-white backdrop-blur"
+                    data-cds-ignore-fs-dblclick
+                    onDoubleClick={(event) => event.stopPropagation()}
+                  >
                     <p className="text-sm font-semibold text-amber-200">YouTube login required for CDS player</p>
                     <p className="mt-2 text-xs leading-relaxed text-slate-300">
                       YouTube blocked the server download. While logged into YouTube in Chrome/Edge, install the extension{" "}
@@ -1338,14 +1347,22 @@ const VideoPlayerPage = () => {
                 />
 
                 {showLibraryCheckOverlay && (
-                  <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/90 text-center">
+                  <div
+                    className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/90 text-center"
+                    data-cds-ignore-fs-dblclick
+                    onDoubleClick={(event) => event.stopPropagation()}
+                  >
                     <FiLoader className="animate-spin text-white" size={28} />
                     <p className="text-sm text-slate-300">Checking PC library…</p>
                   </div>
                 )}
 
                 {telegramBlocksStream && (
-                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black px-6 text-center">
+                  <div
+                    className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black px-6 text-center"
+                    data-cds-ignore-fs-dblclick
+                    onDoubleClick={(event) => event.stopPropagation()}
+                  >
                     <p className="text-sm font-medium text-white">Telegram stream unavailable</p>
                     <p className="max-w-sm text-xs text-slate-400">
                       Log in to Telegram from settings below, or use Smooth playback to download the lecture to your PC.
@@ -1361,7 +1378,11 @@ const VideoPlayerPage = () => {
                 )}
 
                 {showStreamLoadingOverlay && (
-                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-black/85 px-6 text-center">
+                  <div
+                    className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-black/85 px-6 text-center"
+                    data-cds-ignore-fs-dblclick
+                    onDoubleClick={(event) => event.stopPropagation()}
+                  >
                     <FiLoader className="animate-spin text-3xl text-teal-400" />
                     <div className="space-y-1">
                       <p className="text-sm font-semibold text-white">

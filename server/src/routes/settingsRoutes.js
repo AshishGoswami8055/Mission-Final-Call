@@ -8,6 +8,7 @@ import {
   getYoutubeCookiesHandler,
   revealStreamCacheFolderHandler,
   revealStreamCacheItemHandler,
+  syncStreamCacheHandler,
   updateLocalMediaStorageHandler,
   uploadYoutubeCookiesHandler,
 } from "../controllers/mediaStorageController.js";
@@ -26,6 +27,7 @@ router.put("/local-media", updateLocalMediaStorageHandler);
 router.get("/youtube-cookies", getYoutubeCookiesHandler);
 router.post("/youtube-cookies", uploadYoutubeCookies.single("file"), uploadYoutubeCookiesHandler);
 router.get("/stream-cache", getStreamCacheHandler);
+router.post("/stream-cache/sync", syncStreamCacheHandler);
 router.post("/stream-cache/reveal-folder", revealStreamCacheFolderHandler);
 router.post("/stream-cache/:cacheKey/reveal", revealStreamCacheItemHandler);
 router.delete("/stream-cache", clearStreamCacheHandler);

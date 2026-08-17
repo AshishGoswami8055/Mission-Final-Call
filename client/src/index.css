@@ -631,6 +631,33 @@ body {
   z-index: 1;
 }
 
+/* PC media storage — stream cache rows marked done in subject */
+.stream-cache-row-complete td {
+  background: linear-gradient(
+    115deg,
+    rgb(236 253 245 / 0.95) 0%,
+    rgb(240 253 250 / 0.85) 45%,
+    rgb(255 255 255 / 0.92) 100%
+  );
+  border-top: 1px solid rgb(16 185 129 / 0.2);
+  border-bottom: 1px solid rgb(16 185 129 / 0.2);
+}
+
+.stream-cache-row-complete td:first-child {
+  box-shadow: inset 4px 0 0 #10b981;
+}
+
+.dark .stream-cache-row-complete td {
+  background: linear-gradient(
+    115deg,
+    rgb(6 78 59 / 0.45) 0%,
+    rgb(4 47 46 / 0.35) 50%,
+    rgb(10 10 10 / 0.6) 100%
+  );
+  border-top-color: rgb(16 185 129 / 0.25);
+  border-bottom-color: rgb(16 185 129 / 0.25);
+}
+
 .dark .lesson-row-shimmer {
   background: linear-gradient(
     105deg,

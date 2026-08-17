@@ -166,6 +166,7 @@ const CdsPlyrPlayer = ({
     let video = null;
     let screenshotBtn = null;
     let onScreenshotClick = null;
+    let onContainerDblClick = null;
 
     const handlers = {
       loadstart: () => {
@@ -220,6 +221,9 @@ const CdsPlyrPlayer = ({
       }
       if (screenshotBtn && onScreenshotClick) {
         screenshotBtn.removeEventListener("click", onScreenshotClick);
+      }
+      if (player?.elements?.container && onContainerDblClick) {
+        player.elements.container.removeEventListener("dblclick", onContainerDblClick, true);
       }
       scrubPreviewHandleRef.current?.destroy();
       scrubPreviewHandleRef.current = null;
@@ -285,6 +289,46 @@ const CdsPlyrPlayer = ({
         storage: { enabled: false },
       });
       plyrRef.current = player;
+
+      const isAllowedVideoSurface = (el) => {
+        if (!el) return false;
+        const media = player.media;
+        const wrapper = player.elements.wrapper;
+        const poster = wrapper?.querySelector(".plyr__poster");
+        return el === media || el === wrapper || el === poster;
+      };
+
+      const shouldIgnoreFsDblClickTarget = (el) => {
+        if (!el) return true;
+        if (el.closest("[data-cds-ignore-fs-dblclick]")) return true;
+        if (player.elements.controls?.contains(el)) return true;
+        if (el.closest(".plyr__menu")) return true;
+        if (el.closest(".plyr-screenshot-btn")) return true;
+        if (el.closest(".plyr__control--overlaid")) return true;
+        return false;
+      };
+
+      const shouldToggleFullscreenOnDblClick = (event) => {
+        const container = player.elements.container;
+        if (!container) return false;
+
+        const stack = document.elementsFromPoint(event.clientX, event.clientY);
+        for (const el of stack) {
+          if (window.getComputedStyle(el).pointerEvents === "none") continue;
+          if (shouldIgnoreFsDblClickTarget(el)) return false;
+          if (container.contains(el)) return isAllowedVideoSurface(el);
+          return false;
+        }
+        return false;
+      };
+
+      onContainerDblClick = (event) => {
+        event.stopImmediatePropagation();
+        if (!shouldToggleFullscreenOnDblClick(event)) return;
+        player.fullscreen.toggle();
+      };
+
+      player.elements.container?.addEventListener("dblclick", onContainerDblClick, true);
 
       const setupScrubPreview = () => {
         scrubPreviewHandleRef.current?.destroy();

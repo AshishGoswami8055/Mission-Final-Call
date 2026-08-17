@@ -239,10 +239,18 @@ export const getLocalMediaStorageStatus = () => {
 };
 
 export const getLocalMediaStorageStatusAsync = async () => {
+  const { reconcileStreamCacheFolder, measureStreamCacheUsedBytes } = await import(
+    "../services/telegramStreamCacheService.js"
+  );
+  reconcileStreamCacheFolder();
   const status = getLocalMediaStorageStatus();
+  const streamCacheBytes = measureStreamCacheUsedBytes();
+  const usedBytes = status.usedBytes - status.streamCacheBytes + streamCacheBytes;
   const volume = await getVolumeStats(status.rootPath);
   return {
     ...status,
+    streamCacheBytes,
+    usedBytes,
     envOverride: Boolean(String(process.env.LOCAL_MEDIA_ROOT || "").trim()),
     volume,
   };

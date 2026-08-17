@@ -215,22 +215,20 @@ const VideoCacheStatusBar = ({
   const overlay = variant === "overlay";
 
   if (overlay) {
-    if (!pcLibraryActive && !showStream) return null;
-    if (showStream && loading && !streamStatus && !pcLibraryActive) return null;
+    if (!showStream) return null;
+    if (loading && !streamStatus) return null;
+
+    // Only show on-video badges while cache is still building — completed state lives in the panel below.
+    const showActiveCacheBadge = streamPartial || streamEmpty;
+    if (!showActiveCacheBadge) return null;
 
     return (
-      <div className="pointer-events-none absolute left-2 top-2 z-10 flex max-w-[calc(100%-1rem)] flex-wrap gap-1.5 md:left-3 md:top-3">
-        {pcLibraryActive ? (
-          <span className={badgeShell("emerald", isDark)}>
-            <FiCheck size={12} /> On PC
-          </span>
-        ) : null}
-        {showStream && streamComplete ? (
-          <span className={badgeShell("emerald", isDark)}>
-            <FiHardDrive size={12} /> Cached 100%
-          </span>
-        ) : null}
-        {showStream && streamPartial ? (
+      <div
+        className="pointer-events-auto absolute bottom-12 left-2 z-10 flex max-w-[calc(100%-1rem)] flex-wrap gap-1.5 md:bottom-14 md:left-3"
+        data-cds-ignore-fs-dblclick
+        onDoubleClick={(event) => event.stopPropagation()}
+      >
+        {streamPartial ? (
           <span className={badgeShell(live.tone, isDark)}>
             {live.pulse ? (
               <LiveIcon size={12} className="animate-spin" />
@@ -240,7 +238,7 @@ const VideoCacheStatusBar = ({
             {live.label} {streamStatus.cachedPercent}%
           </span>
         ) : null}
-        {showStream && streamEmpty ? (
+        {streamEmpty ? (
           <span className={badgeShell("slate", isDark)}>
             <FiZap size={12} /> Caching as you watch
           </span>

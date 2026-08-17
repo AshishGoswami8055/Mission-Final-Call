@@ -3,6 +3,8 @@ import { isLocalLibraryEnabled } from "../services/localLibraryService.js";
 import {
   clearStreamCache,
   getStreamCacheInventory,
+  migrateStreamCacheLayouts,
+  reconcileStreamCacheFolder,
   revealStreamCacheFolderOnDisk,
   revealStreamCacheItemOnDisk,
 } from "../services/telegramStreamCacheService.js";
@@ -10,6 +12,32 @@ import {
   getLocalMediaStorageStatusAsync,
   setLocalMediaRoot,
 } from "../config/mediaStorage.js";
+
+const enrichStreamCacheInventory = async (inventory, userId) => {
+  const contentIds = inventory.items.map((item) => item.contentId).filter(Boolean);
+  let completedSet = new Set();
+
+  if (contentIds.length && userId) {
+    const Progress = (await import("../models/Progress.js")).default;
+    const completed = await Progress.find({
+      userId,
+      contentId: { $in: contentIds },
+      completed: true,
+    }).select("contentId");
+    completedSet = new Set(completed.map((entry) => String(entry.contentId)));
+  }
+
+  return {
+    ...inventory,
+    usedLabel: formatBytesLabel(inventory.usedBytes),
+    items: inventory.items.map((item) => ({
+      ...item,
+      totalLabel: formatBytesLabel(item.totalSize),
+      cachedLabel: formatBytesLabel(item.cachedBytes),
+      completed: item.contentId ? completedSet.has(String(item.contentId)) : false,
+    })),
+  };
+};
 
 const assertLocalMediaSettings = (req, res, next) => {
   if (!isLocalLibraryEnabled()) {
@@ -80,33 +108,67 @@ export const updateLocalMediaStorageHandler = async (req, res) => {
   }
 };
 
-export const getStreamCacheHandler = async (_req, res) => {
+export const getStreamCacheHandler = async (req, res) => {
   try {
     const inventory = await getStreamCacheInventory();
+    const payload = await enrichStreamCacheInventory(inventory, req.user?._id);
     res.json({
-      ...inventory,
-      usedLabel: formatBytesLabel(inventory.usedBytes),
-      items: inventory.items.map((item) => ({
-        ...item,
-        totalLabel: formatBytesLabel(item.totalSize),
-        cachedLabel: formatBytesLabel(item.cachedBytes),
-      })),
+      ...payload,
+      sync: payload.sync
+        ? {
+            ...payload.sync,
+            freedLabel: formatBytesLabel(payload.sync.freedBytes || 0),
+          }
+        : null,
     });
   } catch (error) {
     res.status(500).json({ message: error.message || "Could not read stream cache" });
   }
 };
 
+export const syncStreamCacheHandler = async (req, res) => {
+  try {
+    const migration = await migrateStreamCacheLayouts();
+    const sync = reconcileStreamCacheFolder();
+    const inventory = await getStreamCacheInventory();
+    const payload = await enrichStreamCacheInventory(inventory, req.user?._id);
+    res.json({
+      ...payload,
+      sync: {
+        ...sync,
+        freedLabel: formatBytesLabel(sync.freedBytes || 0),
+      },
+      migration,
+      message:
+        migration.migrated > 0
+          ? `Organized ${migration.migrated} cached video(s) into subject folders.`
+          : sync.removedFiles
+            ? `Removed ${sync.removedFiles} orphan file(s) and freed ${formatBytesLabel(sync.freedBytes)}.`
+            : "Stream cache folder is already organized and in sync.",
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Could not sync stream cache" });
+  }
+};
+
 export const clearStreamCacheHandler = async (req, res) => {
   try {
     const cacheKey = req.query.cacheKey ? String(req.query.cacheKey) : null;
-    const result = clearStreamCache({ cacheKey });
+    const cacheKeys = Array.isArray(req.body?.cacheKeys)
+      ? req.body.cacheKeys.map((key) => String(key).trim()).filter(Boolean)
+      : null;
+    const result = clearStreamCache({ cacheKey, cacheKeys });
     const inventory = await getStreamCacheInventory();
+    const payload = await enrichStreamCacheInventory(inventory, req.user?._id);
+    const clearedCount = typeof result.cleared === "number" ? result.cleared : 0;
     res.json({
       ...result,
-      ...inventory,
-      usedLabel: formatBytesLabel(inventory.usedBytes),
-      message: cacheKey ? "Removed cached video." : "Stream cache cleared.",
+      ...payload,
+      message: cacheKeys?.length
+        ? `Removed ${clearedCount} cached video(s).`
+        : cacheKey
+          ? "Removed cached video."
+          : "Stream cache cleared.",
     });
   } catch (error) {
     res.status(500).json({ message: error.message || "Could not clear stream cache" });
