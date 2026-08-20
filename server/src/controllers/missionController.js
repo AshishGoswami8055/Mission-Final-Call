@@ -503,8 +503,9 @@ export const logSession = async (req, res) => {
 export const heartbeatVideoSession = async (req, res) => {
   try {
     const { contentId, durationMinutes, subjectId, subjectName, meta } = req.body;
-    if (!contentId) {
-      return res.status(400).json({ message: "contentId is required" });
+    const videoId = meta?.videoId ? String(meta.videoId) : "";
+    if (!contentId && !videoId) {
+      return res.status(400).json({ message: "contentId or meta.videoId is required" });
     }
     const mins = Math.max(0, Math.round(Number(durationMinutes) || 0));
     if (mins <= 0) {
@@ -516,7 +517,7 @@ export const heartbeatVideoSession = async (req, res) => {
       userId: req.user._id,
       type: "video",
       durationMinutes: mins,
-      contentId,
+      contentId: contentId || null,
       subjectId: subjectId || null,
       subjectName: subjectName || "",
       meta: meta || {},

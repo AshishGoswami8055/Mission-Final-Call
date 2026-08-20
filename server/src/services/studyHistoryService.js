@@ -51,6 +51,38 @@ export const logStudySession = async ({
     });
   }
 
+  if (increment && type === "video" && meta?.videoId) {
+    const videoId = String(meta.videoId);
+    const existing = await StudySession.findOne({
+      userId,
+      date,
+      type: "video",
+      "meta.videoId": videoId,
+    });
+    if (existing) {
+      existing.durationMinutes = (existing.durationMinutes || 0) + mins;
+      existing.endedAt = now;
+      if (subjectId) existing.subjectId = subjectId;
+      if (subjectName) existing.subjectName = subjectName;
+      existing.meta = { ...(existing.meta || {}), ...meta };
+      await existing.save();
+      return existing;
+    }
+
+    return StudySession.create({
+      userId,
+      date,
+      type: "video",
+      contentId: null,
+      durationMinutes: mins,
+      subjectId: subjectId || null,
+      subjectName: subjectName || "",
+      startedAt: now,
+      endedAt: now,
+      meta,
+    });
+  }
+
   return StudySession.create({
     userId,
     date,

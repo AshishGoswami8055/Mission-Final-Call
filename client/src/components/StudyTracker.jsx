@@ -16,6 +16,7 @@ const shell =
 const StudyTracker = ({ compact = false, subjects = [], showHistoryLink = true }) => {
   const {
     todayMinutes,
+    effectiveTodayVideoMinutes,
     todayMinutesBySubject,
     targetMinutes,
     targetBySubject,
@@ -23,8 +24,9 @@ const StudyTracker = ({ compact = false, subjects = [], showHistoryLink = true }
   } = useStudy();
   const [showTargetModal, setShowTargetModal] = useState(false);
 
-  const totalProgress = targetMinutes > 0 ? Math.min(100, (todayMinutes / targetMinutes) * 100) : 0;
-  const totalComplete = targetMinutes > 0 && todayMinutes >= targetMinutes;
+  const focusMinutes = Math.max(todayMinutes, effectiveTodayVideoMinutes);
+  const totalProgress = targetMinutes > 0 ? Math.min(100, (focusMinutes / targetMinutes) * 100) : 0;
+  const totalComplete = targetMinutes > 0 && focusMinutes >= targetMinutes;
 
   const subjectIdsWithTargetOrTime = new Set([
     ...Object.keys(targetBySubject).filter((id) => (targetBySubject[id] || 0) > 0),
@@ -58,7 +60,7 @@ const StudyTracker = ({ compact = false, subjects = [], showHistoryLink = true }
           title="Today's study time & target"
         >
           <FiClock className="text-slate-500 dark:text-slate-400" size={14} strokeWidth={2} />
-          {formatMinutes(todayMinutes)}
+          {formatMinutes(focusMinutes)}
           <span className="text-slate-300 dark:text-slate-600">/</span>
           {formatMinutes(targetMinutes)}
         </button>
@@ -90,7 +92,7 @@ const StudyTracker = ({ compact = false, subjects = [], showHistoryLink = true }
               Today
             </p>
             <p className="mt-1.5 text-[1.65rem] font-semibold leading-none tracking-tight text-slate-900 tabular-nums dark:text-slate-50 sm:text-3xl">
-              {formatMinutes(todayMinutes)}
+              {formatMinutes(focusMinutes)}
             </p>
             <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
               Target {formatMinutes(targetMinutes)}

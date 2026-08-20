@@ -27,7 +27,7 @@ import SmoothPlaybackPanel from "../components/SmoothPlaybackPanel";
 import VideoPlaybackCachePanel from "../components/VideoPlaybackCachePanel";
 import { useStudy } from "../context/StudyContext";
 import { useTheme } from "../context/ThemeContext";
-import { buildStreamCachePlayUrl, buildYoutubePlaybackStreamUrl, getTelegramVideoUrl, isLocalFrontend, isTelegramLinkVideo, isTelegramStreamContent, isYouTubeUrl, preferSameOriginMediaUrl, resolveContentSrc, resolveVideoPlaybackUrl, toAbsoluteMediaUrl } from "../utils/media";
+import { buildStreamCachePlayUrl, buildYoutubePlaybackStreamUrl, buildYoutubeWatchUrl, extractYoutubeVideoId, getTelegramVideoUrl, isLocalFrontend, isTelegramLinkVideo, isTelegramStreamContent, isYouTubeUrl, preferSameOriginMediaUrl, resolveContentSrc, resolveVideoPlaybackUrl, toAbsoluteMediaUrl } from "../utils/media";
 import { captureVideoFrameDataUrl, resolvePlyrVideoElement, seekVideoTo, reloadVideoPreservingTime } from "../utils/videoScreenshot";
 import { fetchLocalLibraryStatus } from "../utils/localLibraryApi";
 import { fetchContentStreamCache } from "../utils/mediaStorageApi";
@@ -75,27 +75,6 @@ const parseTimecodeToSeconds = (timecode = "") => {
   if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
   if (parts.length === 2) return parts[0] * 60 + parts[1];
   return parts[0] || 0;
-};
-
-const buildYoutubeWatchUrl = (rawUrl, seconds = 0) => {
-  const sec = Math.max(0, Math.floor(seconds));
-  if (!rawUrl) return "";
-  if (sec <= 0) return rawUrl;
-  const joiner = rawUrl.includes("?") ? "&" : "?";
-  return `${rawUrl}${joiner}t=${sec}`;
-};
-
-const extractYoutubeVideoId = (rawUrl) => {
-  if (!rawUrl) return "";
-  try {
-    const u = new URL(rawUrl);
-    if (u.hostname.includes("youtu.be")) {
-      return u.pathname.replace(/^\//, "").split("/")[0] || "";
-    }
-    return u.searchParams.get("v") || "";
-  } catch {
-    return rawUrl.split("/").pop()?.split("?")[0] || "";
-  }
 };
 
 const getImageMetaFromDataUrl = (dataUrl) =>
@@ -172,13 +151,16 @@ const VideoPlayerPage = () => {
   const sessionStartRef = useRef(Date.now());
   const itemRef = useRef(null);
   const prevVideoTimeRef = useRef(0);
+  const prevYoutubeTimeRef = useRef(0);
   const syncWatchToServerRef = useRef(async () => {});
   const streamCacheCompleteRef = useRef(false);
+  const diskPlaybackFailedRef = useRef(false);
   const videoErrorRetriesRef = useRef(0);
   const videoErrorTimerRef = useRef(null);
   const resumeAppliedRef = useRef(false);
   const pendingMidPlaybackRestoreRef = useRef(0);
   const hasStartedPlayingRef = useRef(false);
+  const isPlayingRef = useRef(false);
   const { addStudyMinutes, addToWatchHistory, applyVideoStreakStatus } = useStudy();
 
   const isTelegramStream = item ? isTelegramStreamContent(item) : false;
@@ -316,7 +298,12 @@ const VideoPlayerPage = () => {
             setCachedPlayUrl(libraryRes.data.playUrl);
             usingLocalLibraryRef.current = true;
             usingCacheRef.current = true;
-          } else if (!cancelled && streamCacheRes?.data?.complete) {
+          } else if (
+            !cancelled &&
+            streamCacheRes?.data?.complete &&
+            streamCacheRes?.data?.playUrl &&
+            !diskPlaybackFailedRef.current
+          ) {
             setStreamCacheComplete(true);
             streamCacheCompleteRef.current = true;
             setStreamCachePlayUrl(
@@ -438,8 +425,11 @@ const VideoPlayerPage = () => {
     youtubeResumeAppliedRef.current = false;
     youtubeTimeRef.current = 0;
     youtubeUiTickRef.current = 0;
+    prevYoutubeTimeRef.current = 0;
     pendingMidPlaybackRestoreRef.current = 0;
     hasStartedPlayingRef.current = false;
+    isPlayingRef.current = false;
+    diskPlaybackFailedRef.current = false;
   }, [id]);
 
   const handleRetryPlayback = useCallback(async () => {
@@ -452,11 +442,30 @@ const VideoPlayerPage = () => {
       clearTimeout(videoErrorTimerRef.current);
       videoErrorTimerRef.current = null;
     }
+
+    if (isTelegramStream && id && isLocalFrontend()) {
+      try {
+        const { data } = await fetchContentStreamCache(id);
+        if (data?.complete && data?.playUrl) {
+          diskPlaybackFailedRef.current = false;
+          usingStreamCacheDiskRef.current = true;
+          usingCacheRef.current = true;
+          setStreamCacheComplete(true);
+          streamCacheCompleteRef.current = true;
+          setStreamCachePlayUrl(buildStreamCachePlayUrl(id, data.playUrl));
+          setPlayerGeneration((value) => value + 1);
+          return;
+        }
+      } catch {
+        /* fall through to stream */
+      }
+    }
+
     if (isTelegramStream && !streamCachePlayUrl && !streamCacheCompleteRef.current) {
       await verifyTelegramForRetry();
     }
     setPlayerGeneration((value) => value + 1);
-  }, [isTelegramStream, streamCachePlayUrl, verifyTelegramForRetry]);
+  }, [id, isTelegramStream, streamCachePlayUrl, verifyTelegramForRetry]);
 
   const handlePlaybackEnded = useCallback(async () => {
     setIsPlaying(false);
@@ -593,7 +602,8 @@ const VideoPlayerPage = () => {
         if (telegram && id && isLocalFrontend() && !usingStreamCacheDiskRef.current) {
           try {
             const { data } = await fetchContentStreamCache(id);
-            if (data?.complete) {
+            if (data?.complete && data?.playUrl) {
+              diskPlaybackFailedRef.current = false;
               usingStreamCacheDiskRef.current = true;
               usingCacheRef.current = true;
               setStreamCacheComplete(true);
@@ -611,10 +621,14 @@ const VideoPlayerPage = () => {
         }
 
         if (usingStreamCacheDiskRef.current || streamCachePlayUrl) {
-          toast.error(
-            "Playback hiccup on cached file. Click Retry playback, or use Smooth playback to re-save.",
-            { duration: 8000 }
-          );
+          diskPlaybackFailedRef.current = true;
+          usingStreamCacheDiskRef.current = false;
+          setStreamCachePlayUrl(null);
+          setStreamCacheComplete(false);
+          streamCacheCompleteRef.current = false;
+          videoErrorRetriesRef.current = 0;
+          setPlayerGeneration((value) => value + 1);
+          toast.info("Cached file had a glitch — continuing from stream.", { duration: 5000 });
           return;
         }
 
@@ -628,6 +642,23 @@ const VideoPlayerPage = () => {
             toast.error("Video failed to load. Please refresh the page and try again.");
           }
           return;
+        }
+        try {
+          const { data: cacheStatus } = await fetchContentStreamCache(id);
+          if (cacheStatus?.complete && cacheStatus?.playUrl) {
+            diskPlaybackFailedRef.current = false;
+            usingStreamCacheDiskRef.current = true;
+            usingCacheRef.current = true;
+            setStreamCacheComplete(true);
+            streamCacheCompleteRef.current = true;
+            setStreamCachePlayUrl(buildStreamCachePlayUrl(id, cacheStatus.playUrl));
+            videoErrorRetriesRef.current = 0;
+            setPlayerGeneration((value) => value + 1);
+            toast.success("Playing from your cached copy on disk.");
+            return;
+          }
+        } catch {
+          /* continue */
         }
         try {
           const { data } = await fetchLocalLibraryStatus(id);
@@ -680,10 +711,12 @@ const VideoPlayerPage = () => {
 
   const handleVideoPlay = useCallback(() => {
     hasStartedPlayingRef.current = true;
+    isPlayingRef.current = true;
     setIsPlaying(true);
   }, []);
 
   const handleVideoPause = useCallback(() => {
+    isPlayingRef.current = false;
     setIsPlaying(false);
     if (id && videoRef.current) saveVideoPosition(id, videoRef.current.currentTime);
   }, [id]);
@@ -736,11 +769,12 @@ const VideoPlayerPage = () => {
         const { data } = await fetchContentStreamCache(id);
         if (cancelled) return;
         const complete = Boolean(data?.complete);
+        const playUrl = data?.playUrl || null;
         setStreamCacheComplete(complete);
-        if (complete && !streamCacheCompleteRef.current) {
+        if (complete && playUrl && !streamCacheCompleteRef.current && !diskPlaybackFailedRef.current) {
           streamCacheCompleteRef.current = true;
-          if (!cachedPlayUrlRef.current) {
-            setStreamCachePlayUrl(buildStreamCachePlayUrl(id, data.playUrl));
+          if (!cachedPlayUrlRef.current && !hasStartedPlayingRef.current) {
+            setStreamCachePlayUrl(buildStreamCachePlayUrl(id, playUrl));
             usingStreamCacheDiskRef.current = true;
             usingCacheRef.current = true;
           }
@@ -820,9 +854,8 @@ const VideoPlayerPage = () => {
         });
       }
       const resolved = resolveContentSrc(currentItem);
-      const isYt = isYouTubeUrl(resolved);
       const isTgLink = isTelegramLinkVideo(currentItem);
-      if ((isYt || isTgLink) && currentItem) {
+      if (isTgLink && currentItem) {
         const sessionMinutes = (Date.now() - sessionStartRef.current) / 60000;
         if (sessionMinutes > 0 && sessionMinutes <= 240) addStudyMinutes(Math.min(sessionMinutes, 120), subjectId);
       }
@@ -932,7 +965,8 @@ const VideoPlayerPage = () => {
 
   const handleYoutubeTimeUpdate = useCallback(
     (event) => {
-      const t = event?.currentTarget?.currentTime;
+      const ytVideo = event?.currentTarget;
+      const t = ytVideo?.currentTime;
       if (!Number.isFinite(t)) return;
       youtubeTimeRef.current = t;
 
@@ -940,6 +974,20 @@ const VideoPlayerPage = () => {
       if (now - youtubeUiTickRef.current >= 1000) {
         youtubeUiTickRef.current = now;
         setCurrentTime(t);
+      }
+
+      if (isPlayingRef.current && (!ytVideo || !ytVideo.paused)) {
+        const prev = prevYoutubeTimeRef.current;
+        const delta = Math.max(0, Math.min(2, t - prev));
+        prevYoutubeTimeRef.current = t;
+        studyAccumSecondsRef.current += delta;
+        heartbeatPendingSecondsRef.current += delta;
+        if (studyAccumSecondsRef.current >= 60) {
+          const sid = itemRef.current?.subjectId?._id ?? itemRef.current?.subjectId;
+          addStudyMinutesRef.current(studyAccumSecondsRef.current / 60, sid);
+          studyAccumSecondsRef.current = 0;
+        }
+        if (heartbeatPendingSecondsRef.current >= 300) void syncWatchToServerRef.current(300);
       }
 
       if (id && Math.abs(t - lastSavedPositionRef.current) >= 5) {
@@ -1253,8 +1301,15 @@ const VideoPlayerPage = () => {
                     const d = event?.currentTarget?.duration;
                     if (Number.isFinite(d) && d > 0) setDuration(d);
                   }}
-                  onPlay={() => setIsPlaying(true)}
-                  onPause={() => setIsPlaying(false)}
+                  onPlay={() => {
+                    hasStartedPlayingRef.current = true;
+                    isPlayingRef.current = true;
+                    setIsPlaying(true);
+                  }}
+                  onPause={() => {
+                    isPlayingRef.current = false;
+                    setIsPlaying(false);
+                  }}
                   config={youtubePlayerConfig}
                 />
                 <a

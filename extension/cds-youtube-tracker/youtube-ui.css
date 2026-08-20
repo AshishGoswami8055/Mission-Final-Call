@@ -1,0 +1,71 @@
+#cds-yt-tracker-wrap {
+  position: absolute;
+  z-index: 100;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.22s ease, visibility 0.22s ease;
+  touch-action: none;
+}
+
+#cds-yt-tracker-wrap.cds-yt-visible,
+#cds-yt-tracker-wrap.cds-yt-dragging {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+/* Match YouTube speed-controller pill (e.g. "1.00") */
+#cds-yt-tracker-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font: 500 12px/1.2 "Roboto", "Arial", sans-serif;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.55);
+  background: rgba(8, 8, 8, 0.72);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  box-shadow: none;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  margin: 0;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+#cds-yt-tracker-wrap.cds-yt-dragging #cds-yt-tracker-btn {
+  cursor: grabbing;
+}
+
+#cds-yt-tracker-btn:hover {
+  color: rgba(255, 255, 255, 0.78);
+  background: rgba(8, 8, 8, 0.82);
+}
+
+#cds-yt-tracker-btn.is-tracking {
+  color: rgba(255, 255, 255, 0.62);
+  background: rgba(8, 8, 8, 0.72);
+}
+
+#cds-yt-tracker-btn.is-tracking:hover {
+  color: rgba(255, 255, 255, 0.82);
+  background: rgba(8, 8, 8, 0.85);
+}
+
+#cds-yt-tracker-btn .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(74, 222, 128, 0.85);
+  flex-shrink: 0;
+  box-shadow: none;
+}
+
+#cds-yt-tracker-btn .label {
+  white-space: nowrap;
+  pointer-events: none;
+}

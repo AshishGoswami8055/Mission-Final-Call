@@ -3,6 +3,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { createRequire } from "node:module";
 import { applyCorsHeaders } from "../config/cors.js";
+import { parseRangeHeader } from "../utils/streamLocalFile.js";
 import { ensureLocalMediaDirs, getStreamCacheDir, toMediaWebPath } from "../config/mediaStorage.js";
 import {
   buildStreamCacheLayout,
@@ -104,21 +105,6 @@ const ensureStreamCacheMp4Link = (cacheKey) => {
   }
 };
 
-const parseRangeHeader = (rangeHeader, totalSize) => {
-  if (!rangeHeader || !/^bytes=/i.test(rangeHeader)) {
-    return { start: 0, end: totalSize - 1, partial: false };
-  }
-  const match = /^bytes=(\d*)-(\d*)$/i.exec(String(rangeHeader).trim());
-  if (!match) return { start: 0, end: totalSize - 1, partial: false };
-  let start = match[1] ? parseInt(match[1], 10) : 0;
-  let end = match[2] ? parseInt(match[2], 10) : totalSize - 1;
-  if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= totalSize) {
-    return { invalid: true };
-  }
-  end = Math.min(end, totalSize - 1);
-  return { start, end, partial: true };
-};
-
 const chunkIndexFor = (offset) => Math.floor(offset / MAP_CHUNK);
 
 const createChunkMap = (totalSize) => ({
@@ -147,6 +133,35 @@ const isRangeCached = (entry, start, end) => {
   for (let i = from; i <= to; i += 1) {
     if (!entry.chunkMap.filled[i]) return false;
   }
+  return true;
+};
+
+const isEntryFullyCached = (entry) => {
+  if (!entry?.totalSize) return false;
+  return isRangeCached(entry, 0, entry.totalSize - 1);
+};
+
+/** Drop stale complete flags left by interrupted downloads. */
+const reconcileCompleteFlag = (entry) => {
+  if (!entry?.complete) return false;
+  if (isEntryFullyCached(entry)) return true;
+  entry.complete = false;
+  try {
+    const mp4Path = mp4PathFor(entry.cacheKey);
+    if (fs.existsSync(mp4Path)) fs.unlinkSync(mp4Path);
+  } catch {
+    /* ignore */
+  }
+  saveMeta(entry);
+  return false;
+};
+
+const markCompleteIfReady = (entry) => {
+  if (entry.complete || entry.contiguousBytes < entry.totalSize) return false;
+  if (!isEntryFullyCached(entry)) return false;
+  entry.complete = true;
+  saveMeta(entry);
+  notifyWaiters(entry);
   return true;
 };
 
@@ -370,11 +385,7 @@ const scheduleAheadPrefetch = (entry, hintStart = null) => {
 
   const start = resolvePrefetchStart(entry, hintStart);
   if (start >= entry.totalSize) {
-    if (entry.contiguousBytes >= entry.totalSize) {
-      entry.complete = true;
-      saveMeta(entry);
-      notifyWaiters(entry);
-    }
+    markCompleteIfReady(entry);
     return;
   }
 
@@ -404,12 +415,8 @@ const scheduleAheadPrefetch = (entry, hintStart = null) => {
         entry.prefetchRunning = false;
       }
 
-      if (entry.contiguousBytes >= entry.totalSize) {
-        entry.complete = true;
-        saveMeta(entry);
-        notifyWaiters(entry);
-        return;
-      }
+      markCompleteIfReady(entry);
+      if (entry.complete) return;
 
       scheduleAheadPrefetch(entry, end + 1);
     },
@@ -448,11 +455,7 @@ const runBackgroundWarmup = (entry) => {
       const { client, message } = await taskGetMedia(entry.channelId, entry.messageId);
       const start = findNextUncachedStart(entry, entry.contiguousBytes);
       if (start >= entry.totalSize) {
-        if (entry.contiguousBytes >= entry.totalSize) {
-          entry.complete = true;
-          saveMeta(entry);
-          notifyWaiters(entry);
-        }
+        markCompleteIfReady(entry);
         return;
       }
       await downloadRangeToCache({
@@ -464,11 +467,8 @@ const runBackgroundWarmup = (entry) => {
         res: null,
         writeResponse: false,
       });
-      if (entry.contiguousBytes >= entry.totalSize) {
-        entry.complete = true;
-        saveMeta(entry);
-        notifyWaiters(entry);
-      } else {
+      markCompleteIfReady(entry);
+      if (!entry.complete) {
         scheduleAheadPrefetch(entry);
       }
     },
@@ -498,6 +498,7 @@ const resolveEntryFromDisk = (cacheKey, channelId, messageId) => {
   entry = restoreEntry(cacheKey, saved);
   entries.set(cacheKey, entry);
   entry.lastAccessAt = Date.now();
+  reconcileCompleteFlag(entry);
   return entry;
 };
 
@@ -914,7 +915,7 @@ export const streamTelegramMediaWithCache = async ({ channelId, messageId, req, 
 
   entry.lastAccessAt = Date.now();
 
-  if (entry.complete || isRangeCached(entry, start, end)) {
+  if (isRangeCached(entry, start, end)) {
     beginEntryPlayback(entry);
     try {
       deferBackgroundWarmup(entry, end + 1);
@@ -1299,6 +1300,12 @@ export const getStreamCacheStatusByMessage = ({ channelId, messageId }) => {
 
   const cacheKey = cacheKeyFor(channelId, messageId);
   const meta = readMetaFile(cacheKey);
+  let entry = entries.get(cacheKey);
+  if (meta && !entry) {
+    entry = restoreEntry(cacheKey, meta);
+    entries.set(cacheKey, entry);
+  }
+  if (entry) reconcileCompleteFlag(entry);
   ensureEntryPrefetch(cacheKey, meta);
   const live = getStreamCacheLiveState(cacheKey);
   if (!meta) {
@@ -1317,18 +1324,20 @@ export const getStreamCacheStatusByMessage = ({ channelId, messageId }) => {
   }
 
   const totalSize = Number(meta.totalSize) || 0;
-  const cachedBytes = estimateCachedBytes(meta);
+  const isComplete = entry ? Boolean(entry.complete) : Boolean(meta.complete);
+  if (isComplete) ensureStreamCacheMp4Link(cacheKey);
+  const cachedBytes = isComplete ? totalSize : estimateCachedBytes(meta);
   const cachedPercent =
     totalSize > 0 ? Math.min(100, Math.round((cachedBytes / totalSize) * 100)) : 0;
   const completeFile =
-    meta.complete && ensureStreamCacheMp4Link(cacheKey)
+    isComplete && ensureStreamCacheMp4Link(cacheKey)
       ? getCompleteStreamCacheFile({ channelId, messageId })
       : null;
 
   return {
     eligible: true,
-    cached: cachedBytes > 0 || Boolean(meta.complete),
-    complete: Boolean(meta.complete),
+    cached: cachedBytes > 0 || isComplete,
+    complete: isComplete,
     cachedBytes,
     totalSize,
     cachedPercent,
@@ -1338,7 +1347,7 @@ export const getStreamCacheStatusByMessage = ({ channelId, messageId }) => {
     lastAccessAt: meta.lastAccessAt || null,
     checkedAt,
     ...live,
-    activity: meta.complete ? "complete" : live.activity,
+    activity: isComplete ? "complete" : live.activity,
   };
 };
 
@@ -1347,7 +1356,14 @@ export const getCompleteStreamCacheFile = ({ channelId, messageId }) => {
   if (!channelId || !messageId) return null;
   const cacheKey = cacheKeyFor(channelId, messageId);
   const meta = readMetaFile(cacheKey);
-  if (!meta?.complete) return null;
+  if (!meta) return null;
+
+  let entry = entries.get(cacheKey);
+  if (!entry) {
+    entry = restoreEntry(cacheKey, meta);
+    entries.set(cacheKey, entry);
+  }
+  if (!reconcileCompleteFlag(entry)) return null;
   if (!ensureStreamCacheMp4Link(cacheKey)) return null;
 
   const mp4Path = mp4PathFor(cacheKey);

@@ -31,7 +31,8 @@ The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, p
 | **CDS Vocabulary Arena** | Active-practice dashboard; **CDS PYQ (AI)** paper-style MCQs (default practice mode); mixed/MCQ/reverse/typing/context/weak/root/exam drills; deterministic SRS; session analytics; root families; CSV/Excel/OCR/text preview import; idioms + one-word substitution share the same corpus |
 | **Telegram Import UX** | Dedicated **`/import/telegram`** page; channel search; curated topic media; lesson plans with clean titles from bot captions; **video thumbnails** in lesson list; thumbnail click → **Play video** or **Preview thumbnail** (lightbox); PDF **View** (new tab) + **Save** (full PC download); import progress with **Cancel**; batch GramJS metadata fetch; PDF filenames from Telegram document name; filename search; full-height lesson workspace |
 | **PC Media Storage** | Configure `LOCAL_MEDIA_ROOT`; **organized stream cache** by subject folder + titled filenames; multi-select delete; **Sync folder** (migrate + orphan cleanup); green **Conquered** rows for lessons marked done; **Locate / Show in folder** via File Explorer (localhost PowerShell reveal) |
-| **Study tracker** | Daily minutes, per-subject targets, watch history, exam countdown, celebration overlays |
+| **Study tracker** | Daily minutes, per-subject targets, watch history, exam countdown, celebration overlays; **server-synced video minutes** via `GET /mission/streak/video`; dashboard **Today** widget uses `max(local, server)` |
+| **YouTube external tracking** | Chrome extension **`extension/cds-youtube-tracker/`** (v1.3.1) — track study time on **youtube.com** without opening lessons in the app; player-overlay pill (matches speed-controller style); visible only when YouTube controls show; **draggable**; heartbeats to `POST /mission/session/heartbeat` with `meta.videoId` |
 | **Daily Mission** (`/mission`) | Auto-generated daily plan: 1 English + 1 Maths + 1 GS video + reading; Sunday mock; AI briefing; discipline score; streaks |
 | **Analytics** | Study intelligence (`/history/intelligence`), weekly charts, mock trends, video streak (60 min/day goal) |
 | **Local PC library** | Download videos to `{LOCAL_MEDIA_ROOT}/_local_library/` for smooth playback (local server only) |
@@ -61,6 +62,7 @@ The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, p
 | HTTP | Axios (`src/api/client.js`) |
 | UI libs | react-hot-toast, react-icons (Feather `Fi*`), clsx, date-fns |
 | Media | **Plyr** (`plyr` npm), react-pdf, react-player (installed; PDF uses `<iframe>`; video uses `CdsPlyrPlayer`) |
+| Browser extension | **`extension/cds-youtube-tracker/`** — MV3 Chrome extension for YouTube study-time tracking (dev, load unpacked) |
 | Export | jspdf (screenshot notes export) |
 | Auth client | jwt-decode (available), JWT in `localStorage` key `cds_token` |
 
@@ -130,7 +132,17 @@ d:\1. Projects\CDS JOURNEY OTA\
 │       ├── pages/                # Route-level pages (incl. SubjectFullVideoPage, CloudinaryStoragePage, LocalMediaStoragePage)
 │       ├── config/navItems.js    # Sidebar nav (incl. PC Media Storage — localOnly)
 │       ├── styles/               # plyr-overrides.css (sky-blue Plyr theme), telegram-import.css
-│       └── utils/                # media.js, contentSort.js, subjectFullCourse.js, telegramLessonPlan.js, videoScreenshot.js, timelineScrubPreview.js, mediaStorageApi.js, …
+│       └── utils/                # media.js, contentSort.js, subjectFullCourse.js, telegramLessonPlan.js, videoScreenshot.js, timelineScrubPreview.js, mediaStorageApi.js, youtubeExternalTrack.js, …
+│
+├── extension/                    # Browser extensions (localhost dev)
+│   └── cds-youtube-tracker/      # MV3 — YouTube study-time tracker (watch on youtube.com)
+│       ├── manifest.json         # v1.3.1 — content scripts on youtube.com + localhost app
+│       ├── popup.html / popup.js # Extension login (CDS email/password → JWT in chrome.storage)
+│       ├── youtube.js            # Content script — player overlay, drag, tick, flush heartbeats
+│       ├── youtube-ui.css        # Dark transparent pill (matches “1.00” speed-controller look)
+│       ├── background.js         # POST heartbeat to API; notify open app tabs; badge today minutes
+│       ├── bridge.js             # App tab relay (CDS_YT_TRACK_* postMessage when app open)
+│       └── README.md             # Install + usage
 │
 ├── server/                       # Express backend (MVC)
 │   ├── package.json
@@ -214,6 +226,16 @@ d:\1. Projects\CDS JOURNEY OTA\
 | `server/src/services/uploadProgressBus.js` | In-memory upload job state (UUID `uploadId`); Telegram import/update progress; **active jobs TTL 60 min**, terminal 10 min |
 | `server/src/services/contentCleanupService.js` | Unified delete: Cloudinary (incl. thumbnails + URL fallback) + local files |
 | `server/src/services/telegramService.js` | GramJS client, **`fetchTelegramThumbnail()`**, **`resolveTelegramImportMessageMetas()`**, **`checkTelegramConnectionLive()`**, stream, **`fetchNewChannelMediaSince()`** |
+| `extension/cds-youtube-tracker/youtube.js` | YouTube-only study tracking — overlay button inside `#movie_player`, shows with YT controls (`ytp-autohide`), drag + saved position, pause-aware tick |
+| `extension/cds-youtube-tracker/background.js` | Extension service worker — `POST /mission/session/heartbeat`, push streak to open `localhost:5173` tabs |
+| `extension/cds-youtube-tracker/bridge.js` | Injects on app origin — relays `HEARTBEAT_SENT` → `CDS_YT_TRACK_TICK` for live dashboard updates |
+| `client/src/context/StudyContext.jsx` | Daily minutes/targets/history; **`refreshVideoStreak()`** merges `todayVideoMinutes` from server; polls every 20s + focus/visibility; listens for extension ticks |
+| `client/src/components/StudyTracker.jsx` | Dashboard **Today** widget — `focusMinutes = max(todayMinutes, effectiveTodayVideoMinutes)` |
+| `client/src/components/WatchPageHeader.jsx` | Video page focus session bar — same merged minutes logic |
+| `client/src/components/YoutubeExternalTrackBar.jsx` | Optional floating bar when app-initiated YouTube track session active (legacy bridge path) |
+| `client/src/utils/youtubeExternalTrack.js` | Extension ping/start/stop helpers; `getExtensionHeartbeatApiBase()` for dev `127.0.0.1:5001/api` |
+| `server/src/controllers/missionController.js` | **`heartbeatVideoSession`** — accepts `contentId` **or** `meta.videoId` (YouTube external) |
+| `server/src/services/studyHistoryService.js` | **`logStudySession(increment:true)`** — upsert by `contentId` or **`meta.videoId`** per day |
 
 ---
 
@@ -438,6 +460,58 @@ VideoPlayerPage detects isYouTubeUrl(resolveContentSrc(item))
 
 **Requirements (dev PC):** `pip install "yt-dlp[default]"`, **ffmpeg**, **`{LOCAL_MEDIA_ROOT}/youtube_cookies.txt`** (export while logged into YouTube — extension *Get cookies.txt LOCALLY*). Optional env: `YT_DLP_COOKIES_FILE`, `YT_DLP_JS_RUNTIMES`, `YT_DLP_COOKIES_FROM_BROWSER`.
 
+## YouTube external study tracking (browser extension — primary YouTube workflow)
+
+The admin watches many lessons **directly on youtube.com**, not inside CDS Journey. Tracking is handled by **`extension/cds-youtube-tracker/`** (Chrome/Brave MV3, load unpacked).
+
+### One-time setup
+
+1. `chrome://extensions` → Developer mode → **Load unpacked** → `extension/cds-youtube-tracker`
+2. Extension popup → log in with CDS admin email/password (stores JWT + `apiBase` in `chrome.storage.local` key `cdsAuth`)
+3. Default API base in dev: `http://127.0.0.1:5001/api` (must match running Express server)
+
+### Per study session (youtube.com)
+
+1. Open any study video on **youtube.com**
+2. **Hover the player** so YouTube controls appear → **Track study time** pill shows (dark transparent style, same look as speed-controller overlays)
+3. **Click once** to start — only that **video ID** is counted; other tabs/videos ignored
+4. Watch normally — counting uses HTML5 `currentTime` delta while playing; **pauses when YouTube pauses**
+5. **Drag** the pill anywhere on the player (position saved in `chrome.storage.local` key `cdsTrackerBtnPos`)
+6. Hover controls again → click **Stop** (or navigate away — partial time flushes on pause/tab hide/beforeunload)
+
+### Server sync
+
+- Extension background worker: `POST /api/mission/session/heartbeat` with `{ durationMinutes, meta: { videoId, title, source: "youtube-external" } }`
+- No `contentId` required — `studyHistoryService.js` upserts `StudySession` by `{ userId, date, meta.videoId }`
+- Flushes: every **30s** while playing, at **60s** minute boundaries, on **pause/end**, tab **hidden**, **beforeunload**
+- Extension action **badge** shows server `todayVideoMinutes` after each successful heartbeat
+
+### Dashboard sync (CDS app)
+
+- `StudyContext.refreshVideoStreak()` → `GET /mission/streak/video` — merges `todayVideoMinutes` into local today total
+- Auto-refresh every **20s** when tab visible + on window focus
+- If app tab open: `bridge.js` receives `HEARTBEAT_SENT` → `CDS_YT_TRACK_TICK` → `addStudyMinutes()` + streak update (instant UI)
+- **Today** widget (`StudyTracker.jsx`) and focus bar (`WatchPageHeader.jsx`) use **`effectiveTodayVideoMinutes = max(local, server)`**
+
+### Extension storage keys
+
+| Key | Purpose |
+|-----|---------|
+| `cdsAuth` | `{ email, token, apiBase }` from popup login |
+| `cdsTrackSession` | Active track `{ videoId, title, token, apiBase, trackedMinutes, startedAt }` |
+| `cdsTrackerBtnPos` | `{ leftPct, topPct }` draggable button position within player |
+
+### App-side bridge (optional)
+
+- `bridge.js` content script on `localhost:5173` / `127.0.0.1:5173`
+- `YoutubeExternalTrackBar.jsx` in `App.jsx` — shows when legacy app-started session exists in `localStorage` `cds_youtube_track_active`
+- **Primary workflow does not require opening the CDS app** — minutes persist on server; open dashboard anytime to see totals
+
+### In-app YouTube embed tracking (secondary)
+
+- `VideoPlayerPage.jsx` — ReactPlayer YouTube embed also calls `addStudyMinutes()` + heartbeat via `handleYoutubeTimeUpdate` when watching inside the app
+- Localhost **CDS Plyr** path (yt-dlp cache) uses native `<video>` study accumulation like Telegram/local files
+
 ## Cloudinary storage dashboard flow
 
 ```
@@ -569,6 +643,7 @@ TelegramChannelMapping (channelId + programmeId — sync config)
 - `userId`, `date`, `type` (`video`|`reading`|`mock`|`mission`|`vocabulary`)
 - `contentId`, `paperId`, `missionId`, `subjectId`, `subjectName`, `slot`
 - `durationMinutes`, `startedAt`, `endedAt`, `meta`
+- **YouTube external:** `contentId` may be null; **`meta.videoId`** identifies the YouTube watch session for increment upserts (one row per user+date+videoId)
 
 ### MockTestResult (`MockTestResult.js`)
 - `userId`, `paperId`, `missionId`, `date`, `title`
@@ -821,7 +896,7 @@ Base URL: `/api` via Vite proxy in dev (→ `http://127.0.0.1:5001`), or `VITE_A
 | GET | `/analytics/overview` | Analytics dashboard data |
 | GET | `/analytics/intelligence` | Full intelligence report |
 | GET | `/streak/video` | Video watch streak status |
-| POST | `/session/heartbeat` | Video session heartbeat (active watching) |
+| POST | `/session/heartbeat` | Video session heartbeat — body: `{ contentId?, durationMinutes, subjectId?, subjectName?, meta? }`. **`contentId` OR `meta.videoId` required**. Used by in-app player and **YouTube extension** (`meta.source: "youtube-external"`). Returns `{ session, streak }` |
 | POST | `/session/log` | Log video/reading session on exit |
 
 ## Static files
@@ -1078,6 +1153,7 @@ CDS cycle (cds-1-2026, cds-2-2026)
 - Per-content status: `GET /api/contents/:id/stream-cache`
 - Global stats/clear: `GET|DELETE /api/settings/stream-cache`; bulk delete body `{ cacheKeys: [...] }`; **Sync** via `POST /api/settings/stream-cache/sync`; **Locate** via `POST .../reveal` (PowerShell explorer)
 - **PC Media UI:** multi-select checkboxes + **Delete selected**; green row + **Conquered** badge when lesson marked done in subject (`Progress` model); on-video overlay badge only during active caching (not at 100%)
+- **Max-speed caching (localhost default):** `TELEGRAM_STREAM_CACHE_MAX_SPEED=1` — 32 MB Telegram slices, 256 MB prefetch windows, **3 parallel** prefetch workers, debounced meta saves (less disk thrashing), gap-fill runs while watching; playback still wins when it needs live Telegram data
 
 ## Playback cache (`videoPlaybackCacheService.js` + `youtubePlaybackCacheService.js`)
 
@@ -1097,8 +1173,13 @@ CDS cycle (cds-1-2026, cds-2-2026)
 ## Study context (client)
 
 - `StudyContext.jsx` — localStorage-backed daily minutes, targets, watch history (50 max)
-- Syncs video streak with server via `GET /mission/streak/video`
+- **localStorage keys:** `cds_study_today_date`, `cds_study_today_minutes`, `cds_study_today_by_subject`, `cds_study_target_minutes`, `cds_study_target_by_subject`
+- Syncs video streak with server via `GET /mission/streak/video` → **`refreshVideoStreak()`**
+- Merges server **`todayVideoMinutes`** into local today total (`applyVideoStreakStatus`, `effectiveTodayVideoMinutes`)
+- Polls streak every **20s** when authenticated + tab visible; also on window focus / visibility change
+- Listens for extension bridge messages: `CDS_YT_TRACK_TICK` → `addStudyMinutes()` + streak apply
 - Celebrations: `StudyCompleteCelebration`, `StreakFireCelebration`
+- **Dashboard display:** `StudyTracker.jsx`, `WatchPageHeader.jsx` use `focusMinutes = max(todayMinutes, effectiveTodayVideoMinutes)`
 
 ---
 
@@ -1150,7 +1231,12 @@ CDS cycle (cds-1-2026, cds-2-2026)
 | `TELEGRAM_STREAM_CHUNK_KB` | Stream chunk size (default 2048 KB) |
 | `TELEGRAM_STREAM_WAIT_MS` | Stream wait timeout (default 45000) |
 | `TELEGRAM_STREAM_TAIL_MB` | Tail buffer for seeking (default 8 MB) |
-| `TELEGRAM_STREAM_WARMUP_DEFER_MS` | Delay before background cache warmup after play starts (default ~20000) |
+| `TELEGRAM_STREAM_CACHE_MAX_SPEED` | `1` on localhost (default) — large prefetch windows, parallel downloads, no warmup delay; set `0` to throttle |
+| `TELEGRAM_STREAM_PREFETCH_MB` | Prefetch window per task (default **256** MB max-speed, 64 localhost, 16 prod) |
+| `TELEGRAM_STREAM_PREFETCH_SLICE_MB` | Telegram download slice (default **32** MB max-speed, 8 localhost, 2 prod) |
+| `TELEGRAM_STREAM_PREFETCH_PARALLEL` | Concurrent background prefetch tasks (default **3** max-speed, 1 prod) |
+| `TELEGRAM_STREAM_META_SAVE_MS` | Debounce writing `.meta.json` while caching (default 3000 ms max-speed) |
+| `TELEGRAM_STREAM_WARMUP_DELAY_MS` | Delay before full gap-fill (default **0** max-speed) |
 | `LOCAL_MEDIA_ROOT` | Override media root (e.g. `C:\Users\...\CDS UPLOAD`); see **folder layout** below |
 
 ### `LOCAL_MEDIA_ROOT` folder layout (e.g. CDS UPLOAD)
@@ -1499,7 +1585,12 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | `cds_token` | JWT |
 | `cds_theme` | `light` / `dark` |
 | `cds_dashboard_filters` | Dashboard filter state |
-| `cds_study_*` | Study tracker (today minutes, targets) |
+| `cds_study_today_date` | Study tracker calendar day key |
+| `cds_study_today_minutes` | Local today minutes (merged upward from server on streak refresh) |
+| `cds_study_today_by_subject` | Per-subject today minutes JSON |
+| `cds_study_target_minutes` | Daily target (default 60) |
+| `cds_study_target_by_subject` | Per-subject targets JSON |
+| `cds_youtube_track_active` | Legacy app-initiated YouTube external track session (optional bridge) |
 | `cds_watch_history` | Last 50 watched videos |
 | `cds_celebration_shown_date` | Daily target celebration guard |
 | `cds_streak_celebration_shown_date` | Video streak celebration guard |
@@ -1538,7 +1629,9 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | Stream-cache Locate in Explorer | `revealInFileManager.js`, `LocalMediaStoragePage.jsx`, settings reveal routes |
 | Wire paper chapter detail | `paperRoutes.js` + `chapterDetailService.js` |
 | Change Vocabulary Arena analytics | `vocabularyArenaService.js`, `VocabularyAnalyticsPage.jsx` |
-| Study time tracking | `useStudy().addStudyMinutes()` in `StudyContext.jsx` |
+| Study time tracking (in-app) | `StudyContext.jsx` — `addStudyMinutes()`; `VideoPlayerPage.jsx` native + YouTube embed handlers |
+| **YouTube external tracking** | `extension/cds-youtube-tracker/*`, `missionController.heartbeatVideoSession`, `studyHistoryService.logStudySession`, `StudyContext.refreshVideoStreak`, `StudyTracker.jsx` |
+| Study dashboard Today widget | `StudyTracker.jsx`, `WatchPageHeader.jsx`, `constants/streak.js` (`VIDEO_STREAK_GOAL_MINUTES = 60`) |
 | Purge all media | `node server/scripts/purgeAllMedia.js` |
 | Mission scoring | `missionGenerationService.js` → `scoreVideo` |
 | CORS for new frontend URL | `server/src/config/cors.js` or `CLIENT_URLS` env |
@@ -1565,9 +1658,21 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | **Subject watch time** | Sum of `Content.duration` (seconds) for videos in a subject — shown in dashboard subject header |
 | **CDS PYQ (AI)** | Practice mode that generates UPSC CDS English paper-style vocabulary MCQs via OpenAI (with local fallback) |
 | **YouTube CDS player** | Localhost: yt-dlp downloads full-quality YouTube → `_playback_cache` → **CdsPlyrPlayer** (not embed) |
+| **YouTube external tracker** | Chrome extension on youtube.com — click Track on player overlay; heartbeats by `meta.videoId`; no CDS app tab required |
 | **youtube_cookies.txt** | Netscape cookie file at `{LOCAL_MEDIA_ROOT}/youtube_cookies.txt` — required for YouTube bot bypass on dev server |
 
 ---
+
+# Recent Changes Log (chat sessions — 2026-08-20)
+
+| Area | Change |
+|------|--------|
+| **YouTube external tracker extension** | New `extension/cds-youtube-tracker/` (v1.3.1) — track on youtube.com without opening CDS app; popup login; heartbeats to `POST /mission/session/heartbeat` |
+| **Server heartbeat by videoId** | `heartbeatVideoSession` + `logStudySession(increment)` accept **`meta.videoId`** when no `contentId` — upsert daily YouTube external sessions |
+| **Study dashboard sync** | `StudyContext` merges `todayVideoMinutes` from server; 20s poll; extension bridge `CDS_YT_TRACK_TICK` for live updates |
+| **Tracker UI** | Player overlay pill — dark transparent (speed-controller style); **only visible when YouTube controls show**; **fully draggable** with saved position |
+| **Removed in-app “Track on YouTube”** | Primary workflow is extension on youtube.com; `VideoPlayerPage` no longer pushes users through Playback tools for YouTube |
+| **YouTube embed study minutes** | `VideoPlayerPage.handleYoutubeTimeUpdate` counts focus minutes for in-app ReactPlayer embed (secondary path) |
 
 # Recent Changes Log (chat sessions — 2026-08-17)
 
@@ -1580,6 +1685,7 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | **Video overlay badges** | `VideoCacheStatusBar` — hide "Cached 100%" / "On PC" on player; show progress badge bottom-left **only while caching** |
 | **Plyr double-click fullscreen** | `CdsPlyrPlayer` — `elementsFromPoint` hit test; ignores extensions, controls, `[data-cds-ignore-fs-dblclick]` overlays |
 | **Cache at watch time** | `resolveStreamCacheContentMeta()` — new caches go straight to subject folder when Content is linked |
+| **Stream cache max speed** | Localhost `TELEGRAM_STREAM_CACHE_MAX_SPEED=1` (default): 32 MB slices, 256 MB prefetch windows, 3 parallel prefetch workers, debounced meta saves, gap-fill while watching |
 
 # Recent Changes Log (chat sessions — 2026-08-14 / 2026-08-16)
 
@@ -1651,4 +1757,4 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 
 ---
 
-*Last comprehensive audit: 2026-08-17 (includes organized subject-folder stream cache, delete/sync fixes, PC Media multi-select + Conquered highlight, Plyr dblclick fullscreen guard). Repository path: `d:\1. Projects\CDS JOURNEY OTA`.*
+*Last comprehensive audit: 2026-08-20 (includes YouTube external study tracker extension v1.3.1, server heartbeat by videoId, study dashboard server sync). Repository path: `d:\1. Projects\CDS JOURNEY OTA`.*

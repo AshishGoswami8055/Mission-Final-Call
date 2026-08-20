@@ -48,6 +48,27 @@ export const resolveVideoPlaybackUrl = (url) => preferSameOriginMediaUrl(toAbsol
 export const isYouTubeUrl = (url = "") =>
   /(?:youtube\.com\/watch\?v=|youtu\.be\/)/i.test(url);
 
+export const extractYoutubeVideoId = (rawUrl = "") => {
+  if (!rawUrl) return "";
+  try {
+    const u = new URL(rawUrl);
+    if (u.hostname.includes("youtu.be")) {
+      return u.pathname.replace(/^\//, "").split("/")[0] || "";
+    }
+    return u.searchParams.get("v") || "";
+  } catch {
+    return String(rawUrl).split("/").pop()?.split("?")[0] || "";
+  }
+};
+
+export const buildYoutubeWatchUrl = (rawUrl, seconds = 0) => {
+  if (!rawUrl) return "";
+  const sec = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (!sec) return rawUrl;
+  const joiner = rawUrl.includes("?") ? "&" : "?";
+  return `${rawUrl}${joiner}t=${sec}`;
+};
+
 export const isTelegramUrl = (url = "") =>
   /^https?:\/\/(?:t\.me|telegram\.me)\//i.test(String(url || "").trim()) ||
   /^tg:\/\//i.test(String(url || "").trim());
@@ -179,10 +200,19 @@ export const downloadTelegramMediaToPc = async ({ channelId, messageId, fileName
   URL.revokeObjectURL(objectUrl);
 };
 
+/** Encode each path segment so folders with spaces (e.g. subject names) load in <video>. */
+export const encodeMediaWebPath = (webPath = "") => {
+  if (!webPath || !webPath.startsWith("/")) return webPath;
+  return webPath
+    .split("/")
+    .map((segment) => (segment ? encodeURIComponent(segment) : ""))
+    .join("/");
+};
+
 /** Direct disk playback when stream cache reached 100% (no Telegram needed). */
 export const buildStreamCachePlayUrl = (contentId, playWebPath = null) => {
   if (playWebPath?.startsWith("/uploads/")) {
-    return resolveVideoPlaybackUrl(playWebPath);
+    return resolveVideoPlaybackUrl(encodeMediaWebPath(playWebPath));
   }
   if (!contentId) return "";
   const apiBase = getMediaApiBaseUrl();

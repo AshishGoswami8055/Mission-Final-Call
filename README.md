@@ -2,6 +2,18 @@
 
 Full-stack course content manager for CDS OTA prep, with subject/chapter organization, admin-only management, video/PDF support, upload + URL sources, and progress tracking.
 
+> **Authoritative project docs:** see [`MASTER_PROJECT_CONTEXT.md`](./MASTER_PROJECT_CONTEXT.md) for architecture, flows, API reference, and recent changes.
+
+## YouTube study tracking (extension)
+
+Watch on **youtube.com** and count minutes toward your CDS Journey dashboard:
+
+1. Load unpacked: `extension/cds-youtube-tracker` in `chrome://extensions`
+2. Log in via the extension popup
+3. On YouTube, hover the player → click **Track study time**
+
+Details: [`extension/cds-youtube-tracker/README.md`](./extension/cds-youtube-tracker/README.md)
+
 ## Tech Stack
 
 - Frontend: React (Vite) + TailwindCSS
@@ -13,9 +25,10 @@ Full-stack course content manager for CDS OTA prep, with subject/chapter organiz
 ## Folder Structure
 
 ```text
-client/    # React frontend
-server/    # Express backend (MVC)
-uploads/   # Local media storage
+client/     # React frontend
+server/     # Express backend (MVC)
+extension/  # Browser extensions (cds-youtube-tracker)
+uploads/    # Local media storage
   videos/
   pdfs/
 ```

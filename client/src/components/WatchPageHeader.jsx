@@ -44,29 +44,30 @@ const WatchPageHeader = ({ isDark, onToggleTheme, subjects = [] }) => {
   const [showTargetModal, setShowTargetModal] = useState(false);
   const {
     todayMinutes,
+    effectiveTodayVideoMinutes,
     targetMinutes,
     targetBySubject,
     setAllTargets,
     videoStreak,
-    effectiveTodayVideoMinutes,
     videoStreakTodayComplete,
     videoStreakProgressPercent,
   } = useStudy();
 
+  const focusMinutes = Math.max(todayMinutes, effectiveTodayVideoMinutes);
   const dailyProgress =
-    targetMinutes > 0 ? Math.min(100, Math.round((todayMinutes / targetMinutes) * 100)) : 0;
-  const dailyComplete = targetMinutes > 0 && todayMinutes >= targetMinutes;
+    targetMinutes > 0 ? Math.min(100, Math.round((focusMinutes / targetMinutes) * 100)) : 0;
+  const dailyComplete = targetMinutes > 0 && focusMinutes >= targetMinutes;
   const streakActive = videoStreakTodayComplete || videoStreak > 0;
 
   const motivation = useMemo(
     () =>
       getMotivation({
-        todayMinutes,
+        todayMinutes: focusMinutes,
         targetMinutes,
         videoStreak,
         videoStreakTodayComplete,
       }),
-    [todayMinutes, targetMinutes, videoStreak, videoStreakTodayComplete]
+    [focusMinutes, targetMinutes, videoStreak, videoStreakTodayComplete]
   );
 
   return (
@@ -96,7 +97,7 @@ const WatchPageHeader = ({ isDark, onToggleTheme, subjects = [] }) => {
             <div className="watch-header__mission-top">
               <span className="watch-header__mission-stat">
                 <FiClock size={14} aria-hidden="true" />
-                <strong className="tabular-nums">{formatMinutes(todayMinutes)}</strong>
+                <strong className="tabular-nums">{formatMinutes(focusMinutes)}</strong>
                 <span className="watch-header__mission-sep">/</span>
                 <span className="tabular-nums">{formatMinutes(targetMinutes)}</span>
               </span>

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>CDS Journey Tracker</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        width: 300px;
+        font: 13px/1.45 system-ui, sans-serif;
+        background: #111;
+        color: #f1f5f9;
+        padding: 14px;
+      }
+      h1 { font-size: 14px; margin: 0 0 4px; }
+      p { margin: 0 0 12px; color: #94a3b8; font-size: 11px; }
+      label { display: block; font-size: 11px; color: #94a3b8; margin: 10px 0 4px; }
+      input {
+        width: 100%;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        background: #0f172a;
+        color: #fff;
+        padding: 8px 10px;
+      }
+      button {
+        margin-top: 12px;
+        width: 100%;
+        border: 0;
+        border-radius: 8px;
+        background: #2563eb;
+        color: #fff;
+        font-weight: 600;
+        padding: 10px;
+        cursor: pointer;
+      }
+      button.secondary { background: #334155; margin-top: 8px; }
+      .ok { color: #4ade80; font-size: 11px; margin-top: 8px; }
+      .err { color: #f87171; font-size: 11px; margin-top: 8px; }
+      .steps { font-size: 11px; color: #cbd5e1; padding-left: 16px; margin: 0; }
+      .steps li { margin-bottom: 6px; }
+    </style>
+  </head>
+  <body>
+    <div id="logged-out">
+      <h1>CDS Journey — YouTube tracker</h1>
+      <p>Log in once. Then on any YouTube video click <strong>Track study time</strong>.</p>
+      <label for="api">App API URL</label>
+      <input id="api" value="http://127.0.0.1:5001/api" />
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="username" />
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" />
+      <button id="login">Save & log in</button>
+      <div id="msg"></div>
+    </div>
+    <div id="logged-in" hidden>
+      <h1>Connected</h1>
+      <p id="who"></p>
+      <ol class="steps">
+        <li>Open any study video on <strong>youtube.com</strong></li>
+        <li>Click the blue <strong>Track study time</strong> button on the video</li>
+        <li>Pause YouTube → timer pauses. Click Stop when done.</li>
+      </ol>
+      <button class="secondary" id="logout">Log out</button>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>

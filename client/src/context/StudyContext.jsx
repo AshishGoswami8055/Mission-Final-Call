@@ -102,6 +102,16 @@ export function StudyProvider({ children }) {
   const applyVideoStreakStatus = useCallback((status) => {
     if (!status) return;
     setVideoStreakStatus(status);
+    const serverMins = Math.max(0, Number(status.todayVideoMinutes) || 0);
+    if (serverMins > 0) {
+      setTodayMinutesState((prev) => {
+        const next = Math.max(prev, serverMins);
+        if (next === prev) return prev;
+        localStorage.setItem(STORAGE_KEYS.TODAY_DATE, getTodayKey());
+        localStorage.setItem(STORAGE_KEYS.TODAY_MINUTES, String(next));
+        return next;
+      });
+    }
   }, []);
 
   const refreshVideoStreak = useCallback(async () => {
@@ -109,6 +119,16 @@ export function StudyProvider({ children }) {
     try {
       const { data } = await api.get("/mission/streak/video");
       setVideoStreakStatus(data);
+      const serverMins = Math.max(0, Number(data?.todayVideoMinutes) || 0);
+      if (serverMins > 0) {
+        setTodayMinutesState((prev) => {
+          const next = Math.max(prev, serverMins);
+          if (next === prev) return prev;
+          localStorage.setItem(STORAGE_KEYS.TODAY_DATE, getTodayKey());
+          localStorage.setItem(STORAGE_KEYS.TODAY_MINUTES, String(next));
+          return next;
+        });
+      }
       return data;
     } catch {
       return null;
@@ -228,6 +248,39 @@ export function StudyProvider({ children }) {
       setVideoStreakStatus(null);
     }
   }, [isAuthenticated, refreshVideoStreak]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    const onFocus = () => {
+      void refreshVideoStreak();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") void refreshVideoStreak();
+    });
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refreshVideoStreak();
+    }, 20000);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.clearInterval(interval);
+    };
+  }, [isAuthenticated, refreshVideoStreak]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+
+    const onExtensionTick = (event) => {
+      if (event.source !== window || event.data?.type !== "CDS_YT_TRACK_TICK") return;
+      const mins = Number(event.data.minutes) || 0;
+      if (mins <= 0) return;
+      addStudyMinutes(mins, event.data.subjectId || null);
+      if (event.data.streak) applyVideoStreakStatus(event.data.streak);
+    };
+
+    window.addEventListener("message", onExtensionTick);
+    return () => window.removeEventListener("message", onExtensionTick);
+  }, [isAuthenticated, addStudyMinutes, applyVideoStreakStatus]);
 
   useEffect(() => {
     const complete = effectiveTodayVideoMinutes >= VIDEO_STREAK_GOAL_MINUTES;

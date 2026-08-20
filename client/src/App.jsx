@@ -28,6 +28,7 @@ import DocumentTitle from "./components/DocumentTitle";
 import Loader from "./components/Loader";
 import StudyCompleteCelebration from "./components/StudyCompleteCelebration";
 import StreakFireCelebration from "./components/streak/StreakFireCelebration";
+import YoutubeExternalTrackBar from "./components/YoutubeExternalTrackBar";
 
 const PrivateRoute = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
@@ -239,6 +240,7 @@ function App() {
     </Routes>
     <StudyCompleteCelebration />
     <StreakFireCelebration />
+    <YoutubeExternalTrackBar />
     </>
   );
 }
