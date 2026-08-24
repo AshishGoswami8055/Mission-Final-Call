@@ -785,14 +785,24 @@ export const updateContent = async (req, res) => {
   res.json(mapContent(populated));
 };
 
-/** Move a lesson up or down within its subject (videos and PDFs ordered separately). */
+/** Move a lesson within its subject (videos and PDFs ordered separately). */
 export const reorderContent = async (req, res) => {
-  const { subjectId, contentId, direction } = req.body || {};
+  const { subjectId, contentId, direction, targetIndex: targetIndexRaw } = req.body || {};
   if (!subjectId || !contentId) {
     return res.status(400).json({ message: "subjectId and contentId are required." });
   }
-  if (direction !== "up" && direction !== "down") {
-    return res.status(400).json({ message: 'direction must be "up" or "down".' });
+
+  const hasDirection = direction === "up" || direction === "down";
+  const hasTargetIndex =
+    targetIndexRaw !== undefined && targetIndexRaw !== null && targetIndexRaw !== "";
+
+  if (!hasDirection && !hasTargetIndex) {
+    return res.status(400).json({
+      message: 'Provide direction ("up" or "down") or targetIndex.',
+    });
+  }
+  if (hasDirection && hasTargetIndex) {
+    return res.status(400).json({ message: "Provide either direction or targetIndex, not both." });
   }
 
   const anchor = await Content.findById(contentId);
@@ -811,13 +821,29 @@ export const reorderContent = async (req, res) => {
   const index = sorted.findIndex((row) => String(row._id) === String(contentId));
   if (index < 0) return res.status(404).json({ message: "Lesson not found in subject." });
 
-  const targetIndex = direction === "up" ? index - 1 : index + 1;
-  if (targetIndex < 0 || targetIndex >= sorted.length) {
-    return res.json({ message: "Already at the edge of the list.", moved: false, items: [] });
+  let targetIndex;
+  if (hasTargetIndex) {
+    targetIndex = Number(targetIndexRaw);
+    if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= sorted.length) {
+      return res.status(400).json({ message: "Invalid targetIndex." });
+    }
+    if (targetIndex === index) {
+      return res.json({ message: "No change.", moved: false, items: [] });
+    }
+  } else {
+    targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= sorted.length) {
+      return res.json({ message: "Already at the edge of the list.", moved: false, items: [] });
+    }
   }
 
   const reordered = [...sorted];
-  [reordered[index], reordered[targetIndex]] = [reordered[targetIndex], reordered[index]];
+  if (hasTargetIndex) {
+    const [removed] = reordered.splice(index, 1);
+    reordered.splice(targetIndex, 0, removed);
+  } else {
+    [reordered[index], reordered[targetIndex]] = [reordered[targetIndex], reordered[index]];
+  }
 
   await Content.bulkWrite(
     reordered.map((row, order) => ({

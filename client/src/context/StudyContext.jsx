@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import api from "../api/client";
+import { requestYoutubeTrackProgress } from "../utils/youtubeExternalTrack";
 import { VIDEO_STREAK_GOAL_MINUTES } from "../constants/streak";
 import { useAuth } from "./AuthContext";
 
@@ -15,7 +16,19 @@ const STORAGE_KEYS = {
 };
 
 const HISTORY_MAX = 50;
+const LIVE_STALE_MS = 25_000;
+const STREAK_POLL_MS = 10_000;
 const getTodayKey = () => new Date().toDateString();
+
+export const formatFocusDuration = (totalMinutes, { live = false } = {}) => {
+  const totalSec = Math.max(0, Math.floor(Number(totalMinutes) * 60));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return live && s > 0 ? `${h}h ${m}m ${s}s` : `${h}h ${m}m`;
+  if (m > 0) return live ? `${m}m ${s}s` : `${m} min`;
+  return live ? `${s}s` : `${Math.max(s, 0)} min`;
+};
 
 const loadNumber = (key, defaultValue) => {
   try {
@@ -85,6 +98,8 @@ export function StudyProvider({ children }) {
     localStorage.getItem(STORAGE_KEYS.STREAK_CELEBRATION_SHOWN_DATE) || ""
   );
   const [videoStreakStatus, setVideoStreakStatus] = useState(null);
+  const [liveYoutubeTrack, setLiveYoutubeTrack] = useState(null);
+  const [liveUiTick, setLiveUiTick] = useState(0);
   const streakCompleteRef = useRef(false);
 
   const ensureToday = useCallback(() => {
@@ -112,6 +127,18 @@ export function StudyProvider({ children }) {
         return next;
       });
     }
+  }, []);
+
+  const applyLiveYoutubeProgress = useCallback((payload) => {
+    if (!payload) return;
+    setLiveYoutubeTrack({
+      playedMs: Math.max(0, Number(payload.playedMs) || 0),
+      syncedMinutes: Math.max(0, Number(payload.syncedMinutes) || 0),
+      isPlaying: Boolean(payload.isPlaying),
+      title: String(payload.title || ""),
+      videoId: String(payload.videoId || ""),
+      receivedAt: Date.now(),
+    });
   }, []);
 
   const refreshVideoStreak = useCallback(async () => {
@@ -193,7 +220,22 @@ export function StudyProvider({ children }) {
   }, []);
 
   const serverTodayVideoMinutes = videoStreakStatus?.todayVideoMinutes ?? 0;
-  const effectiveTodayVideoMinutes = Math.max(todayMinutes, serverTodayVideoMinutes);
+
+  const liveYoutubePartialMinutes = useMemo(() => {
+    if (!liveYoutubeTrack) return 0;
+    let playedMs = liveYoutubeTrack.playedMs;
+    if (liveYoutubeTrack.isPlaying) {
+      playedMs += Date.now() - liveYoutubeTrack.receivedAt;
+    }
+    const unsyncedMs = Math.max(0, playedMs - liveYoutubeTrack.syncedMinutes * 60_000);
+    return unsyncedMs / 60_000;
+  }, [liveYoutubeTrack, liveUiTick]);
+
+  const effectiveTodayVideoMinutes =
+    Math.max(todayMinutes, serverTodayVideoMinutes) + liveYoutubePartialMinutes;
+  const focusMinutes = effectiveTodayVideoMinutes;
+  const liveYoutubeActive = Boolean(liveYoutubeTrack);
+  const liveYoutubePlaying = Boolean(liveYoutubeTrack?.isPlaying);
   const videoStreak = videoStreakStatus?.streak ?? 0;
   const videoStreakTodayComplete =
     videoStreakStatus?.todayComplete || effectiveTodayVideoMinutes >= VIDEO_STREAK_GOAL_MINUTES;
@@ -251,16 +293,32 @@ export function StudyProvider({ children }) {
 
   useEffect(() => {
     if (!isAuthenticated) return undefined;
+
+    const pollExtension = () => {
+      if (document.visibilityState === "visible") requestYoutubeTrackProgress();
+    };
+
+    pollExtension();
+    const interval = window.setInterval(pollExtension, STREAK_POLL_MS);
+    return () => window.clearInterval(interval);
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
     const onFocus = () => {
       void refreshVideoStreak();
+      requestYoutubeTrackProgress();
     };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") void refreshVideoStreak();
+      if (document.visibilityState === "visible") {
+        void refreshVideoStreak();
+        requestYoutubeTrackProgress();
+      }
     });
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") void refreshVideoStreak();
-    }, 20000);
+    }, STREAK_POLL_MS);
     return () => {
       window.removeEventListener("focus", onFocus);
       window.clearInterval(interval);
@@ -270,17 +328,46 @@ export function StudyProvider({ children }) {
   useEffect(() => {
     if (!isAuthenticated) return undefined;
 
-    const onExtensionTick = (event) => {
-      if (event.source !== window || event.data?.type !== "CDS_YT_TRACK_TICK") return;
-      const mins = Number(event.data.minutes) || 0;
-      if (mins <= 0) return;
-      addStudyMinutes(mins, event.data.subjectId || null);
-      if (event.data.streak) applyVideoStreakStatus(event.data.streak);
+    const onExtensionMessage = (event) => {
+      if (event.source !== window || !event.data?.type) return;
+
+      if (event.data.type === "CDS_YT_TRACK_PROGRESS") {
+        applyLiveYoutubeProgress(event.data);
+        return;
+      }
+
+      if (event.data.type === "CDS_YT_TRACK_STOPPED") {
+        setLiveYoutubeTrack(null);
+        void refreshVideoStreak();
+        return;
+      }
+
+      if (event.data.type === "CDS_YT_TRACK_TICK") {
+        const mins = Number(event.data.minutes) || 0;
+        if (mins > 0) addStudyMinutes(mins, event.data.subjectId || null);
+        if (event.data.streak) applyVideoStreakStatus(event.data.streak);
+      }
     };
 
-    window.addEventListener("message", onExtensionTick);
-    return () => window.removeEventListener("message", onExtensionTick);
-  }, [isAuthenticated, addStudyMinutes, applyVideoStreakStatus]);
+    window.addEventListener("message", onExtensionMessage);
+    return () => window.removeEventListener("message", onExtensionMessage);
+  }, [isAuthenticated, addStudyMinutes, applyVideoStreakStatus, applyLiveYoutubeProgress, refreshVideoStreak]);
+
+  useEffect(() => {
+    if (!liveYoutubeTrack?.isPlaying) return undefined;
+    const id = window.setInterval(() => setLiveUiTick((t) => t + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [liveYoutubeTrack?.isPlaying]);
+
+  useEffect(() => {
+    if (!liveYoutubeTrack) return undefined;
+    const id = window.setInterval(() => {
+      if (Date.now() - liveYoutubeTrack.receivedAt > LIVE_STALE_MS) {
+        setLiveYoutubeTrack(null);
+      }
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, [liveYoutubeTrack]);
 
   useEffect(() => {
     const complete = effectiveTodayVideoMinutes >= VIDEO_STREAK_GOAL_MINUTES;
@@ -307,6 +394,11 @@ export function StudyProvider({ children }) {
       ensureToday,
       videoStreak,
       effectiveTodayVideoMinutes,
+      focusMinutes,
+      liveYoutubeActive,
+      liveYoutubePlaying,
+      liveYoutubeTrack,
+      formatFocusDuration,
       videoStreakTodayComplete,
       videoStreakProgressPercent,
       videoStreakRecentDays,
@@ -332,6 +424,10 @@ export function StudyProvider({ children }) {
       ensureToday,
       videoStreak,
       effectiveTodayVideoMinutes,
+      focusMinutes,
+      liveYoutubeActive,
+      liveYoutubePlaying,
+      liveYoutubeTrack,
       videoStreakTodayComplete,
       videoStreakProgressPercent,
       videoStreakRecentDays,

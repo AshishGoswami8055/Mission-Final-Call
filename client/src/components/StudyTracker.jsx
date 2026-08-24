@@ -15,8 +15,10 @@ const shell =
 
 const StudyTracker = ({ compact = false, subjects = [], showHistoryLink = true }) => {
   const {
-    todayMinutes,
-    effectiveTodayVideoMinutes,
+    focusMinutes,
+    liveYoutubeActive,
+    liveYoutubePlaying,
+    formatFocusDuration,
     todayMinutesBySubject,
     targetMinutes,
     targetBySubject,
@@ -24,7 +26,7 @@ const StudyTracker = ({ compact = false, subjects = [], showHistoryLink = true }
   } = useStudy();
   const [showTargetModal, setShowTargetModal] = useState(false);
 
-  const focusMinutes = Math.max(todayMinutes, effectiveTodayVideoMinutes);
+  const focusLabel = formatFocusDuration(focusMinutes, { live: liveYoutubeActive });
   const totalProgress = targetMinutes > 0 ? Math.min(100, (focusMinutes / targetMinutes) * 100) : 0;
   const totalComplete = targetMinutes > 0 && focusMinutes >= targetMinutes;
 
@@ -60,7 +62,7 @@ const StudyTracker = ({ compact = false, subjects = [], showHistoryLink = true }
           title="Today's study time & target"
         >
           <FiClock className="text-slate-500 dark:text-slate-400" size={14} strokeWidth={2} />
-          {formatMinutes(focusMinutes)}
+          {formatFocusDuration(focusMinutes, { live: liveYoutubeActive })}
           <span className="text-slate-300 dark:text-slate-600">/</span>
           {formatMinutes(targetMinutes)}
         </button>
@@ -90,9 +92,23 @@ const StudyTracker = ({ compact = false, subjects = [], showHistoryLink = true }
           <div className="min-w-0 pt-0.5">
             <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400 dark:text-slate-500">
               Today
+              {liveYoutubeActive && (
+                <span
+                  className={`ml-2 inline-flex items-center gap-1 normal-case tracking-normal ${
+                    liveYoutubePlaying ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-1.5 w-1.5 rounded-full ${
+                      liveYoutubePlaying ? "animate-pulse bg-emerald-500" : "bg-amber-400"
+                    }`}
+                  />
+                  YouTube {liveYoutubePlaying ? "live" : "paused"}
+                </span>
+              )}
             </p>
             <p className="mt-1.5 text-[1.65rem] font-semibold leading-none tracking-tight text-slate-900 tabular-nums dark:text-slate-50 sm:text-3xl">
-              {formatMinutes(focusMinutes)}
+              {formatFocusDuration(focusMinutes, { live: liveYoutubeActive })}
             </p>
             <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
               Target {formatMinutes(targetMinutes)}

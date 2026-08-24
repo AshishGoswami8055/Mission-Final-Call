@@ -967,15 +967,22 @@ const DashboardPage = () => {
     }
   };
 
-  const handleReorderContent = async (item, direction) => {
+  const handleReorderContent = async (item, directionOrTargetIndex) => {
     if (!item?._id || !activeCourseSubjectId) return;
+    const payload = {
+      subjectId: activeCourseSubjectId,
+      contentId: item._id,
+    };
+    if (directionOrTargetIndex === "up" || directionOrTargetIndex === "down") {
+      payload.direction = directionOrTargetIndex;
+    } else if (typeof directionOrTargetIndex === "number") {
+      payload.targetIndex = directionOrTargetIndex;
+    } else {
+      return;
+    }
     setReorderingContentId(item._id);
     try {
-      const { data } = await api.patch("/contents/reorder", {
-        subjectId: activeCourseSubjectId,
-        contentId: item._id,
-        direction,
-      });
+      const { data } = await api.patch("/contents/reorder", payload);
       if (data.moved) {
         await Promise.all([
           fetchSubjectCourseContents(activeCourseSubjectId),

@@ -1,4 +1,4 @@
-/** Track study time directly on youtube.com — no CDS app tab needed. */
+/** Track study time on any site with an HTML5 video player — YouTube and course platforms. */
 const STORAGE_KEY = "cdsTrackSession";
 const AUTH_KEY = "cdsAuth";
 const POS_KEY = "cdsTrackerBtnPos";
@@ -19,27 +19,161 @@ let playerObserver = null;
 let controlsVisible = false;
 let isDragging = false;
 let dragMoved = false;
+let trackedVideoEl = null;
+let playerShellEl = null;
+let playerResizeObserver = null;
+let playerHovered = false;
 
-const pageVideoId = () => new URL(location.href).searchParams.get("v") || "";
+const PLAYER_HINT_RE =
+  /player|video|media|vjs|plyr|jwplayer|embed|watch|lesson|course|stream|playback|lecture|classroom/i;
 
-const findPlayer = () =>
-  document.querySelector("#movie_player.html5-video-player") ||
-  document.querySelector("#movie_player") ||
-  document.querySelector(".html5-video-player");
+const isYouTube = () => /(^|\.)youtube\.com$/i.test(location.hostname);
 
-const findVideo = () =>
-  document.querySelector("video.html5-main-video") ||
-  document.querySelector("#movie_player video") ||
-  document.querySelector("video");
+function hashString(value) {
+  let hash = 5381;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = ((hash << 5) + hash) ^ value.charCodeAt(i);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+const findPlayer = () => {
+  if (isYouTube()) {
+    return (
+      document.querySelector("#movie_player.html5-video-player") ||
+      document.querySelector("#movie_player") ||
+      document.querySelector(".html5-video-player")
+    );
+  }
+
+  const video = findVideo();
+  if (!video) return null;
+  return findGenericPlayerContainer(video);
+};
+
+function findGenericPlayerContainer(video) {
+  const knownSelectors = [
+    ".video-js",
+    ".plyr",
+    ".vp-video",
+    ".vjs-tech-parent",
+    '[class*="player-container"]',
+    '[class*="video-player"]',
+    '[class*="video_player"]',
+    '[class*="videoPlayer"]',
+    '[id*="player"]',
+  ];
+
+  for (const selector of knownSelectors) {
+    const match = video.closest(selector);
+    if (match && match !== document.body) return ensurePlayerShell(match);
+  }
+
+  const videoRect = video.getBoundingClientRect();
+  let el = video.parentElement;
+  let best = el;
+
+  while (el && el !== document.body && el !== document.documentElement) {
+    const rect = el.getBoundingClientRect();
+    const label = `${el.className} ${el.id} ${el.getAttribute("data-testid") || ""}`;
+    const hinted = PLAYER_HINT_RE.test(label);
+    const coversVideo =
+      rect.width >= videoRect.width * 0.85 && rect.height >= videoRect.height * 0.85;
+    const reasonableSize =
+      rect.width <= Math.max(window.innerWidth, videoRect.width) * 0.98 &&
+      rect.height <= Math.max(window.innerHeight, videoRect.height) * 0.98;
+
+    if (coversVideo && reasonableSize && (hinted || el.contains(video))) {
+      best = el;
+      if (hinted) return ensurePlayerShell(el);
+    }
+    el = el.parentElement;
+  }
+
+  if (best && best !== document.body) return ensurePlayerShell(best);
+  if (video.parentElement) return ensurePlayerShell(video.parentElement);
+  return null;
+}
+
+function ensurePlayerShell(player) {
+  if (!player || player === document.body || player === document.documentElement) return null;
+
+  const style = getComputedStyle(player);
+  if (style.position === "static") {
+    player.dataset.cdsVtPositionPatched = "1";
+    player.style.position = "relative";
+  }
+  player.dataset.cdsVtPlayer = "1";
+  playerShellEl = player;
+  return player;
+}
+
+function findAllVideos() {
+  return [...document.querySelectorAll("video")].filter((video) => {
+    if (video.readyState === 0 && !video.src && !video.currentSrc) return false;
+    const rect = video.getBoundingClientRect();
+    return rect.width >= 120 && rect.height >= 68;
+  });
+}
+
+const findVideo = () => {
+  if (isYouTube()) {
+    return (
+      document.querySelector("video.html5-main-video") ||
+      document.querySelector("#movie_player video") ||
+      document.querySelector("video")
+    );
+  }
+
+  const videos = findAllVideos();
+  if (!videos.length) return null;
+
+  const playing = videos.find((video) => !video.paused && !video.ended);
+  if (playing) return playing;
+
+  return videos.sort((a, b) => {
+    const ra = a.getBoundingClientRect();
+    const rb = b.getBoundingClientRect();
+    return rb.width * rb.height - ra.width * ra.height;
+  })[0];
+};
 
 const getTitle = () => {
-  const h1 =
-    document.querySelector("h1.ytd-watch-metadata yt-formatted-string") ||
-    document.querySelector("#title h1");
-  const text = h1?.textContent?.trim();
-  if (text) return text.slice(0, 180);
-  return document.title.replace(/ - YouTube$/i, "").slice(0, 180);
+  if (isYouTube()) {
+    const h1 =
+      document.querySelector("h1.ytd-watch-metadata yt-formatted-string") ||
+      document.querySelector("#title h1");
+    const text = h1?.textContent?.trim();
+    if (text) return text.slice(0, 180);
+    return document.title.replace(/ - YouTube$/i, "").slice(0, 180);
+  }
+
+  const video = findVideo();
+  const fromMeta =
+    document.querySelector('meta[property="og:title"]')?.content ||
+    document.querySelector("h1")?.textContent?.trim() ||
+    document.title;
+  const label = String(fromMeta || "Study video").trim();
+  const src = (video?.currentSrc || video?.src || "").split("/").pop()?.split("?")[0];
+  if (src && !label.toLowerCase().includes(src.toLowerCase().slice(0, 12))) {
+    return `${label} · ${src}`.slice(0, 180);
+  }
+  return label.slice(0, 180);
 };
+
+function pageVideoId() {
+  if (isYouTube()) {
+    return new URL(location.href).searchParams.get("v") || "";
+  }
+
+  const video = findVideo();
+  if (!video) return "";
+
+  const pageKey = `${location.origin}${location.pathname}${location.search}`;
+  const src = (video.currentSrc || video.src || "").split("?")[0];
+  if (src) return `page:${hashString(pageKey)}:src:${hashString(src)}`;
+  return `page:${hashString(pageKey)}`;
+}
 
 /** Video is actually playing content — not paused, ended, or buffering. */
 function isActivelyPlaying() {
@@ -114,6 +248,7 @@ async function persistSessionProgress() {
     syncedMinutes,
     isPlaying: isActivelyPlaying(),
     lastProgressAt: Date.now(),
+    pageUrl: location.href,
   });
 }
 
@@ -157,6 +292,7 @@ function broadcastProgress(force = false) {
     lastProgressAt: now,
     title: session?.title || "",
     videoId: session?.videoId || "",
+    pageUrl: location.href,
   };
 
   void saveSessionPatch(payload);
@@ -188,13 +324,18 @@ function readPlayerControlsVisible() {
   if (!player) return false;
   const video = findVideo();
   if (video?.paused || video?.ended) return true;
-  if (player.classList.contains("ytp-autohide")) return false;
-  const chrome = player.querySelector(".ytp-chrome-bottom");
-  if (chrome) {
-    const opacity = Number.parseFloat(getComputedStyle(chrome).opacity);
-    if (opacity > 0.05) return true;
+
+  if (isYouTube()) {
+    if (player.classList.contains("ytp-autohide")) return false;
+    const chrome = player.querySelector(".ytp-chrome-bottom");
+    if (chrome) {
+      const opacity = Number.parseFloat(getComputedStyle(chrome).opacity);
+      if (opacity > 0.05) return true;
+    }
+    return !player.classList.contains("ytp-autohide");
   }
-  return !player.classList.contains("ytp-autohide");
+
+  return playerHovered;
 }
 
 function updateControlsVisibility() {
@@ -252,21 +393,48 @@ async function applySavedPosition() {
   setWrapPosition(pw - bw - 12, ph - 52, false);
 }
 
+function wirePlayerResize() {
+  const player = findPlayer();
+  if (!player || player.dataset.cdsResizeWired) return;
+  player.dataset.cdsResizeWired = "1";
+
+  if (playerResizeObserver) playerResizeObserver.disconnect();
+  playerResizeObserver = new ResizeObserver(() => {
+    if (!uiWrap || isDragging) return;
+    void applySavedPosition();
+  });
+  playerResizeObserver.observe(player);
+}
+
 function wirePlayerVisibility() {
   const player = findPlayer();
   if (!player || player.dataset.cdsVisibilityWired) return;
   player.dataset.cdsVisibilityWired = "1";
 
   const refresh = () => updateControlsVisibility();
-  player.addEventListener("mouseenter", refresh);
-  player.addEventListener("mousemove", refresh);
+  player.addEventListener("mouseenter", () => {
+    playerHovered = true;
+    refresh();
+  });
+  player.addEventListener("mousemove", () => {
+    playerHovered = true;
+    refresh();
+  });
   player.addEventListener("mouseleave", () => {
-    if (!isDragging) window.setTimeout(refresh, 120);
+    if (!isDragging) {
+      window.setTimeout(() => {
+        playerHovered = false;
+        refresh();
+      }, 120);
+    }
   });
 
-  if (playerObserver) playerObserver.disconnect();
-  playerObserver = new MutationObserver(refresh);
-  playerObserver.observe(player, { attributes: true, attributeFilter: ["class"] });
+  if (isYouTube()) {
+    if (playerObserver) playerObserver.disconnect();
+    playerObserver = new MutationObserver(refresh);
+    playerObserver.observe(player, { attributes: true, attributeFilter: ["class"] });
+  }
+
   refresh();
 }
 
@@ -366,6 +534,8 @@ async function startTrackingHere() {
     startedAt: Date.now(),
     playedMs: 0,
     syncedMinutes: 0,
+    pageUrl: location.href,
+    sourceHost: location.hostname,
   };
   await chrome.storage.local.set({ [STORAGE_KEY]: session });
   reconcilePlayState();
@@ -393,22 +563,44 @@ function removeUi() {
     playerObserver.disconnect();
     playerObserver = null;
   }
+  if (playerResizeObserver) {
+    playerResizeObserver.disconnect();
+    playerResizeObserver = null;
+  }
   uiWrap?.remove();
   uiWrap = null;
   uiButton = null;
-  const player = findPlayer();
-  if (player) delete player.dataset.cdsVisibilityWired;
+  playerHovered = false;
+
+  const player = playerShellEl || findPlayer();
+  if (player) {
+    delete player.dataset.cdsVisibilityWired;
+    delete player.dataset.cdsResizeWired;
+  }
+  playerShellEl = null;
+
+  if (trackedVideoEl) {
+    delete trackedVideoEl.dataset.cdsTrackerWired;
+    trackedVideoEl = null;
+  }
 }
 
 function injectUi() {
-  if (uiWrap || !pageVideoId()) return;
+  if (uiWrap) return;
+
+  const video = findVideo();
+  if (!video) return;
+
+  const videoId = pageVideoId();
+  if (!videoId) return;
+
   const player = findPlayer();
   if (!player) return;
 
-  if (!document.querySelector('link[href*="youtube-ui.css"]')) {
+  if (!document.querySelector('link[href*="video-tracker-ui.css"], link[href*="youtube-ui.css"]')) {
     const link = document.createElement("link");
     link.rel = "stylesheet";
-    link.href = chrome.runtime.getURL("youtube-ui.css");
+    link.href = chrome.runtime.getURL("video-tracker-ui.css");
     document.head.appendChild(link);
   }
 
@@ -425,6 +617,7 @@ function injectUi() {
 
   wireDrag();
   wirePlayerVisibility();
+  wirePlayerResize();
   void loadSession().then(async () => {
     reconcilePlayState();
     renderUi();
@@ -434,13 +627,31 @@ function injectUi() {
 }
 
 function ensureUi() {
-  if (!pageVideoId()) {
+  const video = findVideo();
+  if (!video) {
     removeUi();
     return;
   }
-  if (!findPlayer()) return;
+
+  if (isYouTube() && !new URL(location.href).searchParams.get("v")) {
+    removeUi();
+    return;
+  }
+
+  if (!pageVideoId()) return;
+
+  const player = findPlayer();
+  if (!player) return;
+
   if (!uiWrap) injectUi();
-  else wirePlayerVisibility();
+  else if (uiWrap.parentElement !== player) {
+    player.appendChild(uiWrap);
+    wirePlayerVisibility();
+    wirePlayerResize();
+    void applySavedPosition();
+  } else {
+    wirePlayerVisibility();
+  }
   updateControlsVisibility();
 }
 
@@ -455,12 +666,26 @@ function onVideoStateChange() {
 
 function attachVideoListeners() {
   const video = findVideo();
-  if (!video || video.dataset.cdsTrackerWired) return;
+  if (!video) return;
+
+  if (trackedVideoEl && trackedVideoEl !== video) {
+    delete trackedVideoEl.dataset.cdsTrackerWired;
+  }
+
+  if (video.dataset.cdsTrackerWired && trackedVideoEl === video) return;
   video.dataset.cdsTrackerWired = "1";
+  trackedVideoEl = video;
 
   const events = ["play", "playing", "pause", "ended", "waiting", "seeking", "seeked", "ratechange"];
   for (const name of events) {
     video.addEventListener(name, onVideoStateChange);
+  }
+
+  if (!isYouTube()) {
+    video.addEventListener("loadedmetadata", () => {
+      ensureUi();
+      onVideoStateChange();
+    });
   }
 }
 
@@ -488,6 +713,13 @@ async function tick() {
   broadcastProgress(false);
 }
 
+function onPageContextChange() {
+  endSegment();
+  lastPageVideoId = pageVideoId();
+  removeUi();
+  ensureUi();
+}
+
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local" || !changes[STORAGE_KEY]) return;
   const next = changes[STORAGE_KEY].newValue;
@@ -502,12 +734,26 @@ chrome.storage.onChanged.addListener((changes, area) => {
   renderUi();
 });
 
-window.addEventListener("yt-navigate-finish", () => {
-  endSegment();
-  lastPageVideoId = pageVideoId();
-  removeUi();
-  ensureUi();
-});
+if (isYouTube()) {
+  window.addEventListener("yt-navigate-finish", onPageContextChange);
+}
+
+window.addEventListener("popstate", onPageContextChange);
+window.addEventListener("hashchange", onPageContextChange);
+
+if (!window.__cdsVtHistoryPatched) {
+  window.__cdsVtHistoryPatched = true;
+  const wrapHistory = (method) => {
+    const original = history[method];
+    history[method] = function historyPatched(...args) {
+      const result = original.apply(this, args);
+      onPageContextChange();
+      return result;
+    };
+  };
+  wrapHistory("pushState");
+  wrapHistory("replaceState");
+}
 
 window.addEventListener("resize", () => {
   void applySavedPosition();

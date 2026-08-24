@@ -1,19 +1,19 @@
 {
   "manifest_version": 3,
-  "name": "CDS Journey YouTube Study Tracker",
-  "version": "1.3.1",
-  "description": "Count study minutes on youtube.com. Click Track on the video — pauses when you pause. No need to open the CDS app.",
-  "permissions": ["storage"],
+  "name": "CDS Journey Study Video Tracker",
+  "version": "1.6.1",
+  "description": "Count study minutes on any course video — YouTube, embedded players, and other platforms. Click Track on the video; pauses when you pause.",
+  "permissions": ["storage", "tabs"],
   "host_permissions": [
     "http://localhost:5173/*",
     "http://127.0.0.1:5173/*",
     "http://localhost:5001/*",
     "http://127.0.0.1:5001/*",
-    "https://www.youtube.com/*",
-    "https://youtube.com/*"
+    "https://*/*",
+    "http://*/*"
   ],
   "action": {
-    "default_title": "CDS Journey YouTube Tracker",
+    "default_title": "CDS Journey Video Tracker",
     "default_popup": "popup.html"
   },
   "background": {
@@ -26,16 +26,23 @@
       "run_at": "document_start"
     },
     {
-      "matches": ["https://www.youtube.com/*", "https://youtube.com/*"],
-      "js": ["youtube.js"],
-      "css": ["youtube-ui.css"],
-      "run_at": "document_idle"
+      "matches": ["https://*/*", "http://*/*"],
+      "exclude_matches": [
+        "http://localhost:5173/*",
+        "http://127.0.0.1:5173/*",
+        "http://localhost:5001/*",
+        "http://127.0.0.1:5001/*"
+      ],
+      "js": ["video-tracker.js"],
+      "css": ["video-tracker-ui.css"],
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["youtube-ui.css"],
-      "matches": ["https://www.youtube.com/*", "https://youtube.com/*"]
+      "resources": ["video-tracker-ui.css"],
+      "matches": ["https://*/*", "http://*/*"]
     }
   ]
 }

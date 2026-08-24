@@ -1,11 +1,33 @@
 /** Relays track start/stop from the CDS app into extension storage. */
 const STORAGE_KEY = "cdsTrackSession";
 
+function postProgress(message) {
+  window.postMessage(
+    {
+      type: "CDS_YT_TRACK_PROGRESS",
+      playedMs: message.playedMs,
+      syncedMinutes: message.syncedMinutes,
+      isPlaying: message.isPlaying,
+      title: message.title,
+      videoId: message.videoId,
+    },
+    "*"
+  );
+}
+
+function pullTrackState() {
+  chrome.runtime.sendMessage({ type: "GET_TRACK_STATE" }, (response) => {
+    if (chrome.runtime.lastError || !response?.progress) return;
+    postProgress(response.progress);
+  });
+}
+
 window.addEventListener("message", (event) => {
   if (event.source !== window || !event.data?.type) return;
 
   if (event.data.type === "CDS_YT_TRACK_PING") {
     window.postMessage({ type: "CDS_YT_TRACK_PONG" }, "*");
+    pullTrackState();
     return;
   }
 
@@ -34,7 +56,12 @@ chrome.runtime.onMessage.addListener((message) => {
       "*"
     );
   }
+  if (message?.type === "TRACK_PROGRESS") {
+    postProgress(message);
+  }
   if (message?.type === "TRACK_STATUS") {
     window.postMessage({ type: "CDS_YT_TRACK_STATUS", status: message.status }, "*");
   }
 });
+
+pullTrackState();

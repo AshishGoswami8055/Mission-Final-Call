@@ -31,6 +31,11 @@ export const saveActiveYoutubeTrack = (session) => {
   }
 };
 
+export const requestYoutubeTrackProgress = () => {
+  if (typeof window === "undefined") return;
+  window.postMessage({ type: "CDS_YT_TRACK_PING" }, "*");
+};
+
 export const pingYoutubeTrackerExtension = () =>
   new Promise((resolve) => {
     if (typeof window === "undefined") {

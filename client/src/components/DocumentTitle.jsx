@@ -24,22 +24,23 @@ const getDaysLeft = (targetDate) => {
   return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
 };
 
+const buildTitle = (days) => {
+  if (days > 1) return `CDS Journey · ${days} days to exam`;
+  if (days === 1) return "CDS Journey · 1 day to exam";
+  if (days === 0) return "CDS Journey · Exam today";
+  return "CDS Journey";
+};
+
 const DocumentTitle = () => {
   useEffect(() => {
     const apply = () => {
       const cycleId = readSelectedCdsCycleId();
       const exam = courseExamDate(cycleId);
       const days = getDaysLeft(exam);
-      if (days > 1) {
-        document.title = `CDS Journey · ${days} days to exam`;
-      } else if (days === 1) {
-        document.title = "CDS Journey · 1 day to exam";
-      } else if (days === 0) {
-        document.title = "CDS Journey · Exam today";
-      } else {
-        document.title = "CDS Journey";
-      }
+      // Always replace the full title — never append (prevents PWA duplicate titles).
+      document.title = buildTitle(days);
     };
+
     apply();
     const id = setInterval(apply, 60_000);
     window.addEventListener(FILTERS_SYNC_EVENT, apply);
@@ -48,6 +49,7 @@ const DocumentTitle = () => {
       window.removeEventListener(FILTERS_SYNC_EVENT, apply);
     };
   }, []);
+
   return null;
 };
 

@@ -1,6 +1,6 @@
 #cds-yt-tracker-wrap {
   position: absolute;
-  z-index: 100;
+  z-index: 2147483646;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -15,7 +15,6 @@
   pointer-events: auto;
 }
 
-/* Match YouTube speed-controller pill (e.g. "1.00") */
 #cds-yt-tracker-btn {
   display: inline-flex;
   align-items: center;

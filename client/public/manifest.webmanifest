@@ -1,0 +1,17 @@
+{
+  "name": "CDS Journey",
+  "short_name": "CDS Journey",
+  "description": "CDS OTA study workspace — courses, videos, PYQ, vocabulary, and daily targets.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

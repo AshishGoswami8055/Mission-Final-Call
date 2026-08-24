@@ -9,6 +9,7 @@ import {
   FiEdit2,
   FiFileText,
   FiLoader,
+  FiMove,
   FiPlayCircle,
   FiStar,
   FiTrash2,
@@ -154,6 +155,48 @@ const LessonList = ({
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState("");
   const [savingRename, setSavingRename] = useState(false);
+  const [draggingId, setDraggingId] = useState(null);
+  const [dragOverIndex, setDragOverIndex] = useState(null);
+
+  const reorderBusy = Boolean(reorderingContentId);
+  const canDragReorder = Boolean(onReorderContent) && !reorderBusy;
+
+  const clearDragState = useCallback(() => {
+    setDraggingId(null);
+    setDragOverIndex(null);
+  }, []);
+
+  const handleDragStart = (event, item) => {
+    if (!canDragReorder) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", String(item._id));
+    setDraggingId(item._id);
+  };
+
+  const handleDragOver = (event, index) => {
+    if (!canDragReorder || !draggingId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDragOverIndex(index);
+  };
+
+  const handleDrop = (event, targetIndex) => {
+    event.preventDefault();
+    if (!canDragReorder || !onReorderContent) {
+      clearDragState();
+      return;
+    }
+    const sourceId = event.dataTransfer.getData("text/plain");
+    const sourceItem = items.find((row) => String(row._id) === sourceId);
+    const sourceIndex = items.findIndex((row) => String(row._id) === sourceId);
+    if (sourceItem && sourceIndex >= 0 && sourceIndex !== targetIndex) {
+      onReorderContent(sourceItem, targetIndex);
+    }
+    clearDragState();
+  };
 
   const startRename = (item, event) => {
     event.stopPropagation();
@@ -272,10 +315,37 @@ const LessonList = ({
         const onPc = pcCachedIds.has(String(item._id));
         const canDownload = showDownload && rowType === "video" && canLocalLibraryDownload(item);
 
+        const isDragging = draggingId === item._id;
+        const isDropTarget = dragOverIndex === index && draggingId !== item._id;
+
         return (
-          <div key={item._id} className={lessonRowShell(item.completed, isOpen)}>
+          <div
+            key={item._id}
+            className={`${lessonRowShell(item.completed, isOpen)} ${
+              isDragging ? "opacity-50" : ""
+            } ${isDropTarget ? "ring-2 ring-sky-400/70 ring-offset-1 dark:ring-sky-500/50" : ""}`}
+            onDragOver={(event) => handleDragOver(event, index)}
+            onDragLeave={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget)) {
+                setDragOverIndex((current) => (current === index ? null : current));
+              }
+            }}
+            onDrop={(event) => handleDrop(event, index)}
+          >
             {item.completed ? <span className="lesson-row-shimmer pointer-events-none" aria-hidden /> : null}
             <div className="relative flex items-start gap-2 px-3 py-3 sm:gap-3 sm:px-4 sm:py-3.5">
+              {canDragReorder && renamingId !== item._id && (
+                <span
+                  draggable
+                  onDragStart={(event) => handleDragStart(event, item)}
+                  onDragEnd={clearDragState}
+                  title="Drag to reorder"
+                  aria-label={`Drag ${item.title} to reorder`}
+                  className="mt-0.5 shrink-0 cursor-grab touch-none rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 active:cursor-grabbing dark:hover:bg-white/10 dark:hover:text-slate-200"
+                >
+                  <FiMove size={16} />
+                </span>
+              )}
               <button
                 type="button"
                 className="flex min-w-0 flex-1 items-start gap-2.5 text-left transition hover:opacity-90 sm:gap-3"
@@ -408,7 +478,7 @@ const LessonList = ({
                         disabled={
                           index === 0 ||
                           reorderingContentId === item._id ||
-                          Boolean(reorderingContentId)
+                          reorderBusy
                         }
                         className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-white/10 dark:hover:text-slate-200"
                         onClick={(event) => {
@@ -429,7 +499,7 @@ const LessonList = ({
                         disabled={
                           index === items.length - 1 ||
                           reorderingContentId === item._id ||
-                          Boolean(reorderingContentId)
+                          reorderBusy
                         }
                         className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-white/10 dark:hover:text-slate-200"
                         onClick={(event) => {

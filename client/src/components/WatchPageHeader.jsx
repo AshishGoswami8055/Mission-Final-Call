@@ -43,17 +43,18 @@ const getMotivation = ({
 const WatchPageHeader = ({ isDark, onToggleTheme, subjects = [] }) => {
   const [showTargetModal, setShowTargetModal] = useState(false);
   const {
-    todayMinutes,
-    effectiveTodayVideoMinutes,
+    focusMinutes,
+    formatFocusDuration,
+    liveYoutubeActive,
     targetMinutes,
     targetBySubject,
     setAllTargets,
     videoStreak,
     videoStreakTodayComplete,
     videoStreakProgressPercent,
+    effectiveTodayVideoMinutes,
   } = useStudy();
 
-  const focusMinutes = Math.max(todayMinutes, effectiveTodayVideoMinutes);
   const dailyProgress =
     targetMinutes > 0 ? Math.min(100, Math.round((focusMinutes / targetMinutes) * 100)) : 0;
   const dailyComplete = targetMinutes > 0 && focusMinutes >= targetMinutes;
@@ -97,7 +98,7 @@ const WatchPageHeader = ({ isDark, onToggleTheme, subjects = [] }) => {
             <div className="watch-header__mission-top">
               <span className="watch-header__mission-stat">
                 <FiClock size={14} aria-hidden="true" />
-                <strong className="tabular-nums">{formatMinutes(focusMinutes)}</strong>
+                <strong className="tabular-nums">{formatFocusDuration(focusMinutes, { live: liveYoutubeActive })}</strong>
                 <span className="watch-header__mission-sep">/</span>
                 <span className="tabular-nums">{formatMinutes(targetMinutes)}</span>
               </span>
