@@ -7,6 +7,7 @@ import {
   FiLock,
   FiMail,
   FiShield,
+  FiUser,
 } from "react-icons/fi";
 import { useNavigate } from "react-router-dom";
 import api from "../api/client";
@@ -37,16 +38,22 @@ const getFallbackExamDays = () => {
 };
 
 const LoginPage = () => {
-  const { login } = useAuth();
+  const { login, register } = useAuth();
   const { todayMinutes } = useStudy();
   const navigate = useNavigate();
+  const [mode, setMode] = useState("login");
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [workspaceStats, setWorkspaceStats] = useState(null);
   const [statsLoading, setStatsLoading] = useState(true);
+
+  const allowSignup = Boolean(workspaceStats?.allowSignup);
+  const isRegister = allowSignup && mode === "register";
 
   useEffect(() => {
     let cancelled = false;
@@ -74,6 +81,13 @@ const LoginPage = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (statsLoading || !workspaceStats) return;
+    if (workspaceStats.allowSignup && !workspaceStats.hasAdmin) {
+      setMode("register");
+    }
+  }, [statsLoading, workspaceStats]);
+
   const daysLeft = workspaceStats?.examCountdownDays ?? getFallbackExamDays();
   const totalItems = workspaceStats?.totalItems;
   const todayLabel = formatTodayStudy(todayMinutes);
@@ -96,25 +110,35 @@ const LoginPage = () => {
 
   const onSubmit = async (e) => {
     e.preventDefault();
+    if (isRegister && password !== confirmPassword) {
+      toast.error("Passwords do not match");
+      return;
+    }
     setLoading(true);
     try {
-      await login(email.trim(), password);
-      if (rememberMe) {
-        localStorage.setItem(
-          REMEMBERED_LOGIN_KEY,
-          JSON.stringify({ email: email.trim(), password })
-        );
-      } else {
+      if (isRegister) {
+        await register({ name: name.trim(), email: email.trim(), password });
         localStorage.removeItem(REMEMBERED_LOGIN_KEY);
+        toast.success("Account created — this profile is yours");
+      } else {
+        await login(email.trim(), password);
+        if (rememberMe) {
+          localStorage.setItem(
+            REMEMBERED_LOGIN_KEY,
+            JSON.stringify({ email: email.trim(), password })
+          );
+        } else {
+          localStorage.removeItem(REMEMBERED_LOGIN_KEY);
+        }
+        toast.success("Logged in successfully");
       }
-      toast.success("Logged in successfully");
       navigate("/");
     } catch (error) {
       const message = error.response?.data?.message;
       if (!error.response) {
         toast.error("Cannot reach the server. Start the backend (npm run dev in server/) on port 5001.");
       } else {
-        toast.error(message || "Login failed");
+        toast.error(message || (isRegister ? "Could not create account" : "Login failed"));
       }
     } finally {
       setLoading(false);
@@ -154,13 +178,24 @@ const LoginPage = () => {
 
           <div className="flex flex-1 flex-col justify-center py-10 lg:py-12">
             <h1 className="font-display text-4xl font-semibold leading-[1.05] tracking-tight text-white sm:text-5xl">
-              Welcome Back,
-              <br />
-              Admin.
+              {isRegister ? (
+                <>
+                  Create your
+                  <br />
+                  workspace.
+                </>
+              ) : (
+                <>
+                  Welcome Back,
+                  <br />
+                  Admin.
+                </>
+              )}
             </h1>
             <p className="mt-5 max-w-md text-sm leading-relaxed text-slate-400">
-              Manage your CDS preparation workspace — videos, PDFs, previous year
-              papers, vocabulary and daily targets — all from one focused dashboard.
+              {isRegister
+                ? "This copy uses your MongoDB. Create your email and password — none of the owner's courses or progress are here until you add them."
+                : "Manage your CDS preparation workspace — videos, PDFs, previous year papers, vocabulary and daily targets — all from one focused dashboard."}
             </p>
           </div>
 
@@ -226,13 +261,37 @@ const LoginPage = () => {
       <section className="flex min-h-0 flex-1 flex-col items-center justify-center border-t border-slate-200 bg-white px-7 py-12 sm:px-10 lg:min-h-dvh lg:w-1/2 lg:border-l lg:border-t-0 lg:px-12">
         <div className="w-full max-w-md text-center sm:text-left">
           <h2 className="font-display text-3xl font-semibold tracking-tight text-slate-900">
-            Admin Login
+            {isRegister ? "Create your account" : "Admin Login"}
           </h2>
           <p className="mt-1.5 text-sm text-slate-500">
-            Enter your credentials to access the admin dashboard.
+            {isRegister
+              ? "Your database, your login. Same full app as any admin."
+              : "Enter your credentials to access the admin dashboard."}
           </p>
 
           <form onSubmit={onSubmit} className="mt-8 space-y-5 text-left">
+            {isRegister && (
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Your name
+                </label>
+                <div className="relative">
+                  <FiUser
+                    className="pointer-events-none absolute left-4 top-1/2 z-10 -translate-y-1/2 text-slate-400"
+                    size={16}
+                  />
+                  <input
+                    className="input pl-11!"
+                    type="text"
+                    placeholder="e.g. Priya"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    autoComplete="name"
+                  />
+                </div>
+              </div>
+            )}
+
             <div>
               <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">
                 Email Address
@@ -245,7 +304,7 @@ const LoginPage = () => {
                 <input
                   className="input pl-11!"
                   type="email"
-                  placeholder="admin@example.com"
+                  placeholder="you@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   autoComplete="email"
@@ -266,10 +325,11 @@ const LoginPage = () => {
                 <input
                   className="input pl-11! pr-11!"
                   type={showPassword ? "text" : "password"}
-                  placeholder="Enter your password"
+                  placeholder={isRegister ? "At least 8 characters" : "Enter your password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="current-password"
+                  autoComplete={isRegister ? "new-password" : "current-password"}
+                  minLength={isRegister ? 8 : undefined}
                   required
                 />
                 <button
@@ -283,28 +343,56 @@ const LoginPage = () => {
               </div>
             </div>
 
-            <div className="flex items-center justify-between">
-              <label className="flex cursor-pointer select-none items-center gap-2 text-sm text-slate-600">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                />
-                Remember me
-              </label>
-              <button
-                type="button"
-                className="text-sm font-semibold text-slate-900 transition-colors hover:underline"
-                onClick={() =>
-                  toast(
-                    "Password reset is not enabled. Update ADMIN_PASSWORD in server/.env and restart the server."
-                  )
-                }
-              >
-                Forgot password?
-              </button>
-            </div>
+            {isRegister && (
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Confirm password
+                </label>
+                <div className="relative">
+                  <FiLock
+                    className="pointer-events-none absolute left-4 top-1/2 z-10 -translate-y-1/2 text-slate-400"
+                    size={16}
+                  />
+                  <input
+                    className="input pl-11!"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="Repeat password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    autoComplete="new-password"
+                    minLength={8}
+                    required
+                  />
+                </div>
+              </div>
+            )}
+
+            {!isRegister && (
+              <div className="flex items-center justify-between">
+                <label className="flex cursor-pointer select-none items-center gap-2 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                  />
+                  Remember me
+                </label>
+                <button
+                  type="button"
+                  className="text-sm font-semibold text-slate-900 transition-colors hover:underline"
+                  onClick={() =>
+                    toast(
+                      allowSignup
+                        ? "Create a new account with your email, or ask the owner to enable ADMIN_SYNC in server/.env."
+                        : "Update ADMIN_PASSWORD in server/.env (with ADMIN_SYNC=1) and restart the server."
+                    )
+                  }
+                >
+                  Forgot password?
+                </button>
+              </div>
+            )}
 
             <button
               className="btn-primary w-full py-3! text-base"
@@ -315,14 +403,29 @@ const LoginPage = () => {
                 <Loader size="sm" />
               ) : (
                 <>
-                  Sign In <FiArrowRight />
+                  {isRegister ? "Create account" : "Sign In"} <FiArrowRight />
                 </>
               )}
             </button>
 
+            {allowSignup && (
+              <p className="text-center text-sm text-slate-600 sm:text-left">
+                {isRegister ? "Already have an account?" : "Using this copy for the first time?"}{" "}
+                <button
+                  type="button"
+                  className="font-semibold text-slate-900 hover:underline"
+                  onClick={() => setMode(isRegister ? "login" : "register")}
+                >
+                  {isRegister ? "Sign in" : "Create your account"}
+                </button>
+              </p>
+            )}
+
             <p className="flex items-center justify-center gap-1.5 text-[11px] text-slate-500 sm:justify-start">
               <FiShield size={12} />
-              Single-admin workspace · JWT secured
+              {allowSignup
+                ? "Your email · your MongoDB · full admin tools"
+                : "JWT secured workspace"}
             </p>
           </form>
         </div>

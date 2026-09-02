@@ -27,10 +27,31 @@ export const SLOT_DEFAULT_MINUTES = {
 
 export const CORE_DAILY_SLOTS = ["english", "maths", "gs", "reading"];
 
-export const todayDateKey = (date = new Date()) => {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString().slice(0, 10);
+/** App calendar timezone — CDS users are primarily in India. */
+export const APP_TIMEZONE = "Asia/Kolkata";
+
+export const todayDateKey = (date = new Date(), timeZone = APP_TIMEZONE) =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(date));
+
+/** Move a YYYY-MM-DD key by N calendar days in the app timezone. */
+export const addDaysToDateKey = (dateKey, days, timeZone = APP_TIMEZONE) => {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  const anchor = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  anchor.setUTCDate(anchor.getUTCDate() + days);
+  return todayDateKey(anchor, timeZone);
+};
+
+/** UTC bounds for one app-calendar day (for session upserts). */
+export const istDayBounds = (dateKey = todayDateKey()) => {
+  const start = new Date(`${dateKey}T00:00:00+05:30`);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start, end };
 };
 
 export const isSunday = (date = new Date()) => new Date(date).getDay() === 0;

@@ -2,9 +2,11 @@
 
 > **Read this file first** before making any code changes, answering architecture questions, or onboarding to this repository. It is the permanent memory of the project at `d:\1. Projects\CDS JOURNEY OTA`.
 >
-> **Moving to another PC?** Jump to **[Backup & migration to another PC](#backup--migration-to-another-pc)** — copy source + `server/.env` + MongoDB dump + `LOCAL_MEDIA_ROOT` / `uploads/`.
+> **Share with a friend (separate MongoDB, no secrets)?** Jump to **[Demo environment for a friend](#demo-environment-for-a-friend)** and [`DEMO.md`](./DEMO.md) — source + `.env.example` only. She uses **her** `MONGO_URI`, never yours.
+>
+> **Moving to another PC (your own data)?** Jump to **[Backup & migration to another PC](#backup--migration-to-another-pc)** — copy source + `server/.env` + MongoDB dump + `LOCAL_MEDIA_ROOT` / `uploads/`.
 
-A shorter companion exists at `PROJECT_CONTEXT.md`; this document is the authoritative, expanded version.
+A shorter companion may exist later; this document is the authoritative, expanded version.
 
 ---
 
@@ -12,7 +14,7 @@ A shorter companion exists at `PROJECT_CONTEXT.md`; this document is the authori
 
 ## Purpose
 
-**CDS Journey** (also referenced as **CDSJourney Course Manager**) is a single-admin, full-stack web application for managing and studying **UPSC Combined Defence Services (CDS) / OTA** exam preparation material. It is a personal learning hub for one administrator who curates content from multiple coaching batches, Telegram channels, local uploads, YouTube (dev), and Cloudinary CDN.
+**CDS Journey** (also referenced as **CDSJourney Course Manager**) is a full-stack web application for managing and studying **UPSC Combined Defence Services (CDS) / OTA** exam preparation material. It is a personal learning hub: administrators curate content from coaching batches, Telegram channels, local uploads, YouTube (dev), and Cloudinary CDN.
 
 The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, progress) — not video bytes. Media files live on local disk (`uploads/`), Cloudinary, or are streamed from Telegram.
 
@@ -23,30 +25,31 @@ The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, p
 | **Course organization** | CDS cycle → coaching batch (Programme) → Subject → Chapter → Content (video/PDF) |
 | **Content ingestion** | File upload, URL, YouTube download→Cloudinary (dev), Telegram import (forum/flat channels), Telegram video links (prod) |
 | **Telegram** | GramJS login, channel browse, batch import, auto-sync, stream proxy, optional cloudify to Cloudinary |
-| **Video playback** | **Plyr** player (`CdsPlyrPlayer`, sky-blue theme), HTML5 local, Cloudinary CDN, Telegram stream, YouTube embed **or localhost CDS Plyr** (yt-dlp cache), screenshot notes, resume position, stall watchdog + retry, Telegram live-connection banner, **timeline scrub previews** when fully cached, PC-library downloaded, or **YouTube playback cache** (disabled on full-course stream page); **double-click fullscreen** only on video surface (ignores extensions/overlays via `elementsFromPoint`) |
+| **Video playback** | **Plyr** player (`CdsPlyrPlayer`, sky-blue theme), HTML5 local, Cloudinary CDN, Telegram stream, YouTube embed **or localhost CDS Plyr** (yt-dlp cache), screenshot notes, resume position, stall watchdog + retry, Telegram live-connection banner, **timeline scrub previews** when stream-cache disk URL is playable (has `moov`), PC-library downloaded, or **YouTube playback cache** (disabled on full-course stream page); seek works after **faststart remux** (`moov` before `mdat`); **double-click fullscreen** only on video surface (ignores extensions/overlays via `elementsFromPoint`) |
 | **PDF / PYQ** | Inline viewer, course PDFs on disk, PYQ on Cloudinary, **AI question extract** (`POST /papers/:id/extract`), optional OCR via `ocrmypdf` on upload |
 | **Progress** | Per-content completion, chapter stats, paper attempted tracking, **mark entire subject complete** (bulk toggle-all) |
-| **Dashboard** | Lazy course loading — subject stats from `/chapters/stats`; lesson rows fetched only when a subject is opened; library view paginated (`limit=20`); **↑↓ lesson reorder**; mark-as-done on lesson rows; **mark entire subject complete** (bulk progress); **subject total watch time** (sum of video `duration` in subject header + Videos tab) |
+| **Dashboard** | Lazy course loading — subject stats from `/chapters/stats`; lesson rows fetched only when a subject is opened; library view paginated (`limit=20`); **↑↓ + drag-and-drop lesson reorder**; mark-as-done on lesson rows; **mark entire subject complete** (bulk progress); **subject total watch time** (sum of video `duration` in subject header + Videos tab) |
 | **Full course video** | Per-subject **linked MP4** (manual edit, no auto-stitch); **Link from path** for 20GB+ files; **Play full course** via byte-range stream API; **Locate in Explorer**; no quality loss (direct file stream) |
 | **CDS Vocabulary Arena** | Active-practice dashboard; **CDS PYQ (AI)** paper-style MCQs (default practice mode); mixed/MCQ/reverse/typing/context/weak/root/exam drills; deterministic SRS; session analytics; root families; CSV/Excel/OCR/text preview import; idioms + one-word substitution share the same corpus |
 | **Telegram Import UX** | Dedicated **`/import/telegram`** page; channel search; curated topic media; lesson plans with clean titles from bot captions; **video thumbnails** in lesson list; thumbnail click → **Play video** or **Preview thumbnail** (lightbox); PDF **View** (new tab) + **Save** (full PC download); import progress with **Cancel**; batch GramJS metadata fetch; PDF filenames from Telegram document name; filename search; full-height lesson workspace |
 | **PC Media Storage** | Configure `LOCAL_MEDIA_ROOT`; **organized stream cache** by subject folder + titled filenames; multi-select delete; **Sync folder** (migrate + orphan cleanup); green **Conquered** rows for lessons marked done; **Locate / Show in folder** via File Explorer (localhost PowerShell reveal) |
-| **Study tracker** | Daily minutes, per-subject targets, watch history, exam countdown, celebration overlays; **server-synced video minutes** via `GET /mission/streak/video`; dashboard **Today** widget uses `max(local, server)` |
-| **YouTube external tracking** | Chrome extension **`extension/cds-youtube-tracker/`** (v1.3.1) — track study time on **youtube.com** without opening lessons in the app; player-overlay pill (matches speed-controller style); visible only when YouTube controls show; **draggable**; heartbeats to `POST /mission/session/heartbeat` with `meta.videoId` |
+| **Study tracker** | Daily minutes, per-subject targets, watch history, exam countdown, celebration overlays; **server-synced video minutes** via `GET /mission/streak/video` (IST day keys); video-page flame = **video streak**; a day counts if **60 min video or a mock** (`MockTestResult` / mock `StudySession` / attempted `PaperProgress`); incomplete days break the streak; dashboard **Today** = `max(local, server, liveExtensionStopwatch)` |
+| **Universal study video tracker** | Chrome extension **`extension/cds-youtube-tracker/`** (**v1.9.2**) — wall-clock stopwatch on **YouTube, coaching portals, DRM/blob players**; floating pill on non-YouTube (does not mutate player CSS); **ignores playback speed**; sync every **5s** to dashboard; heartbeats `POST /mission/session/heartbeat` with `meta.videoId` / `meta.source: external-video:*` |
 | **Daily Mission** (`/mission`) | Auto-generated daily plan: 1 English + 1 Maths + 1 GS video + reading; Sunday mock; AI briefing; discipline score; streaks |
 | **Analytics** | Study intelligence (`/history/intelligence`), weekly charts, mock trends, video streak (60 min/day goal) |
 | **Local PC library** | Download videos to `{LOCAL_MEDIA_ROOT}/_local_library/` for smooth playback (local server only) |
-| **Stream cache** | Auto disk cache while streaming Telegram on localhost — stored under **`{LOCAL_MEDIA_ROOT}/_stream_cache/{SubjectName}/`** with readable **`{Title}__{cacheKey}.mp4|.bin|.meta.json`**; play-first; `_index.json` lookup; migrate legacy flat files on sync |
+| **Stream cache** | Auto disk cache while streaming Telegram on localhost — **`{LOCAL_MEDIA_ROOT}/_stream_cache/{SubjectName}/{Title}__{cacheKey}.bin|.mp4|.web.mp4|.meta.json`**; **complete** only if chunk map is full **and** file has MP4 `moov` at ≥ ~90% of `totalSize` (preallocated empty `.bin` is **not** 100%); ffmpeg **faststart** remux to `.web.mp4`; delete **abandons** in-memory entry and wipes all suffixes; play-first; `_index.json`; migrate legacy flat files on sync |
 | **Playback cache** | Server-side Telegram stream cache for smoother seeking (`_playback_cache/`); **YouTube localhost cache** (`{id}_youtube.webm`) for CDS Plyr on URL-only YouTube lessons |
 | **YouTube CDS player (localhost)** | URL-only YouTube lessons: one-time **1080p** download via yt-dlp → stream through **`CdsPlyrPlayer`**; requires **`youtube_cookies.txt`** (bot check); falls back to ReactPlayer embed if prepare fails |
 | **Cloudinary multi-account** | Per-subject cloud mapping, **`/cloudinary` storage dashboard** (usage, remaining space, console links), automatic asset delete on content/paper removal, PYQ on dedicated cloud |
 | **Telegram UX** | Live connection check on video refresh, “Check for updates” with progress overlay, optimized batch update scan (`fetchNewChannelMediaSince`), **curated import** (pick lessons per topic), **duplicate/skip-aware updates** (no false “N new” for intentionally skipped duplicates) |
-| **Admin auth** | Single JWT-protected admin (auto-seeded from env) |
+| **Admin auth** | JWT-protected **Admin** users. Optional env seed (`ADMIN_EMAIL` / `ADMIN_PASSWORD`). **Create your account** on the login page when `ALLOW_ADMIN_SIGNUP=1` or `DEMO_MODE=1` (`POST /api/auth/register`). Each admin is a full operator. |
 
 ## Target Users
 
-- **Primary:** One administrator / CDS aspirant who owns and curates all content.
-- **Implicit:** No multi-user roles, no student accounts — the `Admin` model is the only user type. All protected routes assume this single admin.
+- **Primary:** One CDS aspirant per installation. Each person runs their **own** app + **own MongoDB** + **own** `server/.env`.
+- A friend copies **source only**, points `MONGO_URI` at **her** empty database, and creates **her** admin on first visit. There is no shared catalog, progress, or Telegram session with the owner.
+- The `Admin` model is the only user type. `ALLOW_ADMIN_SIGNUP` is for a **fresh** database, not for two people on the owner's Atlas cluster. Do not enable it on a public tunnel.
 
 ---
 
@@ -62,7 +65,7 @@ The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, p
 | HTTP | Axios (`src/api/client.js`) |
 | UI libs | react-hot-toast, react-icons (Feather `Fi*`), clsx, date-fns |
 | Media | **Plyr** (`plyr` npm), react-pdf, react-player (installed; PDF uses `<iframe>`; video uses `CdsPlyrPlayer`) |
-| Browser extension | **`extension/cds-youtube-tracker/`** — MV3 Chrome extension for YouTube study-time tracking (dev, load unpacked) |
+| Browser extension | **`extension/cds-youtube-tracker/`** — MV3 Chrome extension: universal study stopwatch (YouTube + any site / DRM fallback); load unpacked |
 | Export | jspdf (screenshot notes export) |
 | Auth client | jwt-decode (available), JWT in `localStorage` key `cds_token` |
 
@@ -107,18 +110,20 @@ The app stores **metadata** in MongoDB (URLs, Telegram message IDs, durations, p
 ```
 d:\1. Projects\CDS JOURNEY OTA\
 ├── MASTER_PROJECT_CONTEXT.md     # THIS FILE — read before any code change
-├── PROJECT_CONTEXT.md            # Shorter AI context (subset of this doc)
-├── README.md                     # User-facing readme (partially stale)
-├── SETUP_YOUTUBE.md              # YouTube OAuth + direct upload via ContentModal
+├── DEMO.md                       # Friend copy: her MongoDB, her account
+├── package.json                  # Root: `npm run demo:env`
+├── scripts/setup-demo-env.js     # Copy .env.example → .env; generate JWT_SECRET
+├── README.md                     # Short index → DEMO + this file
 ├── vercel.json                   # Vercel: build client, output client/dist
 │
 ├── client/                       # React frontend
+│   ├── .env.example              # Optional VITE_API_URL / VITE_SERVER_URL (Vite proxy works without)
 │   ├── package.json
 │   ├── vite.config.js            # Dev proxy: /api, /uploads → localhost:5001
 │   ├── vercel.json               # Client-specific Vercel config
 │   ├── index.html
 │   ├── public/                   # favicon.svg, vite.svg
-│   ├── dist/                     # Production build output (committed or generated)
+│   ├── dist/                     # Vite build output (gitignored)
 │   └── src/
 │       ├── main.jsx              # Providers: Theme → Auth → Study; Toaster; Router
 │       ├── App.jsx               # Route definitions + celebrations
@@ -132,26 +137,31 @@ d:\1. Projects\CDS JOURNEY OTA\
 │       ├── pages/                # Route-level pages (incl. SubjectFullVideoPage, CloudinaryStoragePage, LocalMediaStoragePage)
 │       ├── config/navItems.js    # Sidebar nav (incl. PC Media Storage — localOnly)
 │       ├── styles/               # plyr-overrides.css (sky-blue Plyr theme), telegram-import.css
-│       └── utils/                # media.js, contentSort.js, subjectFullCourse.js, telegramLessonPlan.js, videoScreenshot.js, timelineScrubPreview.js, mediaStorageApi.js, youtubeExternalTrack.js, …
+│       └── utils/                # media.js, contentSort.js, subjectFullCourse.js, telegramLessonPlan.js, videoScreenshot.js, timelineScrubPreview.js, mediaStorageApi.js, youtubeExternalTrack.js, dateKey.js, …
 │
-├── extension/                    # Browser extensions (localhost dev)
-│   └── cds-youtube-tracker/      # MV3 — YouTube study-time tracker (watch on youtube.com)
-│       ├── manifest.json         # v1.3.1 — content scripts on youtube.com + localhost app
+├── extension/                    # Browser extensions (localhost / any site)
+│   └── cds-youtube-tracker/      # MV3 — universal study video stopwatch (v1.9.2)
+│       ├── manifest.json         # Broad http(s) matches; bridge on app origins; all_frames tracker
 │       ├── popup.html / popup.js # Extension login (CDS email/password → JWT in chrome.storage)
-│       ├── youtube.js            # Content script — player overlay, drag, tick, flush heartbeats
-│       ├── youtube-ui.css        # Dark transparent pill (matches “1.00” speed-controller look)
-│       ├── background.js         # POST heartbeat to API; notify open app tabs; badge today minutes
-│       ├── bridge.js             # App tab relay (CDS_YT_TRACK_* postMessage when app open)
+│       ├── video-tracker.js      # Content script — wall-clock stopwatch, owner-frame lock, YT + floating UI
+│       ├── video-tracker-ui.css  # Dark pill + fixed floating styles (no host layout mutation)
+│       ├── background.js         # Heartbeats (mutex + claim), push progress every 5s, badge
+│       ├── bridge.js             # App tab relay (CDS_YT_TRACK_*); localhost / LAN / trycloudflare
+│       ├── test-stopwatch.js     # Unit checks for wall-clock + dashboard max math
 │       └── README.md             # Install + usage
 │
 ├── server/                       # Express backend (MVC)
+│   ├── .env.example              # Required + optional vars (no secrets) — copy to .env
+│   ├── SETUP_YOUTUBE.md          # Optional YouTube unlisted upload (Google OAuth)
 │   ├── package.json
 │   ├── ecosystem.config.cjs      # PM2: cds-api + cloudflare-tunnel
 │   ├── eng.traineddata           # Tesseract English model
 │   ├── cloudflare/               # Tunnel config example + PowerShell scripts
 │   ├── scripts/
-│   │   └── purgeAllMedia.js      # Wipe media (local + Cloudinary + DB records)
-│   └── tests/                    # Unit tests (node --test tests/**/*.test.js)
+│   │   ├── purgeAllMedia.js      # Wipe media (local + Cloudinary + DB records)
+│   │   ├── backfillVideoStreak.js
+│   │   └── invokeBackfillStreak.js
+│   ├── tests/                    # Unit tests (node --test tests/**/*.test.js)
 │   └── src/
 │       ├── server.js             # Bootstrap, migrations, Telegram auto-sync
 │       ├── app.js                # Express app, route mounts, static /uploads, optional SPA
@@ -161,14 +171,14 @@ d:\1. Projects\CDS JOURNEY OTA\
 │       ├── models/               # Mongoose schemas
 │       ├── routes/               # Express routers
 │       ├── services/             # Business logic (Telegram, Cloudinary, mission, cleanup, telegramStreamCacheService, …)
-│       └── utils/                # Helpers + **`streamCachePaths.js`** (subject-folder stream cache layout)
+│       └── utils/                # Helpers + **`streamCachePaths.js`**, **`mp4Faststart.js`**, **`streamLocalFile.js`**
 │
 └── uploads/                      # Default local media root (override with LOCAL_MEDIA_ROOT env)
     ├── _tmp_videos/              # Multer scratch before YouTube→Cloudinary or delete
     ├── _tmp_papers/              # Multer scratch before PYQ→Cloudinary
     ├── _local_library/           # PC library downloads (meta.json + video files)
     ├── _merged_subjects/         # Full-course link meta ({subjectId}.meta.json); linked MP4 may live anywhere under LOCAL_MEDIA_ROOT
-    ├── _stream_cache/            # Auto Telegram stream cache — **subject subfolders** + titled files + `_index.json`
+    ├── _stream_cache/            # Telegram cache — subject folders, `.web.mp4` faststart, `_index.json`
     ├── _playback_cache/          # Manual/on-demand Telegram playback cache files
     ├── CDS 2 2026/               # Default active cycle folder
     │   └── <BatchSlug>/subjects/<Subject>/pdfs/<file>.pdf
@@ -180,7 +190,10 @@ d:\1. Projects\CDS JOURNEY OTA\
 | File | Role |
 |------|------|
 | `client/src/utils/contentSort.js` | **`sortSubjectContents()`** — shared lesson order (dashboard, Play all, player playlist); uses `importSortOrder` then `telegramMessageId` |
-| `client/src/utils/timelineScrubPreview.js` | YouTube-style hover thumbnails on progress bar when video is fully stream-cached, PC-library downloaded, or **YouTube playback cache** active |
+| `server/src/utils/adminAuth.js` | Signup flags (`ALLOW_ADMIN_SIGNUP`, `DEMO_MODE`), password rules, public admin shape |
+| `DEMO.md` | Friend runbook — her own email/password, no owner secrets |
+| `server/.env.example` | Template for `server/.env` (`PORT=5001`, demo admin, optional Telegram/Cloudinary/OpenAI) |
+| `client/src/utils/timelineScrubPreview.js` | Hover thumbnails when stream-cache disk URL is playable (`moov`), PC-library downloaded, or **YouTube playback cache** active |
 | `client/src/components/SubjectPlayAllPremium.jsx` | Subject banner — **Link from path**, Replace (≤8 GB), Locate, Play full course, mark subject complete |
 | `client/src/pages/SubjectFullVideoPage.jsx` | Full-subject single-file player (`/subject/:subjectId/full-video`) — streams linked MP4 via API |
 | `client/src/api/client.js` | Axios + **`getStreamBackendBaseUrl()`** — full-course `<video>` must hit Express, not Vite :5173 |
@@ -193,7 +206,8 @@ d:\1. Projects\CDS JOURNEY OTA\
 | `client/src/pages/LocalMediaStoragePage.jsx` | `/settings/pc-media` — LOCAL_MEDIA_ROOT path, disk usage, **stream cache table** (multi-select delete, Conquered highlight, Sync folder, subject path column) |
 | `client/src/components/VideoCacheStatusBar.jsx` | On-video cache badges — **only while caching** (bottom-left); completed state in panel below |
 | `server/src/utils/streamCachePaths.js` | Stream cache disk layout — `{Subject}/{Title}__{cacheKey}.*`, `_index.json`, migrate, reconcile orphans, accurate byte measure |
-| `server/src/services/telegramStreamCacheService.js` | Telegram stream + **subject-organized** `_stream_cache`; play-first; content lookup at cache start for folder/title |
+| `server/src/utils/mp4Faststart.js` | Inspect MP4 `moov`/`mdat`; `getStreamCachePlaybackFile()`; ffmpeg `-movflags +faststart` remux to `{base}.web.mp4` |
+| `server/src/services/telegramStreamCacheService.js` | Telegram stream + **subject-organized** `_stream_cache`; play-first; **complete = full chunks + moov + ~90% size**; abandon on delete |
 | `server/src/utils/contentSort.js` | Server mirror of client sort (reorder API) |
 | `server/src/utils/telegramImportFilters.js` | Duplicate title detection, user-skipped Telegram message IDs, update-count filtering |
 | `server/src/config/mediaStorage.js` | `LOCAL_MEDIA_ROOT`, paths for `_local_library`, `_merged_subjects`, `_stream_cache`, `_playback_cache`, **`getYoutubeCookiesPath()`** |
@@ -221,21 +235,23 @@ d:\1. Projects\CDS JOURNEY OTA\
 | `server/src/services/cloudinaryUsageService.js` | Admin API usage fetch, 60s cache, Free-plan 25 GB limit fallback, console URLs |
 | `server/src/services/paperCleanupService.js` | Cloudinary + local cleanup for PYQ delete/replace |
 | `server/src/utils/contentHelpers.js` | MIME/URL detection, Telegram link helper, filename parser |
-| `server/src/utils/subjectBuckets.js` | Mission slot classification (english/maths/gs) |
+| `server/src/utils/subjectBuckets.js` | Mission slot classification (english/maths/gs); **`APP_TIMEZONE=Asia/Kolkata`**, `todayDateKey`, `istDayBounds`, `addDaysToDateKey` |
 | `server/src/config/cdsCourses.js` | Cycle id ↔ disk folder name |
 | `server/src/services/uploadProgressBus.js` | In-memory upload job state (UUID `uploadId`); Telegram import/update progress; **active jobs TTL 60 min**, terminal 10 min |
 | `server/src/services/contentCleanupService.js` | Unified delete: Cloudinary (incl. thumbnails + URL fallback) + local files |
 | `server/src/services/telegramService.js` | GramJS client, **`fetchTelegramThumbnail()`**, **`resolveTelegramImportMessageMetas()`**, **`checkTelegramConnectionLive()`**, stream, **`fetchNewChannelMediaSince()`** |
-| `extension/cds-youtube-tracker/youtube.js` | YouTube-only study tracking — overlay button inside `#movie_player`, shows with YT controls (`ytp-autohide`), drag + saved position, pause-aware tick |
-| `extension/cds-youtube-tracker/background.js` | Extension service worker — `POST /mission/session/heartbeat`, push streak to open `localhost:5173` tabs |
-| `extension/cds-youtube-tracker/bridge.js` | Injects on app origin — relays `HEARTBEAT_SENT` → `CDS_YT_TRACK_TICK` for live dashboard updates |
-| `client/src/context/StudyContext.jsx` | Daily minutes/targets/history; **`refreshVideoStreak()`** merges `todayVideoMinutes` from server; polls every 20s + focus/visibility; listens for extension ticks |
-| `client/src/components/StudyTracker.jsx` | Dashboard **Today** widget — `focusMinutes = max(todayMinutes, effectiveTodayVideoMinutes)` |
+| `extension/cds-youtube-tracker/video-tracker.js` | Universal study stopwatch — YouTube in-player / floating pill; wall-clock only; `ownerId` frame lock; no host CSS mutation |
+| `extension/cds-youtube-tracker/background.js` | Mutex heartbeat (claim before POST); push progress every **5s**; badge today minutes |
+| `extension/cds-youtube-tracker/bridge.js` | App origins — `CDS_YT_TRACK_PROGRESS` / tick / stop; LAN + trycloudflare |
+| `client/src/context/StudyContext.jsx` | Daily minutes/targets/history; live extension stopwatch; **`max(local, server, live)`**; polls ~5s |
+| `client/src/utils/dateKey.js` | Client IST date keys (align with server) |
+| `client/src/components/StudyTracker.jsx` | Dashboard **Today** widget — `focusMinutes` from merged effective minutes |
 | `client/src/components/WatchPageHeader.jsx` | Video page focus session bar — same merged minutes logic |
 | `client/src/components/YoutubeExternalTrackBar.jsx` | Optional floating bar when app-initiated YouTube track session active (legacy bridge path) |
 | `client/src/utils/youtubeExternalTrack.js` | Extension ping/start/stop helpers; `getExtensionHeartbeatApiBase()` for dev `127.0.0.1:5001/api` |
-| `server/src/controllers/missionController.js` | **`heartbeatVideoSession`** — accepts `contentId` **or** `meta.videoId` (YouTube external) |
-| `server/src/services/studyHistoryService.js` | **`logStudySession(increment:true)`** — upsert by `contentId` or **`meta.videoId`** per day |
+| `server/src/controllers/missionController.js` | **`heartbeatVideoSession`**; **`POST /streak/backfill`** |
+| `server/src/services/studyHistoryService.js` | **`logStudySession(increment:true)`** — upsert by `contentId` or **`meta.videoId`** per IST day |
+| `server/src/services/streakService.js` | Video streak from `startedAt` IST bounds; `backfillVideoStreakDays` |
 
 ---
 
@@ -411,6 +427,23 @@ Locate:
 
 **Removed (2026-08-10):** ffmpeg chapter stitch/merge, virtual multi-chapter playlist player, "Download full video" build button — too slow; user supplies one edited MP4 instead.
 
+## Telegram stream + disk cache playback
+
+```
+VideoPlayerPage resolveContentSrc / stream-cache status
+  → GET /api/contents/:id/stream-cache
+  → complete only if getCompleteStreamCacheFile finds a file with MP4 moov
+     and size ≥ ~90% of Telegram totalSize (preallocated .bin is NOT complete)
+  → If complete: <video src> = /uploads/_stream_cache/.../.web.mp4 or .mp4
+     (Vite proxies /uploads → :5001). Scrub preview + seek enabled.
+  → If not complete: live Telegram byte-range stream; UI cache % from real chunks
+  → ffmpeg remux when cache actually complete and moov is after mdat
+     → {base}.web.mp4 (temp {base}.web.part.mp4); cancel remux on cache delete
+  → Delete cache: abandonCacheEntry (stop workers) + remove all suffixes
+     (.bin, .mp4, .web.mp4, .part.mp4, .meta.json); Windows locked files → *.deleted
+  → Non-MP4 (e.g. EBML/MKV) never reports complete / never remuxed as MP4
+```
+
 ## Mission daily flow
 
 ```
@@ -460,58 +493,76 @@ VideoPlayerPage detects isYouTubeUrl(resolveContentSrc(item))
 
 **Requirements (dev PC):** `pip install "yt-dlp[default]"`, **ffmpeg**, **`{LOCAL_MEDIA_ROOT}/youtube_cookies.txt`** (export while logged into YouTube — extension *Get cookies.txt LOCALLY*). Optional env: `YT_DLP_COOKIES_FILE`, `YT_DLP_JS_RUNTIMES`, `YT_DLP_COOKIES_FROM_BROWSER`.
 
-## YouTube external study tracking (browser extension — primary YouTube workflow)
+## Universal study video tracking (browser extension — primary external workflow)
 
-The admin watches many lessons **directly on youtube.com**, not inside CDS Journey. Tracking is handled by **`extension/cds-youtube-tracker/`** (Chrome/Brave MV3, load unpacked).
+The admin watches lessons on **YouTube, paid coaching portals, and DRM players** — not only inside CDS Journey. Tracking is handled by **`extension/cds-youtube-tracker/`** (Chrome/Brave MV3, load unpacked, **v1.9.2**).
+
+### Timing model (critical)
+
+- **Wall-clock stopwatch only** — uses `Date.now()` elapsed time while “playing”
+- **Ignores playback rate** (1.5× / 2× still counts 1 real second per second)
+- **Does not** use `video.currentTime` deltas (those would speed-scale)
+- **YouTube / HTML5:** pauses when `<video>.paused` / `ended`
+- **DRM / no readable `<video>`:** runs while tracking + tab visible until user clicks stop
+- **Frame ownership:** `session.ownerId` — only one content-script frame increments/syncs (prevents 2× with `all_frames`)
+- **Non-YouTube UI:** fixed **floating pill** on `document.body` — **never** sets host `position` / never injects into course player DOM (avoids layout break)
 
 ### One-time setup
 
 1. `chrome://extensions` → Developer mode → **Load unpacked** → `extension/cds-youtube-tracker`
 2. Extension popup → log in with CDS admin email/password (stores JWT + `apiBase` in `chrome.storage.local` key `cdsAuth`)
 3. Default API base in dev: `http://127.0.0.1:5001/api` (must match running Express server)
+4. After code updates: **Reload** extension → hard-refresh video + dashboard tabs
 
-### Per study session (youtube.com)
+### Per study session
 
-1. Open any study video on **youtube.com**
-2. **Hover the player** so YouTube controls appear → **Track study time** pill shows (dark transparent style, same look as speed-controller overlays)
-3. **Click once** to start — only that **video ID** is counted; other tabs/videos ignored
-4. Watch normally — counting uses HTML5 `currentTime` delta while playing; **pauses when YouTube pauses**
-5. **Drag** the pill anywhere on the player (position saved in `chrome.storage.local` key `cdsTrackerBtnPos`)
-6. Hover controls again → click **Stop** (or navigate away — partial time flushes on pause/tab hide/beforeunload)
+1. Open any study video (YouTube **or** coaching/DRM site)
+2. Click **Track study time** on the pill (YouTube: in-player; other sites: floating bottom-right — drag to move)
+3. Watch normally — pill shows `m:ss · Tracking` / `Paused`
+4. Click the pill again to **stop** (UI updates immediately; final minute flush runs in background)
 
 ### Server sync
 
-- Extension background worker: `POST /api/mission/session/heartbeat` with `{ durationMinutes, meta: { videoId, title, source: "youtube-external" } }`
-- No `contentId` required — `studyHistoryService.js` upserts `StudySession` by `{ userId, date, meta.videoId }`
-- Flushes: every **30s** while playing, at **60s** minute boundaries, on **pause/end**, tab **hidden**, **beforeunload**
-- Extension action **badge** shows server `todayVideoMinutes` after each successful heartbeat
+- Background: `POST /api/mission/session/heartbeat` with `{ durationMinutes: delta, meta: { videoId, title, source: "external-video:{host}", pageUrl } }`
+- No `contentId` required — `studyHistoryService.js` upserts `StudySession` by user + IST day + `meta.videoId`
+- **Mutex + claim:** minutes are written to `syncedMinutes` **before** the network POST so parallel flush cannot double-post
+- Alarms: ~1 min sync; content also flushes when a new whole minute is earned
+- Progress push to open app tabs every **5s**
+- Extension action **badge** shows server `todayVideoMinutes` after successful heartbeat
 
 ### Dashboard sync (CDS app)
 
-- `StudyContext.refreshVideoStreak()` → `GET /mission/streak/video` — merges `todayVideoMinutes` into local today total
-- Auto-refresh every **20s** when tab visible + on window focus
-- If app tab open: `bridge.js` receives `HEARTBEAT_SENT` → `CDS_YT_TRACK_TICK` → `addStudyMinutes()` + streak update (instant UI)
-- **Today** widget (`StudyTracker.jsx`) and focus bar (`WatchPageHeader.jsx`) use **`effectiveTodayVideoMinutes = max(local, server)`**
+- Live path: `TRACK_PROGRESS` → `bridge.js` → `CDS_YT_TRACK_PROGRESS` → `StudyContext.applyLiveYoutubeProgress`
+- **`effectiveTodayVideoMinutes = max(todayMinutes, serverTodayVideoMinutes, liveExtensionStopwatchMinutes)`** — never local+live double-add
+- Live extrapolation uses **`receivedAt` only** (not stale `lastProgressAt`)
+- `HEARTBEAT_SENT` → apply streak from payload / refresh streak (does **not** `addStudyMinutes` for the same delta)
+- Polls: extension progress ~**5s**, streak ~**5s**, plus focus/visibility
+- Bridge matches: `localhost` / `127.0.0.1` / LAN / `*.trycloudflare.com` (ports 5173, 5001, …)
 
 ### Extension storage keys
 
 | Key | Purpose |
 |-----|---------|
 | `cdsAuth` | `{ email, token, apiBase }` from popup login |
-| `cdsTrackSession` | Active track `{ videoId, title, token, apiBase, trackedMinutes, startedAt }` |
-| `cdsTrackerBtnPos` | `{ leftPct, topPct }` draggable button position within player |
+| `cdsTrackSession` | Active track `{ videoId, title, token, apiBase, playedMs, syncedMinutes, isPlaying, ownerId, trackPageKey, startedAt, … }` |
+| `cdsTrackerBtnPos` | `{ leftPct, topPct }` saved position (YouTube in-player only) |
 
 ### App-side bridge (optional)
 
-- `bridge.js` content script on `localhost:5173` / `127.0.0.1:5173`
-- `YoutubeExternalTrackBar.jsx` in `App.jsx` — shows when legacy app-started session exists in `localStorage` `cds_youtube_track_active`
-- **Primary workflow does not require opening the CDS app** — minutes persist on server; open dashboard anytime to see totals
+- `bridge.js` on app HTTP(S) origins (excludes youtube.com)
+- `YoutubeExternalTrackBar.jsx` — legacy app-started session (`cds_youtube_track_active`)
+- **Primary workflow does not require the CDS app open** — minutes persist on server; keep dashboard open for live 5s UI
 
 ### In-app YouTube embed tracking (secondary)
 
 - `VideoPlayerPage.jsx` — ReactPlayer YouTube embed also calls `addStudyMinutes()` + heartbeat via `handleYoutubeTimeUpdate` when watching inside the app
 - Localhost **CDS Plyr** path (yt-dlp cache) uses native `<video>` study accumulation like Telegram/local files
 
+### Video streak (IST)
+
+- Goal: **60 minutes** video / calendar day in **`Asia/Kolkata`**
+- Aggregation uses `StudySession.startedAt` within IST day bounds (`subjectBuckets.istDayBounds`)
+- Manual repair: `POST /api/mission/streak/backfill` (admin) / `server/scripts/backfillVideoStreak.js`
 ## Cloudinary storage dashboard flow
 
 ```
@@ -643,7 +694,7 @@ TelegramChannelMapping (channelId + programmeId — sync config)
 - `userId`, `date`, `type` (`video`|`reading`|`mock`|`mission`|`vocabulary`)
 - `contentId`, `paperId`, `missionId`, `subjectId`, `subjectName`, `slot`
 - `durationMinutes`, `startedAt`, `endedAt`, `meta`
-- **YouTube external:** `contentId` may be null; **`meta.videoId`** identifies the YouTube watch session for increment upserts (one row per user+date+videoId)
+- **External video tracker:** `contentId` may be null; **`meta.videoId`** identifies the watch session for increment upserts (one row per user + IST day + videoId); `meta.source` like `external-video:{hostname}`
 
 ### MockTestResult (`MockTestResult.js`)
 - `userId`, `paperId`, `missionId`, `date`, `title`
@@ -685,13 +736,15 @@ Base URL: `/api` via Vite proxy in dev (→ `http://127.0.0.1:5001`), or `VITE_A
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
 | GET | `/api/health` | No | `{ status: "ok" }` |
-| GET | `/api/workspace/public-stats` | No | Exam countdown, video/pdf counts for login page |
+| GET | `/api/workspace/public-stats` | No | Exam countdown, video/pdf counts, **`allowSignup`**, **`hasAdmin`** |
 
 ## Auth (`/api/auth`)
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
 | POST | `/login` | No | Admin login → `{ token, admin }` |
+| POST | `/register` | No | Create a full admin when `ALLOW_ADMIN_SIGNUP` or `DEMO_MODE` — `{ token, admin }` |
+| PATCH | `/password` | Yes | Change own password (`currentPassword`, `password`) |
 | GET | `/me` | Yes | Current admin profile |
 | GET | `/youtube/status` | Yes | YouTube OAuth connection status |
 | GET | `/youtube/connect` | Yes | Returns Google consent URL |
@@ -895,8 +948,9 @@ Base URL: `/api` via Vite proxy in dev (→ `http://127.0.0.1:5001`), or `VITE_A
 | GET | `/mock/history` | Mock test history |
 | GET | `/analytics/overview` | Analytics dashboard data |
 | GET | `/analytics/intelligence` | Full intelligence report |
-| GET | `/streak/video` | Video watch streak status |
-| POST | `/session/heartbeat` | Video session heartbeat — body: `{ contentId?, durationMinutes, subjectId?, subjectName?, meta? }`. **`contentId` OR `meta.videoId` required**. Used by in-app player and **YouTube extension** (`meta.source: "youtube-external"`). Returns `{ session, streak }` |
+| GET | `/streak/video` | Video watch streak status (IST day aggregation) |
+| POST | `/streak/backfill` | Admin: seed recent IST days with video minutes (repair streak) |
+| POST | `/session/heartbeat` | Video session heartbeat — body: `{ contentId?, durationMinutes, subjectId?, subjectName?, meta? }`. **`contentId` OR `meta.videoId` required**. Used by in-app player and **universal study extension** (`meta.source: "external-video:{host}"`). Returns `{ session, streak }` |
 | POST | `/session/log` | Log video/reading session on exit |
 
 ## Static files
@@ -1065,7 +1119,7 @@ CDS cycle (cds-1-2026, cds-2-2026)
 ### Streaks (`streakService.js`)
 - **Discipline streak:** consecutive days with mission ≥75% or reading complete
 - **Reading streak:** consecutive reading-complete days
-- **Video streak:** 60 min/day video watch (`StudySession` type=video aggregates)
+- **Video streak:** consecutive IST days with **60 min of video** **or** a **mock** (`MockTestResult`, `StudySession` type `mock`, or attempted `PaperProgress`). Incomplete days (e.g. 12 min video, no mock) **reset** the count. Video player flame uses this streak, not the discipline streak. Optional **`backfillVideoStreakDays`** / `POST /mission/streak/backfill`
 
 ## CDS Vocabulary Arena
 
@@ -1134,9 +1188,10 @@ CDS cycle (cds-1-2026, cds-2-2026)
   ```
   _stream_cache/
   ├── _index.json                          # cacheKey → { storageRelDir, storageBaseName }
-  ├── English practice/
+  ├──   English practice/
   │   ├── Full mock 01 Explanation__-1003309425932_3395.mp4
   │   ├── Full mock 01 Explanation__-1003309425932_3395.bin
+  │   ├── Full mock 01 Explanation__-1003309425932_3395.web.mp4   # faststart remux (optional)
   │   └── Full mock 01 Explanation__-1003309425932_3395.meta.json
   ├── A to z vocabulary/
   └── Unsorted/                            # lesson not linked to Content yet
@@ -1144,7 +1199,10 @@ CDS cycle (cds-1-2026, cds-2-2026)
 - **Internal ID unchanged:** `cacheKey = {telegramChannelId}_{telegramMessageId}` — suffix on filename keeps lookups stable
 - **At cache start:** `resolveStreamCacheContentMeta()` loads subject + title from MongoDB `Content` → files go directly into subject folder
 - **Migration:** `migrateStreamCacheLayouts()` on inventory load / **Sync folder** — moves legacy flat `{cacheKey}.*` files into subject folders
-- **Delete (fixed):** removes **`.meta.json` + `.bin` + `.mp4`** (previously `.mp4` orphans inflated disk usage)
+- **Delete:** `abandonCacheEntry` stops prefetch/waiters/remux; `removeStreamCacheFiles` walks `_stream_cache` for **all** suffixes (`.bin`, `.mp4`, `.web.mp4`, `.part.mp4`, `.meta.json`); Windows locked files renamed to `*.deleted`. `getOrCreateEntry` restores from disk only if **meta and a real media file** exist (no empty prealloc revive).
+- **Complete is real media (2026-08-31):** `ensureBinFile` preallocates `.bin` to `totalSize`. **Do not** treat `stat.size >= total` as complete. `cacheFileLooksComplete` requires a **full chunk map** plus a file with **MP4 `moov`** and size ≥ ~90% of total. Status `complete` only if `getStreamCachePlaybackFile` returns a playable path. Tiny fake `.web.mp4` is discarded (`discardUndersizedWebMp4`). Non-MP4 (MKV/EBML `1a45dfa3`) never looks complete.
+- **Faststart remux (`mp4Faststart.js`):** Telegram MP4s often have **`moov` after `mdat`** → broken seek / Plyr overlay. When actually complete: `ffmpeg -c copy -movflags +faststart -f mp4` → `{base}.web.mp4` (write `{base}.web.part.mp4` first). `remuxEpoch` cancels remux if cache is deleted.
+- **Client:** `handleStreamCacheStatus` **clears** disk playback when `complete` is false; `applyStreamCachePlayback` requires an `/uploads/` play URL. Scrub preview enabled for stream-cache disk URLs once playable.
 - **Reconcile:** `reconcileStreamCacheFolder()` drops orphan bin/mp4 without meta; rebuilds `_index.json`; `measureStreamCacheUsedBytes()` skips double-counting hard-linked mp4+bin
 - **Play-first:** streams directly from Telegram on cache miss; background warmup deferred (~20s)
 - Preview/stream responses may cap a single fetch (`TELEGRAM_STREAM_FETCH_MB`, default **8 MB** on localhost) — OK for video scrubbing
@@ -1175,11 +1233,12 @@ CDS cycle (cds-1-2026, cds-2-2026)
 - `StudyContext.jsx` — localStorage-backed daily minutes, targets, watch history (50 max)
 - **localStorage keys:** `cds_study_today_date`, `cds_study_today_minutes`, `cds_study_today_by_subject`, `cds_study_target_minutes`, `cds_study_target_by_subject`
 - Syncs video streak with server via `GET /mission/streak/video` → **`refreshVideoStreak()`**
-- Merges server **`todayVideoMinutes`** into local today total (`applyVideoStreakStatus`, `effectiveTodayVideoMinutes`)
-- Polls streak every **20s** when authenticated + tab visible; also on window focus / visibility change
-- Listens for extension bridge messages: `CDS_YT_TRACK_TICK` → `addStudyMinutes()` + streak apply
+- Live extension stopwatch via `CDS_YT_TRACK_PROGRESS` (`liveYoutubeTrack`)
+- **`effectiveTodayVideoMinutes = max(todayMinutes, serverTodayVideoMinutes, liveExtensionStopwatchMinutes)`** — never double-add heartbeat + live
+- Polls streak ~**5s** + extension progress ~**5s** when authenticated + tab visible; also on focus / visibility
+- `CDS_YT_TRACK_TICK` → apply streak (no duplicate `addStudyMinutes` for the same delta)
 - Celebrations: `StudyCompleteCelebration`, `StreakFireCelebration`
-- **Dashboard display:** `StudyTracker.jsx`, `WatchPageHeader.jsx` use `focusMinutes = max(todayMinutes, effectiveTodayVideoMinutes)`
+- **Dashboard display:** `StudyTracker.jsx`, `WatchPageHeader.jsx` use `focusMinutes = effectiveTodayVideoMinutes`
 
 ---
 
@@ -1189,9 +1248,12 @@ CDS cycle (cds-1-2026, cds-2-2026)
 
 | Variable | Purpose |
 |----------|---------|
-| `PORT` | HTTP port (default `5000`) |
+| `PORT` | HTTP port. Code default if unset is **`5000`**. **Local Vite demo must use `5001`** (`client/vite.config.js` proxy). |
 | `HOST` | Bind address (default `0.0.0.0`) |
 | `NODE_ENV` | `production` disables local video upload & YouTube download |
+| `DEMO_MODE` | `1` — demo boot banner; also enables **admin signup** and **ADMIN_EMAIL password sync**. |
+| `ALLOW_ADMIN_SIGNUP` | `1` — login page **Create your account** (`POST /api/auth/register`) even without `DEMO_MODE`. Off on production tunnels. |
+| `ADMIN_SYNC` | `1` — on boot, rewrite password/name for existing `ADMIN_EMAIL`. Implied by `DEMO_MODE`. |
 | `MONGO_URI` | MongoDB connection string |
 | `JWT_SECRET` | JWT signing secret |
 | `JWT_EXPIRES_IN` | Token expiry (default `1d`) |
@@ -1297,17 +1359,53 @@ CDS cycle (cds-1-2026, cds-2-2026)
 | **OpenAI** | Paper extract/analysis, AI daily briefing, chapter detail |
 | **Serper** | Web search for paper research (optional) |
 | **Google YouTube Data API** | OAuth implemented; direct upload **not wired** to content create |
-| **ffmpeg** | Video compression before Cloudinary |
-| **yt-dlp** | YouTube download (dev only) |
-| **ocrmypdf + Tesseract** | PDF OCR layer on PYQ upload (optional CLI) |
-| **Vercel** | Frontend hosting |
-| **Cloudflare Tunnel** | Expose local/production API publicly (PM2 scripts) |
+| **ffmpeg** | Video compression before Cloudinary; **stream-cache faststart remux** (`mp4Faststart.js`) |
+
+---
+
+# Demo environment for a friend
+
+Two **separate** installations. Her MongoDB is empty and is **not** yours.
+
+**Friend-facing steps:** [`DEMO.md`](./DEMO.md) · `server/.env.example` · `npm run demo:env`.
+
+## What they need vs what you keep
+
+| Share | Do not share |
+|-------|----------------|
+| Git clone or zip of **source** (no `node_modules`) | Your `server/.env` / `client/.env` |
+| `DEMO.md` + `.env.example` | Your **`MONGO_URI`** (Atlas or local) — that is your data |
+| | Telegram API id/hash, GramJS session, `youtube_cookies.txt` |
+| | Mongo dump, `uploads/`, Cloudinary / OpenAI / Google keys |
+
+She creates **her** `server/.env` from the example (`DEMO_MODE=1`, `ALLOW_ADMIN_SIGNUP=1`, `PORT=5001`, `MONGO_URI=mongodb://127.0.0.1:27017/cdsjourney-demo` or **her** Atlas URI). Leave `ADMIN_EMAIL` empty.
+
+## Her own account on her own database
+
+On **http://localhost:5173** she clicks **Create your account** (`POST /api/auth/register`). That is the only admin on **her** empty MongoDB.
+
+- **Hers:** everything — login, courses (once she adds them), progress, streak, Telegram, files
+- **Yours:** untouched. Log out / log in on her PC never hits your cluster.
+
+Do not mongorestore your dump onto her URI. Optional env seed: `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME`.
+
+## What runs without Telegram / Cloudinary / OpenAI
+
+Login, dashboard, local video/PDF upload (`NODE_ENV=development`), progress, mission UI, vocabulary fallback MCQs — all on **her empty** database after she registers. Telegram / Cloudinary / AI need **her** keys. She will not see your subjects.
+
+## Port
+
+`server/src/server.js` defaults to **5000** if `PORT` is unset. Vite proxies to **5001**. Demo `.env.example` sets `PORT=5001`.
+
+## Owner moving PCs
+
+If **you** want the same data on a new machine, use **[Backup & migration](#backup--migration-to-another-pc)** (copy real `.env` + dump + media). That bundle is **not** for a friend.
 
 ---
 
 # Backup & migration to another PC
 
-Use this checklist when copying the project folder to a new machine. **No feature changes required** — restore env, database, and media paths.
+Use this checklist when **you** copy the project to a new machine (same owner, same data). For a **friend**, use **[Demo environment](#demo-environment-for-a-friend)** instead — they must not receive your `.env`.
 
 ## What to copy
 
@@ -1346,7 +1444,7 @@ cd ../client && npm install
 
 ### 3. Environment files
 
-Copy `server/.env` from old PC (create if missing — see Configuration section for all variables).
+Copy `server/.env` from old PC, **or** on a blank machine run `npm run demo:env` and fill secrets (see Configuration).
 
 **Critical for dev alignment:**
 
@@ -1430,16 +1528,19 @@ If copying via **zip/USB** instead of `git clone`, you get working tree + untrac
 ## Local development
 
 ```bash
+# From repo root — first time / friend machine
+npm run demo:env    # copies .env.example → .env if missing; generates JWT_SECRET
+
 # Terminal 1 — MongoDB running locally
-cd server && npm install && npm run dev    # → http://localhost:5001 (or PORT from .env)
+cd server && npm install && npm run dev    # → http://localhost:5001 (PORT in .env; Vite expects 5001)
 
 # Terminal 2
 cd client && npm install && npm run dev    # → http://localhost:5173
 ```
 
-Copy/configure `server/.env` and `client/.env` with variables above.
-
 Vite proxies `/api` and `/uploads` to port **5001**. **Full course video** bypasses Vite and streams directly from backend — see `getStreamBackendBaseUrl()`.
+
+Friend checklist: [`DEMO.md`](./DEMO.md).
 
 ## Production patterns
 
@@ -1469,6 +1570,7 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 
 | Command | Location | Purpose |
 |---------|----------|---------|
+| `npm run demo:env` | repo root | Copy `.env.example` → `.env` if missing; generate `JWT_SECRET` |
 | `npm test` | server | Run unit tests (`node --test tests/**/*.test.js`) |
 | `npm run dev` | server | Start API |
 | `npm start` | server | Production API |
@@ -1510,10 +1612,11 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 - **Telegram duplicate “N new”** — if titles differ between duplicate uploads, may still show updates; use curated import skip list or rename lessons for match
 - **Legacy disk PYQ** — boot migration may move old files; new uploads go to Cloudinary only
 - **PYQ `cdsSlot` filter** — title regex `/CDS\s*1\b/i` or `/CDS\s*2\b/i`
-- **README.md** — partially stale vs actual architecture (mentions local-only uploads, missing mission/Telegram features)
+- **README.md** — local setup now points at `DEMO.md` / `.env.example`; feature list is still a subset of this file
 - **Subject model** — server boot still backfills legacy `courseId` field though schema uses `programmeId` hierarchy
 - **Production video** — file upload blocked; must use Telegram links or pre-imported stream/Cloudinary content
-- **Huge linked MP4 (20GB+)** — timeline may stay at 00:00 until suffix range requests succeed; ensure `streamLocalFile` suffix-range support; moov-at-end files may seek slowly until metadata is read
+- **Huge linked MP4 (20GB+)** — timeline may stay at 00:00 until suffix range requests succeed; ensure `streamLocalFile` suffix-range support; moov-at-end files may seek slowly until **faststart remux** (stream cache) or metadata is read
+- **Stream cache false 100%** — preallocated `.bin` used to look complete; UI must not show complete without `moov`. Non-MP4 Telegram files (MKV) never complete as MP4.
 
 ---
 
@@ -1521,14 +1624,13 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 
 1. **Paper chapter detail routes** — expose `chapterDetailService.js` via HTTP
 2. **Persist upload progress** — Redis or MongoDB job documents for multi-instance deploys
-3. **Multi-admin / roles** — if product scope expands beyond single user
+3. **Multi-admin roles** — extra full admins exist via signup; no student / limited role yet
 4. **Integration tests** — supertest for auth-protected routes with test DB
-5. **`.env.example` files** — document required vars without committing secrets
-6. **CDN for course PDFs in production** — currently local disk even in prod
-7. **Webhook notifications** — Telegram sync completion, mission reminders
-8. **Offline PWA** — cache mission plan and vocab for spotty connectivity
-9. **Code-split VideoPlayerPage** — further component extraction beyond hooks
-10. **Remove committed `client/dist/`** — rely on CI build only
+5. **CDN for course PDFs in production** — currently local disk even in prod
+6. **Webhook notifications** — Telegram sync completion, mission reminders
+7. **Offline PWA** — cache mission plan and vocab for spotty connectivity
+8. **Code-split VideoPlayerPage** — further component extraction beyond hooks
+9. **Remove committed `client/dist/`** — rely on CI build only
 
 ---
 
@@ -1541,16 +1643,18 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 3. **Full course video** — use **`getFullCourseStreamUrl(subjectId)`** only; never point `<video src>` at `/uploads/...` for linked root-level CDS UPLOAD files; always backend stream API + `?token=`.
 4. **Video player** — use `CdsPlyrPlayer` (imperative video DOM); do not let React reconcile nodes Plyr moves.
 5. **Respect production media gate** — `NODE_ENV === "production"` blocks video file upload and YouTube download.
-6. **Telegram stream playback** — check `GET /telegram/session` `live` before starting player; show `TelegramConnectionStatus` banner.
-7. **Chapter sorting** — use `.collation({ locale: "en", numericOrdering: true })` for natural chapter order.
-8. **Subject delete** — must use cleanup services to avoid orphaned Cloudinary assets (URL-only legacy rows now parsed via `cloudinaryAsset.js`).
-9. **Adding CDS cycle** — update both `client/src/config/courses.js` and `server/src/config/cdsCourses.js`.
-10. **Custom hooks** — live in `client/src/hooks/`; prefer extracting from mega-pages when adding features.
-11. **Lesson order** — use `sortSubjectContents()` everywhere; persist via `importSortOrder` (`PATCH /contents/reorder`).
-12. **Telegram curated import** — unselected messages → `Subject.telegramSkippedMessageIds`; duplicates filtered by title in update checks.
-13. **Multer limit** — 5 GB per file; bulk content max 100 files per request.
-14. **Cloudinary usage dashboard** — needs Admin API read or `CLOUDINARY_<KEY>_USAGE_*` env vars per account.
-15. **Backup / new PC** — follow **Backup & migration** section: `server/.env`, MongoDB dump, media root; re-login Telegram on new machine.
+6. **Telegram stream playback** — check `GET /telegram/session` `live` before starting player; show `TelegramConnectionStatus` banner. Prefer **disk** `/uploads/_stream_cache/` when status `complete` is true (real `moov`); do not treat Telegram live failure as fatal if cache is complete.
+7. **Stream cache complete** — never use file size alone. Chunk map full + `mp4HasMoov` + ~90% of `totalSize`. Delete must `abandonCacheEntry` so the next watch starts a fresh download.
+8. **Chapter sorting** — use `.collation({ locale: "en", numericOrdering: true })` for natural chapter order.
+9. **Subject delete** — must use cleanup services to avoid orphaned Cloudinary assets (URL-only legacy rows now parsed via `cloudinaryAsset.js`).
+10. **Adding CDS cycle** — update both `client/src/config/courses.js` and `server/src/config/cdsCourses.js`.
+11. **Custom hooks** — live in `client/src/hooks/`; prefer extracting from mega-pages when adding features.
+12. **Lesson order** — use `sortSubjectContents()` everywhere; persist via `importSortOrder` (`PATCH /contents/reorder`).
+13. **Telegram curated import** — unselected messages → `Subject.telegramSkippedMessageIds`; duplicates filtered by title in update checks.
+14. **Multer limit** — 5 GB per file; bulk content max 100 files per request.
+15. **Cloudinary usage dashboard** — needs Admin API read or `CLOUDINARY_<KEY>_USAGE_*` env vars per account.
+16. **Backup / new PC** — follow **Backup & migration** section: `server/.env`, MongoDB dump, media root; re-login Telegram on new machine.
+17. **Friend copy** — source + `.env.example` only. **Her** `MONGO_URI`, never yours. She registers on a fresh empty database. See `DEMO.md`.
 
 ## Frontend routes (`App.jsx`)
 
@@ -1619,7 +1723,7 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | Lesson order / reorder | `SubjectLessonAccordion.jsx`, `contentSort.js` (client + server), `PATCH /contents/reorder` |
 | **Full course video (link + play)** | `SubjectPlayAllPremium.jsx`, `SubjectFullVideoPage.jsx`, `subjectFullCourse.js`, `subjectFullCourseService.js`, `subjectDownloadController.js`, `streamLocalFile.js`, `getStreamBackendBaseUrl()` |
 | **Mark entire subject complete** | `SubjectPlayAllPremium.jsx`, `POST /api/progress/subject/:subjectId/toggle-all`, `progressController.js` |
-| PC media / stream cache | `LocalMediaStoragePage.jsx`, `streamCachePaths.js`, `mediaStorage.js`, `telegramStreamCacheService.js`, `mediaStorageController.js`, `VideoCacheStatusBar.jsx`, `CdsPlyrPlayer.jsx` |
+| PC media / stream cache | `LocalMediaStoragePage.jsx`, `streamCachePaths.js`, `mp4Faststart.js`, `mediaStorage.js`, `telegramStreamCacheService.js`, `mediaStorageController.js`, `VideoCacheStatusBar.jsx`, `CdsPlyrPlayer.jsx`, `VideoPlayerPage.jsx` |
 | Vocabulary Arena UI | `Vocabulary*Page.jsx`, `components/vocabulary/*` (incl. `CdsPyqBody.jsx`), `hooks/useVocabulary*.js`, `utils/vocabularyArena.js` |
 | Vocabulary questions/sessions | `vocabularyQuestionService.js`, `vocabularySessionService.js`, `VocabularyPracticeSession.js`, `VocabularyReviewLog.js` |
 | **CDS PYQ (AI) MCQs** | `vocabularyCdsPyqService.js`, mode `cds_pyq` in session start, `QuestionCard` / `CdsPyqBody`, tests `vocabularyCdsPyq.test.js` |
@@ -1630,8 +1734,9 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | Wire paper chapter detail | `paperRoutes.js` + `chapterDetailService.js` |
 | Change Vocabulary Arena analytics | `vocabularyArenaService.js`, `VocabularyAnalyticsPage.jsx` |
 | Study time tracking (in-app) | `StudyContext.jsx` — `addStudyMinutes()`; `VideoPlayerPage.jsx` native + YouTube embed handlers |
-| **YouTube external tracking** | `extension/cds-youtube-tracker/*`, `missionController.heartbeatVideoSession`, `studyHistoryService.logStudySession`, `StudyContext.refreshVideoStreak`, `StudyTracker.jsx` |
+| **Universal study video tracking** | `extension/cds-youtube-tracker/*` (v1.9.2), `missionController.heartbeatVideoSession`, `studyHistoryService.logStudySession`, `streakService`, `StudyContext` live max merge, `StudyTracker.jsx` |
 | Study dashboard Today widget | `StudyTracker.jsx`, `WatchPageHeader.jsx`, `constants/streak.js` (`VIDEO_STREAK_GOAL_MINUTES = 60`) |
+| Lesson reorder | `SubjectLessonAccordion.jsx` (↑↓ + drag), `PATCH /contents/reorder` (`direction` or `targetIndex`) |
 | Purge all media | `node server/scripts/purgeAllMedia.js` |
 | Mission scoring | `missionGenerationService.js` → `scoreVideo` |
 | CORS for new frontend URL | `server/src/config/cors.js` or `CLIENT_URLS` env |
@@ -1650,7 +1755,9 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | **PC library** | Local smooth-playback download feature (`_local_library/`) |
 | **Full course video** | One user-linked MP4 per subject (`linkedSourcePath` in `_merged_subjects/{id}.meta.json`); no ffmpeg stitch; stream via `/merged-video/stream` |
 | **Link from path** | Register an existing Windows file path as full course (no browser upload — for 20GB+ MP4s) |
-| **Stream cache** | Auto disk cache while watching Telegram — **`_stream_cache/{Subject}/{Title}__{cacheKey}.*`** |
+| **Stream cache** | Auto disk cache while watching Telegram — **`_stream_cache/{Subject}/{Title}__{cacheKey}.*`** including `.web.mp4` after faststart |
+| **Stream cache complete** | Full Telegram chunks **and** a playable MP4 (`moov` present, size ≈ expected). Preallocated empty `.bin` is not complete. |
+| **Faststart** | MP4 with `moov` before `mdat` so browsers can seek immediately; remux via ffmpeg `-movflags +faststart` |
 | **Stream cache index** | `_stream_cache/_index.json` — maps internal cacheKey to folder + filename base |
 | **Stream cache sync** | `POST /settings/stream-cache/sync` — migrate legacy flat files + remove orphans |
 | **Curated import** | Pick specific Telegram lessons; unselected → `telegramSkippedMessageIds` |
@@ -1658,20 +1765,53 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 | **Subject watch time** | Sum of `Content.duration` (seconds) for videos in a subject — shown in dashboard subject header |
 | **CDS PYQ (AI)** | Practice mode that generates UPSC CDS English paper-style vocabulary MCQs via OpenAI (with local fallback) |
 | **YouTube CDS player** | Localhost: yt-dlp downloads full-quality YouTube → `_playback_cache` → **CdsPlyrPlayer** (not embed) |
-| **YouTube external tracker** | Chrome extension on youtube.com — click Track on player overlay; heartbeats by `meta.videoId`; no CDS app tab required |
+| **Universal study tracker** | Chrome extension v1.9.2 — YouTube + coaching/DRM; wall-clock stopwatch; 5s dashboard sync; heartbeat by `meta.videoId` |
+| **IST study day** | All mission/streak/session “today” keys use **`Asia/Kolkata`** (`subjectBuckets.todayDateKey`) |
 | **youtube_cookies.txt** | Netscape cookie file at `{LOCAL_MEDIA_ROOT}/youtube_cookies.txt` — required for YouTube bot bypass on dev server |
 
 ---
+
+# Recent Changes Log (chat sessions — 2026-09-02)
+
+| Area | Change |
+|------|--------|
+| **Demo env for a friend** | Separate install: her MongoDB, her `.env`, her admin. No dump, no owner `MONGO_URI`. `DEMO.md` + `npm run demo:env`. |
+| **Docs** | This MASTER file: PORT 5001 vs code default 5000, stream-cache complete/faststart/delete, video streak (60 min or mock), friend vs owner migration |
+
+# Recent Changes Log (chat sessions — 2026-08-31)
+
+| Area | Change |
+|------|--------|
+| **False 100% cache** | Preallocated `.bin` (`stat.size >= total`) looked complete with ~8 MB real data → black player. `cacheFileLooksComplete` now requires full chunk map + MP4 `moov` + ~90% size. |
+| **Non-MP4 Telegram** | EBML/MKV (e.g. some Homonyms lessons) never marked complete / remuxed as MP4 |
+| **Faststart remux** | `mp4Faststart.js` — `inspectMp4Layout`, remux complete moov-at-end files to `.web.mp4`; skip tiny `.web.mp4`; `getStreamCachePlaybackFile` |
+| **Seek + hover thumbs** | Re-enabled `scrubPreviewEnabled` for stream-cache disk URLs; seek no longer snaps to 0; larger Plyr progress hit area |
+| **Cache delete** | `abandonCacheEntry` + wipe all suffixes; Windows `*.deleted` for locked files; restore only if meta **and** real disk file exist |
+| **Client playback** | Clear disk src when `complete` is false; play URL must be `/uploads/`; don't toast Telegram failure if disk cache is actually complete |
+| **Video streak** | Flame = video streak; day complete = 60 min video **or** mock; incomplete days reset the count |
+
+# Recent Changes Log (chat sessions — 2026-08-25)
+
+| Area | Change |
+|------|--------|
+| **Universal video tracker v1.9.2** | Extension works on YouTube, coaching portals, DRM/blob players; floating pill on non-YouTube (no host CSS / layout break) |
+| **Wall-clock only** | Stopwatch uses real elapsed time — **ignores playback speed**; no `currentTime` delta counting |
+| **Anti double-count** | Frame `ownerId` ownership; background sync **mutex + claim** before heartbeat POST; dashboard `max(local, server, live)` |
+| **5s live dashboard** | Background pushes progress every 5s; `StudyContext` polls extension ~5s; live extrapolation from `receivedAt` |
+| **Click start/stop** | Pointer-based toggle (no `innerHTML` thrash); stop clears UI immediately then flushes |
+| **IST streak fix** | `streakService` / `studyHistoryService` use IST day bounds from `startedAt`; `POST /mission/streak/backfill` |
+| **Lesson drag reorder** | `SubjectLessonAccordion` grip + drop; `reorderContent` accepts `targetIndex` |
+| **Docs** | Root README + extension README + this MASTER context updated for v1.9.2 |
 
 # Recent Changes Log (chat sessions — 2026-08-20)
 
 | Area | Change |
 |------|--------|
-| **YouTube external tracker extension** | New `extension/cds-youtube-tracker/` (v1.3.1) — track on youtube.com without opening CDS app; popup login; heartbeats to `POST /mission/session/heartbeat` |
-| **Server heartbeat by videoId** | `heartbeatVideoSession` + `logStudySession(increment)` accept **`meta.videoId`** when no `contentId` — upsert daily YouTube external sessions |
-| **Study dashboard sync** | `StudyContext` merges `todayVideoMinutes` from server; 20s poll; extension bridge `CDS_YT_TRACK_TICK` for live updates |
-| **Tracker UI** | Player overlay pill — dark transparent (speed-controller style); **only visible when YouTube controls show**; **fully draggable** with saved position |
-| **Removed in-app “Track on YouTube”** | Primary workflow is extension on youtube.com; `VideoPlayerPage` no longer pushes users through Playback tools for YouTube |
+| **YouTube external tracker extension** | New `extension/cds-youtube-tracker/` (then YouTube-only) — track on youtube.com without opening CDS app; popup login; heartbeats to `POST /mission/session/heartbeat` |
+| **Server heartbeat by videoId** | `heartbeatVideoSession` + `logStudySession(increment)` accept **`meta.videoId`** when no `contentId` — upsert daily external video sessions |
+| **Study dashboard sync** | `StudyContext` merges `todayVideoMinutes` from server; extension bridge for live updates |
+| **Tracker UI** | Player overlay pill — dark transparent; draggable with saved position |
+| **Removed in-app “Track on YouTube”** | Primary workflow is extension; `VideoPlayerPage` no longer pushes users through Playback tools for YouTube |
 | **YouTube embed study minutes** | `VideoPlayerPage.handleYoutubeTimeUpdate` counts focus minutes for in-app ReactPlayer embed (secondary path) |
 
 # Recent Changes Log (chat sessions — 2026-08-17)
@@ -1757,4 +1897,4 @@ Named tunnel: copy `cloudflare/config.yml.example`, set credentials, `TUNNEL_MOD
 
 ---
 
-*Last comprehensive audit: 2026-08-20 (includes YouTube external study tracker extension v1.3.1, server heartbeat by videoId, study dashboard server sync). Repository path: `d:\1. Projects\CDS JOURNEY OTA`.*
+*Last comprehensive audit: 2026-09-02 (demo env for a friend, `.env.example`, stream-cache complete/faststart/delete, video streak 60 min or mock). Repository path: `d:\1. Projects\CDS JOURNEY OTA`.*

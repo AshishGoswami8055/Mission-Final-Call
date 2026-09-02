@@ -1,10 +1,32 @@
+#cds-yt-tracker-wrap.cds-vt-floating {
+  position: fixed !important;
+  z-index: 2147483647 !important;
+  width: auto !important;
+  height: auto !important;
+  margin: 0 !important;
+  inset: auto;
+}
+
+#cds-yt-tracker-wrap.cds-vt-floating.cds-yt-visible,
+#cds-yt-tracker-wrap.cds-vt-floating.cds-yt-dragging {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+#cds-yt-tracker-wrap.cds-vt-floating:not(.cds-yt-visible):not(.cds-yt-dragging) {
+  opacity: 0.7;
+  visibility: visible;
+  pointer-events: auto;
+}
+
 #cds-yt-tracker-wrap {
   position: absolute;
   z-index: 2147483646;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transition: opacity 0.22s ease, visibility 0.22s ease;
+  transition: opacity 0.18s ease, visibility 0.18s ease;
   touch-action: none;
 }
 
@@ -29,11 +51,12 @@
   backdrop-filter: blur(2px);
   -webkit-backdrop-filter: blur(2px);
   box-shadow: none;
-  cursor: grab;
+  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   margin: 0;
   transition: color 0.15s ease, background 0.15s ease;
+  pointer-events: auto;
 }
 
 #cds-yt-tracker-wrap.cds-yt-dragging #cds-yt-tracker-btn {
@@ -41,41 +64,40 @@
 }
 
 #cds-yt-tracker-btn:hover {
-  color: rgba(255, 255, 255, 0.78);
-  background: rgba(8, 8, 8, 0.82);
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(8, 8, 8, 0.88);
 }
 
 #cds-yt-tracker-btn.is-tracking {
-  color: rgba(255, 255, 255, 0.62);
-  background: rgba(8, 8, 8, 0.72);
-}
-
-#cds-yt-tracker-btn.is-tracking:hover {
-  color: rgba(255, 255, 255, 0.82);
-  background: rgba(8, 8, 8, 0.85);
+  color: rgba(255, 255, 255, 0.7);
+  cursor: grab;
 }
 
 #cds-yt-tracker-btn .dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: rgba(74, 222, 128, 0.85);
+  background: rgba(148, 163, 184, 0.8);
   flex-shrink: 0;
-  box-shadow: none;
+  display: none;
+}
+
+#cds-yt-tracker-btn.is-tracking .dot {
+  display: inline-block;
 }
 
 #cds-yt-tracker-btn.is-tracking.is-playing .dot {
-  background: rgba(74, 222, 128, 0.9);
+  background: rgba(74, 222, 128, 0.95);
   box-shadow: 0 0 6px rgba(74, 222, 128, 0.45);
 }
 
 #cds-yt-tracker-btn.is-tracking.is-paused .dot {
-  background: rgba(251, 191, 36, 0.85);
+  background: rgba(251, 191, 36, 0.9);
   box-shadow: none;
 }
 
 #cds-yt-tracker-btn.is-tracking.is-paused {
-  color: rgba(255, 255, 255, 0.48);
+  color: rgba(255, 255, 255, 0.5);
 }
 
 #cds-yt-tracker-btn .label,
@@ -83,6 +105,16 @@
 #cds-yt-tracker-btn .status {
   white-space: nowrap;
   pointer-events: none;
+}
+
+#cds-yt-tracker-btn.is-tracking .label {
+  display: none;
+}
+
+#cds-yt-tracker-btn:not(.is-tracking) .time,
+#cds-yt-tracker-btn:not(.is-tracking) .status,
+#cds-yt-tracker-btn:not(.is-tracking) .dot {
+  display: none;
 }
 
 #cds-yt-tracker-btn .time {

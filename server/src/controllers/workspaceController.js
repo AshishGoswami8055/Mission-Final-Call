@@ -1,5 +1,7 @@
 import Content from "../models/Content.js";
+import Admin from "../models/Admin.js";
 import { isYouTubeConfigured, getYouTubeStatus } from "../services/youtubeUploadService.js";
+import { isAdminSignupAllowed } from "../utils/adminAuth.js";
 
 const EXAM_DATE = new Date("2026-09-13T00:00:00");
 
@@ -16,9 +18,10 @@ const getExamCountdownDays = () => {
 /** Public workspace snapshot for login page — no auth required. */
 export const getPublicWorkspaceStats = async (_req, res) => {
   try {
-    const [videoCount, pdfCount] = await Promise.all([
+    const [videoCount, pdfCount, adminCount] = await Promise.all([
       Content.countDocuments({ type: "video" }),
       Content.countDocuments({ type: "pdf" }),
+      Admin.countDocuments(),
     ]);
 
     res.json({
@@ -27,6 +30,8 @@ export const getPublicWorkspaceStats = async (_req, res) => {
       totalItems: videoCount + pdfCount,
       videoCount,
       pdfCount,
+      allowSignup: isAdminSignupAllowed(),
+      hasAdmin: adminCount > 0,
     });
   } catch (error) {
     res.status(500).json({ message: error.message || "Could not load workspace stats" });

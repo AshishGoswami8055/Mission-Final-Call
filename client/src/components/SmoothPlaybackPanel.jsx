@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { Link } from "react-router-dom";
 import {
@@ -24,6 +24,10 @@ const SmoothPlaybackPanel = ({
 }) => {
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
+  const onPlayUrlChangeRef = useRef(onPlayUrlChange);
+  const onUsingLocalLibraryChangeRef = useRef(onUsingLocalLibraryChange);
+  onPlayUrlChangeRef.current = onPlayUrlChange;
+  onUsingLocalLibraryChangeRef.current = onUsingLocalLibraryChange;
 
   const loadStatus = useCallback(async () => {
     if (!contentId || !eligible) return;
@@ -31,16 +35,16 @@ const SmoothPlaybackPanel = ({
       const { data } = await fetchLocalLibraryStatus(contentId);
       setStatus(data);
       if (data.cached && data.ready && data.playUrl) {
-        onPlayUrlChange?.(data.playUrl);
-        onUsingLocalLibraryChange?.(true);
+        onPlayUrlChangeRef.current?.(data.playUrl);
+        onUsingLocalLibraryChangeRef.current?.(true);
       } else if (data.job?.status !== "downloading") {
-        onPlayUrlChange?.(null);
-        onUsingLocalLibraryChange?.(false);
+        onPlayUrlChangeRef.current?.(null);
+        onUsingLocalLibraryChangeRef.current?.(false);
       }
     } catch {
       /* ignore polling errors */
     }
-  }, [contentId, eligible, onPlayUrlChange, onUsingLocalLibraryChange]);
+  }, [contentId, eligible]);
 
   useEffect(() => {
     loadStatus();

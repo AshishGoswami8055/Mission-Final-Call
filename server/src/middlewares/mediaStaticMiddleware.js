@@ -41,7 +41,8 @@ export const createLocalMediaStaticHandler = (subdir) => (req, res, next) => {
   }
 
   const isVideo = /\.(mp4|webm|mkv|mov|m4v)$/i.test(absolute);
-  if (isVideo) {
+  const isStreamCacheBin = subdir === "_stream_cache" && /\.bin$/i.test(absolute);
+  if (isVideo || isStreamCacheBin) {
     const ext = path.extname(absolute).toLowerCase();
     const videoTypes = {
       ".mp4": "video/mp4",
@@ -49,13 +50,14 @@ export const createLocalMediaStaticHandler = (subdir) => (req, res, next) => {
       ".webm": "video/webm",
       ".mkv": "video/x-matroska",
       ".mov": "video/quicktime",
+      ".bin": "video/mp4",
     };
     streamLocalFile({
       req,
       res,
       absolutePath: absolute,
       contentType: videoTypes[ext] || "video/mp4",
-      fileName: path.basename(absolute),
+      fileName: path.basename(absolute).replace(/\.bin$/i, ".mp4"),
       asAttachment: false,
     });
     return;

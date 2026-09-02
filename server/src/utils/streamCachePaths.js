@@ -4,7 +4,14 @@ import { ensureLocalMediaDirs, getStreamCacheDir } from "../config/mediaStorage.
 
 const INDEX_FILE = "_index.json";
 const PENDING_SUBJECT = "Unsorted";
-const STREAM_SUFFIXES = [".meta.json", ".bin", ".mp4"];
+const STREAM_FILE_SUFFIXES = [
+  ".meta.json",
+  ".bin",
+  ".web.mp4",
+  ".web.part.mp4",
+  ".part.mp4",
+  ".mp4",
+];
 
 export const sanitizeStreamCacheSegment = (value, fallback = "Untitled") => {
   const cleaned = String(value || "")
@@ -63,6 +70,7 @@ export const pathsFromLayout = (layout) => {
     metaPath: `${base}.meta.json`,
     binPath: `${base}.bin`,
     mp4Path: `${base}.mp4`,
+    webMp4Path: `${base}.web.mp4`,
     storageRelDir: layout.storageRelDir,
     storageBaseName: layout.storageBaseName,
   };
@@ -75,6 +83,7 @@ const legacyPaths = (cacheKey) => {
     metaPath: path.join(dir, `${cacheKey}.meta.json`),
     binPath: path.join(dir, `${cacheKey}.bin`),
     mp4Path: path.join(dir, `${cacheKey}.mp4`),
+    webMp4Path: path.join(dir, `${cacheKey}.web.mp4`),
     storageRelDir: "",
     storageBaseName: cacheKey,
   };
@@ -116,6 +125,116 @@ export const collectStreamCacheMetaFiles = (root = getStreamCacheDir()) => {
   return results;
 };
 
+const cacheKeyFileKind = (fileName, cacheKey) => {
+  for (const suffix of STREAM_FILE_SUFFIXES) {
+    if (fileName === `${cacheKey}${suffix}` || fileName.endsWith(`__${cacheKey}${suffix}`)) {
+      if (suffix === ".meta.json") return "meta";
+      if (suffix === ".bin") return "bin";
+      return "mp4";
+    }
+  }
+  return null;
+};
+
+const layoutFromFile = (fullPath, cacheKey) => {
+  const dir = path.dirname(fullPath);
+  const name = path.basename(fullPath);
+  const storageRelDir = path.relative(getStreamCacheDir(), dir) || "";
+  const storageBaseName = name
+    .replace(/\.meta\.json$/i, "")
+    .replace(/\.(web\.part\.mp4|web\.mp4|part\.mp4|bin|mp4)$/i, "");
+  return { storageRelDir, storageBaseName, cacheKey };
+};
+
+const layoutScore = (layout) => {
+  let score = 0;
+  if (fs.existsSync(layout.mp4Path)) score += 4;
+  if (fs.existsSync(layout.binPath)) score += 3;
+  if (fs.existsSync(layout.metaPath)) score += 1;
+  if (layout.storageRelDir) score += 1;
+  return score;
+};
+
+/** Find bin/mp4/meta for a cache key even when leftover root meta points at the old path. */
+export const discoverStreamCachePaths = (cacheKey) => {
+  const key = String(cacheKey || "").trim();
+  const root = getStreamCacheDir();
+  if (!key || !fs.existsSync(root)) return null;
+
+  const layouts = new Map();
+  const extraMetaPaths = [];
+
+  const consider = (fullPath) => {
+    const name = path.basename(fullPath);
+    const kind = cacheKeyFileKind(name, key);
+    if (!kind) return;
+    const layout = pathsFromLayout(layoutFromFile(fullPath, key));
+    const mapKey = `${layout.storageRelDir}::${layout.storageBaseName}`;
+    if (!layouts.has(mapKey)) layouts.set(mapKey, layout);
+    if (kind === "meta" && fullPath !== layout.metaPath) extraMetaPaths.push(fullPath);
+  };
+
+  const walk = (dir) => {
+    let names;
+    try {
+      names = fs.readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (name === INDEX_FILE) continue;
+      const full = path.join(dir, name);
+      let stat;
+      try {
+        stat = fs.statSync(full);
+      } catch {
+        continue;
+      }
+      if (stat.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (stat.isFile()) consider(full);
+    }
+  };
+
+  walk(root);
+  if (!layouts.size) return null;
+
+  const ranked = [...layouts.values()].sort((a, b) => layoutScore(b) - layoutScore(a));
+  const best = ranked[0];
+  if (layoutScore(best) <= 0) return null;
+
+  if (!fs.existsSync(best.metaPath)) {
+    const donor = extraMetaPaths.find((metaPath) => fs.existsSync(metaPath))
+      || ranked.slice(1).map((layout) => layout.metaPath).find((metaPath) => fs.existsSync(metaPath));
+    if (donor) {
+      try {
+        fs.mkdirSync(best.dir, { recursive: true });
+        fs.copyFileSync(donor, best.metaPath);
+      } catch {
+        /* playback can still use bin/mp4 */
+      }
+    }
+  }
+
+  return best;
+};
+
+const rememberStreamCacheLayout = (cacheKey, layout) => {
+  const index = loadStreamCacheIndex();
+  if (
+    index[cacheKey]?.storageRelDir === layout.storageRelDir &&
+    index[cacheKey]?.storageBaseName === layout.storageBaseName
+  ) {
+    return;
+  }
+  updateStreamCacheIndexEntry(cacheKey, {
+    storageRelDir: layout.storageRelDir,
+    storageBaseName: layout.storageBaseName,
+  });
+};
+
 export const resolveStreamCachePaths = (cacheKey) => {
   const key = String(cacheKey || "").trim();
   if (!key) return legacyPaths("");
@@ -123,11 +242,26 @@ export const resolveStreamCachePaths = (cacheKey) => {
   const index = loadStreamCacheIndex();
   if (index[key]) {
     const indexed = pathsFromLayout({ ...index[key], cacheKey: key });
+    if (fs.existsSync(indexed.binPath) || fs.existsSync(indexed.mp4Path)) {
+      return indexed;
+    }
+  }
+
+  const discovered = discoverStreamCachePaths(key);
+  if (discovered && (fs.existsSync(discovered.binPath) || fs.existsSync(discovered.mp4Path) || fs.existsSync(discovered.metaPath))) {
+    rememberStreamCacheLayout(key, discovered);
+    return discovered;
+  }
+
+  if (index[key]) {
+    const indexed = pathsFromLayout({ ...index[key], cacheKey: key });
     if (fs.existsSync(indexed.metaPath)) return indexed;
   }
 
   const legacy = legacyPaths(key);
-  if (fs.existsSync(legacy.metaPath)) return legacy;
+  if (fs.existsSync(legacy.metaPath) || fs.existsSync(legacy.binPath) || fs.existsSync(legacy.mp4Path)) {
+    return legacy;
+  }
 
   for (const metaPath of collectStreamCacheMetaFiles()) {
     const meta = readMetaAtPath(metaPath);
@@ -145,7 +279,7 @@ export const resolveStreamCachePaths = (cacheKey) => {
     }
   }
 
-  return legacy;
+  return index[key] ? pathsFromLayout({ ...index[key], cacheKey: key }) : legacy;
 };
 
 export const streamCacheWebRelPath = (paths, ext = ".mp4") => {
@@ -180,7 +314,7 @@ export const ensureStreamCacheLayout = (cacheKey, meta, contentMeta = null) => {
 
   if (current.metaPath !== target.metaPath || !fs.existsSync(target.metaPath)) {
     fs.mkdirSync(target.dir, { recursive: true });
-    for (const kind of ["metaPath", "binPath", "mp4Path"]) {
+    for (const kind of ["metaPath", "binPath", "mp4Path", "webMp4Path"]) {
       moveFile(current[kind], target[kind]);
     }
   }
@@ -205,28 +339,68 @@ export const ensureStreamCacheLayout = (cacheKey, meta, contentMeta = null) => {
   return target;
 };
 
+const forceRemoveFile = (filePath) => {
+  if (!filePath || !fs.existsSync(filePath)) return false;
+  try {
+    fs.unlinkSync(filePath);
+    return true;
+  } catch {
+    /* Windows often locks files that are still being streamed — rename frees the original path. */
+  }
+  try {
+    const grave = `${filePath}.${Date.now()}.deleted`;
+    fs.renameSync(filePath, grave);
+    try {
+      fs.unlinkSync(grave);
+    } catch {
+      /* grave is removed when the reader closes */
+    }
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const fileBelongsToCacheKey = (fileName, cacheKey) =>
+  Boolean(cacheKeyFileKind(fileName, cacheKey)) ||
+  (/\.deleted$/i.test(fileName) && fileName.includes(cacheKey));
+
 export const removeStreamCacheFiles = (cacheKey) => {
-  const paths = resolveStreamCachePaths(cacheKey);
-  for (const suffix of STREAM_SUFFIXES) {
-    try {
-      const filePath = path.join(paths.dir, `${paths.storageBaseName}${suffix}`);
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    } catch {
-      /* ignore */
-    }
+  const key = String(cacheKey || "").trim();
+  if (!key) return;
+
+  const root = getStreamCacheDir();
+  if (fs.existsSync(root)) {
+    const walk = (dir) => {
+      let names = [];
+      try {
+        names = fs.readdirSync(dir);
+      } catch {
+        return;
+      }
+      for (const name of names) {
+        if (name === INDEX_FILE) continue;
+        const full = path.join(dir, name);
+        let stat;
+        try {
+          stat = fs.statSync(full);
+        } catch {
+          continue;
+        }
+        if (stat.isDirectory()) {
+          walk(full);
+          continue;
+        }
+        if (stat.isFile() && fileBelongsToCacheKey(name, key)) {
+          forceRemoveFile(full);
+        }
+      }
+    };
+    walk(root);
   }
 
-  // Legacy flat names at root (pre-migration).
-  const legacy = legacyPaths(cacheKey);
-  for (const filePath of [legacy.metaPath, legacy.binPath, legacy.mp4Path]) {
-    try {
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  removeStreamCacheIndexEntry(cacheKey);
+  removeEmptyDirs(root);
+  removeStreamCacheIndexEntry(key);
 };
 
 const metaKeysOnDisk = () => {
@@ -288,11 +462,13 @@ export const reconcileStreamCacheFolder = () => {
       if (name.endsWith(".meta.json")) {
         const meta = readMetaAtPath(full);
         shouldRemove = !meta?.cacheKey && !/__.+\.meta\.json$/.test(name) && !validKeys.has(name.slice(0, -".meta.json".length));
-      } else if (name.endsWith(".bin") || name.endsWith(".mp4")) {
-        const base = name.replace(/\.(bin|mp4)$/, "");
+      } else if (name.endsWith(".bin") || name.endsWith(".mp4") || name.endsWith(".deleted")) {
+        const base = name
+          .replace(/\.\d+\.deleted$/i, "")
+          .replace(/\.(web\.part\.mp4|web\.mp4|part\.mp4|bin|mp4)$/i, "");
         const keyMatch = /__(.+)$/.exec(base);
         const cacheKey = keyMatch ? keyMatch[1] : base;
-        shouldRemove = !validKeys.has(cacheKey);
+        shouldRemove = !validKeys.has(cacheKey) || name.endsWith(".deleted");
       } else {
         shouldRemove = true;
       }

@@ -111,6 +111,11 @@ const start = async () => {
   app.listen(PORT, HOST, () => {
     logStartupNetwork();
     console.log(`[server] Ready on ${HOST}:${PORT}`);
+    if (String(process.env.DEMO_MODE || "") === "1") {
+      const email = process.env.ADMIN_EMAIL || "(set ADMIN_EMAIL)";
+      console.log(`[demo] Demo mode. Open http://localhost:5173 and log in as ${email}`);
+      console.log("[demo] Telegram / Cloudinary / OpenAI are optional. See DEMO.md");
+    }
 
     ensureLocalMediaDirs();
     initTelegramStreamCache((params) => withTelegramLock(() => getTelegramMessageMedia(params)));

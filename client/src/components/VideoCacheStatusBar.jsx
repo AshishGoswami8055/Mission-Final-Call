@@ -107,6 +107,7 @@ const VideoCacheStatusBar = ({
   isDark = false,
   variant = "panel",
   refreshToken = 0,
+  onStatus,
 }) => {
   const [streamStatus, setStreamStatus] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -116,6 +117,8 @@ const VideoCacheStatusBar = ({
   const [tick, setTick] = useState(0);
   const lastBytesRef = useRef(null);
   const lastChangeAtRef = useRef(Date.now());
+  const onStatusRef = useRef(onStatus);
+  onStatusRef.current = onStatus;
 
   const load = useCallback(async () => {
     if (!contentId || !isLocalFrontend() || !isTelegramStream) {
@@ -127,6 +130,7 @@ const VideoCacheStatusBar = ({
       const { data } = await fetchContentStreamCache(contentId);
       setStreamStatus(data);
       setLastSyncAt(Date.now());
+      onStatusRef.current?.(data);
 
       const bytes = Number(data?.cachedBytes) || 0;
       if (lastBytesRef.current != null && bytes > lastBytesRef.current) {
@@ -152,15 +156,17 @@ const VideoCacheStatusBar = ({
 
   useEffect(() => {
     if (!contentId || !isTelegramStream || !isLocalFrontend()) return undefined;
-    if (streamStatus?.complete) return undefined;
+    if (streamStatus?.complete && !streamStatus?.optimizingPlayback) return undefined;
 
     let cancelled = false;
     let timer = null;
 
     const schedule = async () => {
       const data = await load();
-      if (cancelled || data?.complete) return;
-      const interval = pollIntervalMs(data?.activity, data?.cached && !data?.complete);
+      if (cancelled || (data?.complete && !data?.optimizingPlayback)) return;
+      const interval = data?.optimizingPlayback
+        ? 2000
+        : pollIntervalMs(data?.activity, data?.cached && !data?.complete);
       timer = window.setTimeout(schedule, interval);
     };
 
@@ -169,7 +175,7 @@ const VideoCacheStatusBar = ({
       cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [contentId, isTelegramStream, load, streamStatus?.complete]);
+  }, [contentId, isTelegramStream, load, streamStatus?.complete, streamStatus?.optimizingPlayback]);
 
   useEffect(() => {
     if (streamStatus?.complete) return undefined;

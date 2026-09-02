@@ -52,8 +52,12 @@ export const attachTimelineScrubPreview = ({ rootEl, src, getDuration }) => {
   previewVideo.style.cssText =
     "position:fixed;width:320px;height:180px;left:-9999px;top:-9999px;opacity:0;pointer-events:none;";
   applyVideoCrossOrigin(previewVideo, src);
-  previewVideo.src = src;
   document.body.appendChild(previewVideo);
+
+  const ensurePreviewSrc = () => {
+    if (previewVideo.getAttribute("src")) return;
+    previewVideo.src = src;
+  };
 
   const frameCache = new Map();
   const BUCKET_SEC = 2;
@@ -130,19 +134,37 @@ export const attachTimelineScrubPreview = ({ rootEl, src, getDuration }) => {
 
       if (Math.abs(previewVideo.currentTime - time) > 0.2) {
         await new Promise((resolve, reject) => {
-          const onSeeked = () => {
-            previewVideo.removeEventListener("seeked", onSeeked);
-            previewVideo.removeEventListener("error", onErr);
+          const onDone = () => {
+            cleanup();
             resolve();
           };
           const onErr = () => {
-            previewVideo.removeEventListener("seeked", onSeeked);
-            previewVideo.removeEventListener("error", onErr);
+            cleanup();
             reject(new Error("Preview seek failed"));
           };
-          previewVideo.addEventListener("seeked", onSeeked);
+          const cleanup = () => {
+            previewVideo.removeEventListener("seeked", onDone);
+            previewVideo.removeEventListener("loadeddata", onDone);
+            previewVideo.removeEventListener("error", onErr);
+            window.clearTimeout(timer);
+          };
+          const timer = window.setTimeout(onDone, 1200);
+          previewVideo.addEventListener("seeked", onDone);
+          previewVideo.addEventListener("loadeddata", onDone);
           previewVideo.addEventListener("error", onErr);
           previewVideo.currentTime = time;
+        });
+      }
+
+      if (previewVideo.readyState < 2) {
+        await new Promise((resolve) => {
+          const onData = () => {
+            previewVideo.removeEventListener("loadeddata", onData);
+            window.clearTimeout(timer);
+            resolve();
+          };
+          const timer = window.setTimeout(onData, 800);
+          previewVideo.addEventListener("loadeddata", onData);
         });
       }
 
@@ -179,6 +201,7 @@ export const attachTimelineScrubPreview = ({ rootEl, src, getDuration }) => {
     activeBucket = bucket;
     timeEl.textContent = formatScrubTime(time);
     previewWrap.hidden = false;
+    ensurePreviewSrc();
 
     seekGeneration += 1;
     const generation = seekGeneration;

@@ -27,6 +27,15 @@ import {
   withTelegramLock,
   withTelegramPlaybackLock,
 } from "./telegramService.js";
+import {
+  getStreamCachePlaybackFile,
+  isFaststartJobRunning,
+  mp4HasMoov,
+  mp4IsFaststart,
+  cancelStreamCacheFaststart,
+  scheduleStreamCacheFaststart,
+  streamCacheWebPlaybackPath,
+} from "../utils/mp4Faststart.js";
 
 const require = createRequire(import.meta.url);
 const bigInt = require("big-integer");
@@ -73,36 +82,50 @@ const metaPathFor = (cacheKey) => resolveStreamCachePaths(cacheKey).metaPath;
 const binPathFor = (cacheKey) => resolveStreamCachePaths(cacheKey).binPath;
 const mp4PathFor = (cacheKey) => resolveStreamCachePaths(cacheKey).mp4Path;
 
+const syncEntryBinPath = (entry) => {
+  if (!entry?.cacheKey) return entry;
+  const resolved = resolveStreamCachePaths(entry.cacheKey);
+  if (resolved?.binPath) entry.binPath = resolved.binPath;
+  return entry;
+};
+
 export { reconcileStreamCacheFolder, measureStreamCacheUsedBytes, migrateStreamCacheLayouts };
 
-/** Hard-link complete cache to .mp4 so browsers stream it reliably from /uploads. */
+/** Hard-link complete cache to .mp4, then remux a faststart copy for browser seek. */
 const ensureStreamCacheMp4Link = (cacheKey) => {
   const binPath = binPathFor(cacheKey);
   const mp4Path = mp4PathFor(cacheKey);
   if (!fs.existsSync(binPath)) return false;
 
-  if (fs.existsSync(mp4Path)) {
+  const webPath = streamCacheWebPlaybackPath(mp4Path);
+  const entry = entries.get(cacheKey);
+  const expectedSize = Number(entry?.totalSize) || (fs.existsSync(binPath) ? fs.statSync(binPath).size : 0);
+  const minPlayable = Math.max(1024 * 1024, Math.floor(expectedSize * 0.9));
+  if (webPath && fs.existsSync(webPath) && mp4IsFaststart(webPath) && fs.statSync(webPath).size >= minPlayable) {
+    return true;
+  }
+
+  if (fs.existsSync(mp4Path) && mp4IsFaststart(mp4Path) && fs.statSync(mp4Path).size >= minPlayable) {
+    return true;
+  }
+
+  if (!fs.existsSync(mp4Path)) {
     try {
-      const binSize = fs.statSync(binPath).size;
-      const mp4Size = fs.statSync(mp4Path).size;
-      if (mp4Size === binSize && mp4Size > 0) return true;
+      fs.linkSync(binPath, mp4Path);
     } catch {
-      /* recreate below */
+      try {
+        fs.copyFileSync(binPath, mp4Path);
+      } catch {
+        return false;
+      }
     }
   }
 
-  try {
-    if (fs.existsSync(mp4Path)) fs.unlinkSync(mp4Path);
-    fs.linkSync(binPath, mp4Path);
-    return true;
-  } catch {
-    try {
-      fs.copyFileSync(binPath, mp4Path);
-      return true;
-    } catch {
-      return false;
-    }
+  const sourcePath = fs.existsSync(binPath) ? binPath : mp4Path;
+  if (entry && (isEntryFullyCached(entry) || cacheFileLooksComplete(entry))) {
+    void scheduleStreamCacheFaststart(sourcePath, mp4Path);
   }
+  return fs.existsSync(mp4Path) || fs.existsSync(binPath);
 };
 
 const chunkIndexFor = (offset) => Math.floor(offset / MAP_CHUNK);
@@ -141,17 +164,50 @@ const isEntryFullyCached = (entry) => {
   return isRangeCached(entry, 0, entry.totalSize - 1);
 };
 
-/** Drop stale complete flags left by interrupted downloads. */
-const reconcileCompleteFlag = (entry) => {
-  if (!entry?.complete) return false;
-  if (isEntryFullyCached(entry)) return true;
-  entry.complete = false;
+/** A cache file is complete only if it is a real finished MP4 (has a moov index), not a preallocated empty file. */
+const cacheFileLooksComplete = (entry) => {
+  const total = Number(entry?.totalSize) || 0;
+  if (!total || !entry?.cacheKey) return false;
+  if (entry.chunkMap && !isRangeCached(entry, 0, total - 1)) return false;
+  const minSize = Math.max(1024, Math.floor(total * 0.9));
   try {
-    const mp4Path = mp4PathFor(entry.cacheKey);
-    if (fs.existsSync(mp4Path)) fs.unlinkSync(mp4Path);
+    for (const filePath of [
+      streamCacheWebPlaybackPath(mp4PathFor(entry.cacheKey)),
+      mp4PathFor(entry.cacheKey),
+      binPathFor(entry.cacheKey),
+    ]) {
+      if (!filePath || !fs.existsSync(filePath)) continue;
+      if (fs.statSync(filePath).size < minSize) continue;
+      if (mp4HasMoov(filePath)) return true;
+    }
   } catch {
     /* ignore */
   }
+  return false;
+};
+
+const discardUndersizedWebMp4 = (cacheKey, totalSize) => {
+  const webPath = streamCacheWebPlaybackPath(mp4PathFor(cacheKey));
+  if (!webPath || !fs.existsSync(webPath)) return;
+  try {
+    const minSize = Math.max(1024 * 1024, Math.floor(Number(totalSize || 0) * 0.9));
+    if (fs.statSync(webPath).size < minSize) fs.unlinkSync(webPath);
+  } catch {
+    /* ignore */
+  }
+};
+
+const reconcileCompleteFlag = (entry) => {
+  if (isEntryFullyCached(entry) || cacheFileLooksComplete(entry)) {
+    if (!entry.complete) {
+      entry.complete = true;
+      saveMeta(entry);
+    }
+    return true;
+  }
+  if (!entry?.complete) return false;
+  entry.complete = false;
+  discardUndersizedWebMp4(entry.cacheKey, entry.totalSize);
   saveMeta(entry);
   return false;
 };
@@ -192,6 +248,7 @@ const loadMeta = (cacheKey) => {
 };
 
 const saveMeta = (entry) => {
+  if (!entry || entry.abandoned) return;
   ensureLocalMediaDirs();
   const paths = resolveStreamCachePaths(entry.cacheKey);
   fs.mkdirSync(paths.dir, { recursive: true });
@@ -288,17 +345,22 @@ const resolveStreamCacheContentMeta = async (channelId, messageId) => {
 
 const getOrCreateEntry = ({ cacheKey, channelId, messageId, meta, contentMeta = null }) => {
   let entry = entries.get(cacheKey);
-  if (entry) {
+  if (entry && !entry.abandoned) {
     entry.lastAccessAt = Date.now();
-    return entry;
+    return syncEntryBinPath(entry);
   }
 
   const saved = loadMeta(cacheKey);
-  if (saved && saved.totalSize === meta.size) {
+  const paths = resolveStreamCachePaths(cacheKey);
+  const diskFile =
+    (paths.binPath && fs.existsSync(paths.binPath) && fs.statSync(paths.binPath).size > 0 && paths.binPath) ||
+    (paths.mp4Path && fs.existsSync(paths.mp4Path) && fs.statSync(paths.mp4Path).size > 0 && paths.mp4Path) ||
+    null;
+  if (saved && saved.totalSize === meta.size && diskFile) {
     entry = restoreEntry(cacheKey, saved);
     entries.set(cacheKey, entry);
     entry.lastAccessAt = Date.now();
-    return entry;
+    return syncEntryBinPath(entry);
   }
 
   entry = {
@@ -372,7 +434,7 @@ const resolvePrefetchStart = (entry, hintStart = null) => {
 };
 
 const retryPrefetch = (entry, delayMs = 3000) => {
-  if (entry.complete || entry.prefetchRetryTimer) return;
+  if (!entry || entry.abandoned || entry.complete || entry.prefetchRetryTimer) return;
   entry.prefetchRetryTimer = setTimeout(() => {
     entry.prefetchRetryTimer = null;
     scheduleAheadPrefetch(entry, entry.contiguousBytes);
@@ -381,7 +443,7 @@ const retryPrefetch = (entry, delayMs = 3000) => {
 
 /** Download the next uncached window so cache keeps growing during playback. */
 const scheduleAheadPrefetch = (entry, hintStart = null) => {
-  if (entry.complete || hasPrefetchActive(entry)) return;
+  if (!entry || entry.abandoned || entry.complete || hasPrefetchActive(entry)) return;
 
   const start = resolvePrefetchStart(entry, hintStart);
   if (start >= entry.totalSize) {
@@ -394,7 +456,7 @@ const scheduleAheadPrefetch = (entry, hintStart = null) => {
     priority: 1,
     kind: "prefetch",
     run: async () => {
-      if (entry.complete) return;
+      if (entry.abandoned || entry.complete) return;
       entry.prefetchRunning = true;
       try {
         const { client, message } = await taskGetMedia(entry.channelId, entry.messageId);
@@ -416,7 +478,7 @@ const scheduleAheadPrefetch = (entry, hintStart = null) => {
       }
 
       markCompleteIfReady(entry);
-      if (entry.complete) return;
+      if (entry.abandoned || entry.complete) return;
 
       scheduleAheadPrefetch(entry, end + 1);
     },
@@ -424,13 +486,13 @@ const scheduleAheadPrefetch = (entry, hintStart = null) => {
 };
 
 const runBackgroundWarmup = (entry) => {
-  if (entry.complete) return;
+  if (!entry || entry.abandoned || entry.complete) return;
 
   enqueueTask(entry, {
     priority: 0,
     kind: "tail",
     run: async () => {
-      if (entry.complete) return;
+      if (entry.abandoned || entry.complete) return;
       const { client, message } = await taskGetMedia(entry.channelId, entry.messageId);
       const tailStart = Math.max(0, entry.totalSize - PRIORITY_TAIL_BYTES);
       if (!isRangeCached(entry, tailStart, entry.totalSize - 1)) {
@@ -451,7 +513,7 @@ const runBackgroundWarmup = (entry) => {
     priority: 0,
     kind: "fill",
     run: async () => {
-      if (entry.complete) return;
+      if (entry.abandoned || entry.complete) return;
       const { client, message } = await taskGetMedia(entry.channelId, entry.messageId);
       const start = findNextUncachedStart(entry, entry.contiguousBytes);
       if (start >= entry.totalSize) {
@@ -477,7 +539,7 @@ const runBackgroundWarmup = (entry) => {
 
 /** Prefetch immediately; run full gap-fill when playback is idle. */
 const deferBackgroundWarmup = (entry, hintStart = null) => {
-  if (entry.complete) return;
+  if (!entry || entry.abandoned || entry.complete) return;
   scheduleAheadPrefetch(entry, hintStart);
   if (entry.playbackActive > 0) return;
   if (entry.warmupTimer) return;
@@ -491,7 +553,7 @@ const resolveEntryFromDisk = (cacheKey, channelId, messageId) => {
   let entry = entries.get(cacheKey);
   if (entry) {
     entry.lastAccessAt = Date.now();
-    return entry;
+    return syncEntryBinPath(entry);
   }
   const saved = loadMeta(cacheKey);
   if (!saved) return null;
@@ -499,11 +561,14 @@ const resolveEntryFromDisk = (cacheKey, channelId, messageId) => {
   entries.set(cacheKey, entry);
   entry.lastAccessAt = Date.now();
   reconcileCompleteFlag(entry);
-  return entry;
+  return syncEntryBinPath(entry);
 };
 
 const ensureBinFile = (entry) => {
+  if (!entry || entry.abandoned) return;
   ensureLocalMediaDirs();
+  syncEntryBinPath(entry);
+  fs.mkdirSync(path.dirname(entry.binPath), { recursive: true });
   if (!fs.existsSync(entry.binPath)) {
     const fd = fs.openSync(entry.binPath, "w");
     try {
@@ -590,6 +655,7 @@ const downloadRangeSlice = async ({
   res,
   writeResponse,
 }) => {
+  if (entry.abandoned) return 0;
   ensureBinFile(entry);
   const bytesToSend = end - start + 1;
   let sent = 0;
@@ -605,6 +671,7 @@ const downloadRangeSlice = async ({
 
   try {
     for await (const chunk of stream) {
+      if (entry.abandoned) break;
       if (!writeResponse && isTelegramStreamWaiting()) break;
 
       let buffer = Buffer.from(chunk);
@@ -655,7 +722,7 @@ const downloadRangeToCache = async ({
 
   let offset = start;
   let totalSent = 0;
-  while (offset <= end && !entry.complete) {
+  while (offset <= end && !entry.complete && !entry.abandoned) {
     if (isTelegramStreamWaiting()) {
       retryPrefetch(entry, 600);
       return totalSent;
@@ -686,7 +753,7 @@ const runWorker = async (entry) => {
   if (entry.workerRunning) return;
   entry.workerRunning = true;
 
-  while (entry.queue.length) {
+  while (entry.queue.length && !entry.abandoned) {
     const task = entry.queue.shift();
     try {
       await task.run();
@@ -699,6 +766,7 @@ const runWorker = async (entry) => {
 };
 
 const enqueueTask = (entry, task) => {
+  if (!entry || entry.abandoned) return;
   entry.queue.push(task);
   entry.queue.sort((a, b) => b.priority - a.priority);
   if (!entry.workerRunning) {
@@ -1001,7 +1069,6 @@ const readMetaFile = (cacheKey) => readMetaAtPath(metaPathFor(cacheKey));
 
 const estimateCachedBytes = (meta) => {
   if (!meta?.totalSize) return 0;
-  if (meta.complete) return meta.totalSize;
   if (meta.chunkMap) {
     try {
       const buf = Buffer.from(meta.chunkMap, "base64");
@@ -1009,11 +1076,14 @@ const estimateCachedBytes = (meta) => {
       for (let i = 0; i < buf.length; i += 1) {
         if (buf[i]) chunks += 1;
       }
-      return Math.min(meta.totalSize, chunks * MAP_CHUNK);
+      const fromMap = Math.min(meta.totalSize, chunks * MAP_CHUNK);
+      if (meta.complete && chunks >= Math.ceil(meta.totalSize / MAP_CHUNK)) return meta.totalSize;
+      return fromMap;
     } catch {
       /* fall through */
     }
   }
+  if (meta.complete) return meta.totalSize;
   return Math.min(meta.totalSize, Number(meta.contiguousBytes) || 0);
 };
 
@@ -1165,6 +1235,39 @@ export const revealStreamCacheFolderOnDisk = async () => {
   return { path: dir };
 };
 
+const abandonCacheEntry = (cacheKey) => {
+  const key = String(cacheKey || "").trim();
+  if (!key) return;
+  const entry = entries.get(key);
+  if (!entry) return;
+  entry.abandoned = true;
+  entry.queue.length = 0;
+  entry.prefetchRunning = false;
+  if (entry.warmupTimer) {
+    clearTimeout(entry.warmupTimer);
+    entry.warmupTimer = null;
+  }
+  if (entry.prefetchRetryTimer) {
+    clearTimeout(entry.prefetchRetryTimer);
+    entry.prefetchRetryTimer = null;
+  }
+  for (const waiter of entry.waiters || []) {
+    waiter.aborted = true;
+    try {
+      waiter.reject(new Error("cache cleared"));
+    } catch {
+      /* ignore */
+    }
+  }
+  entry.waiters = [];
+  try {
+    cancelStreamCacheFaststart(mp4PathFor(key));
+  } catch {
+    /* ignore */
+  }
+  entries.delete(key);
+};
+
 export const clearStreamCache = ({ cacheKey = null, cacheKeys = null } = {}) => {
   ensureLocalMediaDirs();
 
@@ -1174,7 +1277,7 @@ export const clearStreamCache = ({ cacheKey = null, cacheKeys = null } = {}) => 
 
   if (keys.length > 0) {
     keys.forEach((key) => {
-      entries.delete(key);
+      abandonCacheEntry(key);
       removeStreamCacheFiles(key);
     });
     reconcileStreamCacheFolder();
@@ -1182,12 +1285,15 @@ export const clearStreamCache = ({ cacheKey = null, cacheKeys = null } = {}) => 
   }
 
   if (cacheKey) {
-    entries.delete(String(cacheKey));
+    abandonCacheEntry(String(cacheKey));
     removeStreamCacheFiles(String(cacheKey));
     reconcileStreamCacheFolder();
     return { cleared: 1 };
   }
 
+  for (const key of [...entries.keys()]) {
+    abandonCacheEntry(key);
+  }
   const dir = getStreamCacheDir();
   if (fs.existsSync(dir)) {
     for (const name of fs.readdirSync(dir)) {
@@ -1299,13 +1405,29 @@ export const getStreamCacheStatusByMessage = ({ channelId, messageId }) => {
   }
 
   const cacheKey = cacheKeyFor(channelId, messageId);
-  const meta = readMetaFile(cacheKey);
+  let meta = readMetaFile(cacheKey);
   let entry = entries.get(cacheKey);
-  if (meta && !entry) {
-    entry = restoreEntry(cacheKey, meta);
-    entries.set(cacheKey, entry);
+  if (entry?.abandoned) {
+    entries.delete(cacheKey);
+    entry = null;
   }
-  if (entry) reconcileCompleteFlag(entry);
+  if (meta && !entry) {
+    const paths = resolveStreamCachePaths(cacheKey);
+    const hasDisk = [paths.binPath, paths.mp4Path, paths.webMp4Path].some(
+      (filePath) => filePath && fs.existsSync(filePath) && fs.statSync(filePath).size > 0
+    );
+    if (hasDisk) {
+      entry = restoreEntry(cacheKey, meta);
+      entries.set(cacheKey, entry);
+    } else {
+      removeStreamCacheFiles(cacheKey);
+      meta = null;
+    }
+  }
+  if (entry) {
+    syncEntryBinPath(entry);
+    reconcileCompleteFlag(entry);
+  }
   ensureEntryPrefetch(cacheKey, meta);
   const live = getStreamCacheLiveState(cacheKey);
   if (!meta) {
@@ -1324,15 +1446,15 @@ export const getStreamCacheStatusByMessage = ({ channelId, messageId }) => {
   }
 
   const totalSize = Number(meta.totalSize) || 0;
-  const isComplete = entry ? Boolean(entry.complete) : Boolean(meta.complete);
-  if (isComplete) ensureStreamCacheMp4Link(cacheKey);
+  const mapComplete = Boolean(entry && isEntryFullyCached(entry));
+  if (mapComplete || (entry && cacheFileLooksComplete(entry))) {
+    ensureStreamCacheMp4Link(cacheKey);
+  }
+  const completeFile = getCompleteStreamCacheFile({ channelId, messageId });
+  const isComplete = Boolean(completeFile);
   const cachedBytes = isComplete ? totalSize : estimateCachedBytes(meta);
   const cachedPercent =
     totalSize > 0 ? Math.min(100, Math.round((cachedBytes / totalSize) * 100)) : 0;
-  const completeFile =
-    isComplete && ensureStreamCacheMp4Link(cacheKey)
-      ? getCompleteStreamCacheFile({ channelId, messageId })
-      : null;
 
   return {
     eligible: true,
@@ -1344,6 +1466,8 @@ export const getStreamCacheStatusByMessage = ({ channelId, messageId }) => {
     folderPath,
     cacheKey,
     playWebPath: completeFile?.playWebPath || null,
+    faststart: Boolean(completeFile?.faststart),
+    optimizingPlayback: Boolean(completeFile?.optimizing || (mapComplete && !isComplete)),
     lastAccessAt: meta.lastAccessAt || null,
     checkedAt,
     ...live,
@@ -1355,7 +1479,8 @@ export const getStreamCacheStatusByMessage = ({ channelId, messageId }) => {
 export const getCompleteStreamCacheFile = ({ channelId, messageId }) => {
   if (!channelId || !messageId) return null;
   const cacheKey = cacheKeyFor(channelId, messageId);
-  const meta = readMetaFile(cacheKey);
+  const paths = resolveStreamCachePaths(cacheKey);
+  const meta = readMetaAtPath(paths.metaPath) || readMetaFile(cacheKey);
   if (!meta) return null;
 
   let entry = entries.get(cacheKey);
@@ -1363,18 +1488,33 @@ export const getCompleteStreamCacheFile = ({ channelId, messageId }) => {
     entry = restoreEntry(cacheKey, meta);
     entries.set(cacheKey, entry);
   }
-  if (!reconcileCompleteFlag(entry)) return null;
-  if (!ensureStreamCacheMp4Link(cacheKey)) return null;
+  syncEntryBinPath(entry);
+  const completeByMapOrSize = reconcileCompleteFlag(entry) || cacheFileLooksComplete(entry);
+  if (!completeByMapOrSize) return null;
 
-  const mp4Path = mp4PathFor(cacheKey);
-  if (!fs.existsSync(mp4Path)) return null;
+  ensureStreamCacheMp4Link(cacheKey);
 
-  const paths = resolveStreamCachePaths(cacheKey);
+  const playback = getStreamCachePlaybackFile(paths, Number(meta.totalSize) || 0);
+  if (!playback?.absolutePath) return null;
+
+  const webDest = streamCacheWebPlaybackPath(paths.mp4Path);
+  const optimizing = !playback.faststart && isFaststartJobRunning(webDest);
+  let version = 0;
+  try {
+    version = Math.floor(fs.statSync(playback.absolutePath).mtimeMs);
+  } catch {
+    version = Date.now();
+  }
+  const rel = streamCacheWebRelPath(paths, playback.playExt);
+  const playWebPath = `${toMediaWebPath("_stream_cache", rel)}?v=${version}`;
+
   return {
-    absolutePath: mp4Path,
-    playWebPath: toMediaWebPath("_stream_cache", streamCacheWebRelPath(paths, ".mp4")),
+    absolutePath: playback.absolutePath,
+    playWebPath,
     mimeType: meta.mimeType || "video/mp4",
     fileName: meta.fileName || "video.mp4",
     totalSize: Number(meta.totalSize) || 0,
+    faststart: Boolean(playback.faststart),
+    optimizing,
   };
 };

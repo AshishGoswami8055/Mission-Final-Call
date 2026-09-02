@@ -203,17 +203,20 @@ export const downloadTelegramMediaToPc = async ({ channelId, messageId, fileName
 /** Encode each path segment so folders with spaces (e.g. subject names) load in <video>. */
 export const encodeMediaWebPath = (webPath = "") => {
   if (!webPath || !webPath.startsWith("/")) return webPath;
-  return webPath
+  const hashIndex = webPath.indexOf("#");
+  const queryIndex = webPath.indexOf("?");
+  const cutCandidates = [hashIndex, queryIndex].filter((index) => index >= 0);
+  const cut = cutCandidates.length ? Math.min(...cutCandidates) : -1;
+  const pathPart = cut >= 0 ? webPath.slice(0, cut) : webPath;
+  const suffix = cut >= 0 ? webPath.slice(cut) : "";
+  const encoded = pathPart
     .split("/")
     .map((segment) => (segment ? encodeURIComponent(segment) : ""))
     .join("/");
+  return `${encoded}${suffix}`;
 };
 
-/** Direct disk playback when stream cache reached 100% (no Telegram needed). */
-export const buildStreamCachePlayUrl = (contentId, playWebPath = null) => {
-  if (playWebPath?.startsWith("/uploads/")) {
-    return resolveVideoPlaybackUrl(encodeMediaWebPath(playWebPath));
-  }
+const buildStreamCacheApiPlayUrl = (contentId) => {
   if (!contentId) return "";
   const apiBase = getMediaApiBaseUrl();
   let url = `${apiBase}/contents/${encodeURIComponent(contentId)}/stream-cache/play`;
@@ -224,6 +227,28 @@ export const buildStreamCachePlayUrl = (contentId, playWebPath = null) => {
     // ignore storage errors
   }
   return url;
+};
+
+/** Direct disk playback when stream cache reached 100% (no Telegram needed). */
+export const buildStreamCachePlayUrl = (contentId, playWebPath = null, { preferApi = false } = {}) => {
+  if (preferApi) return buildStreamCacheApiPlayUrl(contentId);
+  if (playWebPath?.startsWith("/uploads/")) {
+    return resolveVideoPlaybackUrl(encodeMediaWebPath(playWebPath));
+  }
+  return buildStreamCacheApiPlayUrl(contentId);
+};
+
+/** Switch between API stream and static /uploads path when one fails. */
+export const alternateStreamCachePlayUrl = (contentId, playWebPath, currentUrl = "") => {
+  const direct = playWebPath?.startsWith("/uploads/")
+    ? resolveVideoPlaybackUrl(encodeMediaWebPath(playWebPath))
+    : "";
+  const api = buildStreamCacheApiPlayUrl(contentId);
+  if (currentUrl === direct && api && api !== currentUrl) return api;
+  if (currentUrl === api && direct && direct !== currentUrl) return direct;
+  if (currentUrl !== direct && direct) return direct;
+  if (currentUrl !== api && api) return api;
+  return "";
 };
 
 /** Cached YouTube download streamed through the CDS Plyr player (localhost only). */

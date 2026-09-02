@@ -1,59 +1,62 @@
 # CDS Journey — Study Video Tracker
 
-Track study minutes on **any HTML5 video** — YouTube, course portals, embedded players, and other platforms. You do **not** need to open videos in the CDS Journey app.
+Wall-clock study stopwatch for **YouTube, coaching portals, DRM/blob players, and any page**. Minutes sync to your CDS Journey dashboard.
 
-**Version:** 1.6.0 · **Manifest:** MV3 · **Folder:** `extension/cds-youtube-tracker/`
+**Version:** 1.9.2 · **Manifest:** MV3 · **Folder:** `extension/cds-youtube-tracker/`
 
 ## Install once
 
 1. Chrome/Brave → `chrome://extensions`
 2. **Developer mode** ON → **Load unpacked**
-3. Select this folder: `extension/cds-youtube-tracker`
-4. Approve **site access on all sites** when prompted (needed for course platforms)
-5. Click the extension icon → log in with your CDS email/password  
+3. Select this folder: `extension/cds-youtube-tracker` (must contain `manifest.json`)
+4. Click the extension icon → log in with your CDS email/password  
    - Dev API default: `http://127.0.0.1:5001/api` (Express must be running)
 
 ## Every study session
 
-1. Open any study video — **YouTube**, Unacademy-style portals, Vimeo embeds, etc.
-2. **Hover the video player** so controls (or the tracker pill) appear
-3. Click **Track study time** (dark transparent pill on the player)
-4. **Drag** the pill if you want (YouTube remembers position; other sites follow the video)
-5. Watch normally — **pauses when the video pauses** (ignores playback speed)
-6. Click the pill again when finished to stop and sync
+1. Open any study video — YouTube **or** a course/DRM platform
+2. Click **Track study time** on the pill  
+   - **YouTube:** dark pill on the player  
+   - **Other sites:** floating pill (bottom-right) — drag to move; does **not** alter the player layout
+3. Watch normally — timer is a **real stopwatch** (1× wall time even at 2× playback)
+4. Pause the video → pill shows **Paused** (when `<video>` is readable)
+5. Click the pill again to **stop** and sync
 
-Only the video where you clicked **Track** is counted.
+Only the frame where you clicked **Track** owns the stopwatch (prevents double counting).
 
-### Embedded / iframe players
+### DRM / opaque players
 
-The tracker runs inside video iframes too. If a course embeds the player in a frame, hover that player and use **Track study time** there.
+If the page has no readable `<video>`, tracking still works in **wall-clock mode** while the tab is visible and tracking is on. Click the pill to stop when finished.
 
 ### What is supported
 
-- Any page with a standard HTML5 `<video>` element (most modern course platforms)
-- YouTube (full native integration with their player chrome)
-
-Not supported: DRM-protected streams, players that don't expose a `<video>` tag, or audio-only pages.
+| Platform | Behavior |
+|----------|----------|
+| YouTube | In-player pill; pause-aware |
+| HTML5 / most course players | Floating pill; pause-aware when video is accessible |
+| DRM / blob / no `<video>` | Floating pill; wall-clock until you stop |
 
 ## Dashboard
 
-- Minutes save to your CDS account via `POST /api/mission/session/heartbeat`
-- Open **CDS Journey** dashboard anytime — **Today** updates from the server (auto-refresh ~20s)
-- Extension icon **badge** shows today's total video minutes after sync
-- Keeping the app tab open gives instant updates via the bridge script
+- Live time pushes every **~5 seconds** while tracking (`TRACK_PROGRESS` → bridge → dashboard)
+- Full minutes save via `POST /api/mission/session/heartbeat`
+- **Today** = `max(local, server, liveExtensionStopwatch)` — no double-add
+- Keep CDS Journey open (`localhost:5173` / `:5001` / LAN / tunnel) for live UI
+- Extension badge shows today’s video minutes after sync
 
 ## Files
 
 | File | Role |
 |------|------|
-| `popup.js` | Login → store JWT in `chrome.storage.local` (`cdsAuth`) |
-| `video-tracker.js` | Overlay UI, drag, play/pause-aware tick, YouTube + generic players |
-| `video-tracker-ui.css` | Dark transparent pill styling |
-| `background.js` | API heartbeats + notify open app tabs |
-| `bridge.js` | Relays ticks to `localhost:5173` when CDS app is open |
+| `popup.js` | Login → JWT in `chrome.storage.local` (`cdsAuth`) |
+| `video-tracker.js` | Stopwatch, owner-frame lock, YouTube + floating UI |
+| `video-tracker-ui.css` | Pill + fixed floating styles |
+| `background.js` | Mutex heartbeats + 5s progress push + badge |
+| `bridge.js` | Relays progress to the CDS app tab |
+| `test-stopwatch.js` | `node test-stopwatch.js` — wall-clock math checks |
 
 ## Reload after updates
 
-`chrome://extensions` → **Reload** on this extension → refresh your video tab.
+`chrome://extensions` → **Reload** (confirm version **1.9.2**) → hard-refresh video tab + dashboard.
 
-See **`MASTER_PROJECT_CONTEXT.md`** → *YouTube external study tracking* for full architecture.
+See **`MASTER_PROJECT_CONTEXT.md`** → *Universal study video tracking* for full architecture.

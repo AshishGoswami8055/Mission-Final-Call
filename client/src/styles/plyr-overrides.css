@@ -75,7 +75,12 @@
   width: 100%;
   min-width: 100%;
   margin: 0;
-  padding: 0 4px 8px;
+  padding: 12px 4px 10px;
+  overflow: visible;
+}
+
+.cds-plyr-shell .plyr__controls {
+  overflow: visible;
 }
 
 .cds-plyr-shell .plyr__controls .plyr__progress__container {

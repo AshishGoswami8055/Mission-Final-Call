@@ -9,6 +9,7 @@ import {
 import { buildAnalyticsOverview, buildIntelligenceReport } from "../services/analyticsService.js";
 import { logStudySession } from "../services/studyHistoryService.js";
 import {
+  backfillVideoStreakDays,
   buildVideoStreakStatus,
   calculateDisciplineStreak,
   calculateReadingStreak,
@@ -536,6 +537,20 @@ export const getVideoStreak = async (req, res) => {
     res.json(streak);
   } catch (error) {
     res.status(500).json({ message: error.message || "Could not load video streak" });
+  }
+};
+
+export const backfillVideoStreak = async (req, res) => {
+  try {
+    const days = Number(req.body?.days) || 4;
+    const { touched, streak } = await backfillVideoStreakDays(req.user._id, days);
+    res.json({
+      message: `Recovered ${touched.length} study day(s).`,
+      touched,
+      streak,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Could not backfill video streak" });
   }
 };
 

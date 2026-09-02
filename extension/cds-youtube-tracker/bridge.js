@@ -10,6 +10,7 @@ function postProgress(message) {
       isPlaying: message.isPlaying,
       title: message.title,
       videoId: message.videoId,
+      lastProgressAt: message.lastProgressAt,
     },
     "*"
   );
@@ -38,7 +39,6 @@ window.addEventListener("message", (event) => {
   }
 
   if (event.data.type === "CDS_YT_TRACK_STOP") {
-    chrome.storage.local.remove(STORAGE_KEY);
     chrome.runtime.sendMessage({ type: "FLUSH_AND_STOP" });
     window.postMessage({ type: "CDS_YT_TRACK_STOPPED" }, "*");
   }
@@ -58,6 +58,9 @@ chrome.runtime.onMessage.addListener((message) => {
   }
   if (message?.type === "TRACK_PROGRESS") {
     postProgress(message);
+  }
+  if (message?.type === "TRACK_STOPPED") {
+    window.postMessage({ type: "CDS_YT_TRACK_STOPPED" }, "*");
   }
   if (message?.type === "TRACK_STATUS") {
     window.postMessage({ type: "CDS_YT_TRACK_STATUS", status: message.status }, "*");

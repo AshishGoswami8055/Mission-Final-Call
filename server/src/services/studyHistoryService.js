@@ -2,7 +2,7 @@ import StudySession from "../models/StudySession.js";
 import ReadingSession from "../models/ReadingSession.js";
 import MockTestResult from "../models/MockTestResult.js";
 import DailyMission from "../models/DailyMission.js";
-import { todayDateKey } from "../utils/subjectBuckets.js";
+import { istDayBounds, todayDateKey } from "../utils/subjectBuckets.js";
 
 export const logStudySession = async ({
   userId,
@@ -18,16 +18,23 @@ export const logStudySession = async ({
   increment = false,
 }) => {
   const mins = Math.max(0, Math.round(Number(durationMinutes) || 0));
-  if (mins <= 0) return null;
+  if (type !== "mock" && mins <= 0) return null;
 
   const date = todayDateKey();
   const now = new Date();
+  const { start: dayStart, end: dayEnd } = istDayBounds(date);
 
   if (increment && type === "video" && contentId) {
-    const existing = await StudySession.findOne({ userId, date, contentId, type: "video" });
+    const existing = await StudySession.findOne({
+      userId,
+      type: "video",
+      contentId,
+      startedAt: { $gte: dayStart, $lt: dayEnd },
+    });
     if (existing) {
       existing.durationMinutes = (existing.durationMinutes || 0) + mins;
       existing.endedAt = now;
+      existing.date = date;
       if (subjectId) existing.subjectId = subjectId;
       if (subjectName) existing.subjectName = subjectName;
       if (meta && Object.keys(meta).length) {
@@ -55,13 +62,14 @@ export const logStudySession = async ({
     const videoId = String(meta.videoId);
     const existing = await StudySession.findOne({
       userId,
-      date,
       type: "video",
       "meta.videoId": videoId,
+      startedAt: { $gte: dayStart, $lt: dayEnd },
     });
     if (existing) {
       existing.durationMinutes = (existing.durationMinutes || 0) + mins;
       existing.endedAt = now;
+      existing.date = date;
       if (subjectId) existing.subjectId = subjectId;
       if (subjectName) existing.subjectName = subjectName;
       existing.meta = { ...(existing.meta || {}), ...meta };

@@ -34,6 +34,12 @@ export const AuthProvider = ({ children }) => {
     setUser(data.admin);
   };
 
+  const register = async ({ name, email, password }) => {
+    const { data } = await api.post("/auth/register", { name, email, password });
+    localStorage.setItem("cds_token", data.token);
+    setUser(data.admin);
+  };
+
   const logout = () => {
     localStorage.removeItem("cds_token");
     setUser(null);
@@ -45,6 +51,7 @@ export const AuthProvider = ({ children }) => {
       loading,
       isAuthenticated: Boolean(user),
       login,
+      register,
       logout,
     }),
     [user, loading]

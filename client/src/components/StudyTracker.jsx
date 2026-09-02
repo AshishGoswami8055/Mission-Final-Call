@@ -103,7 +103,7 @@ const StudyTracker = ({ compact = false, subjects = [], showHistoryLink = true }
                       liveYoutubePlaying ? "animate-pulse bg-emerald-500" : "bg-amber-400"
                     }`}
                   />
-                  YouTube {liveYoutubePlaying ? "live" : "paused"}
+                  Video {liveYoutubePlaying ? "live" : "paused"}
                 </span>
               )}
             </p>

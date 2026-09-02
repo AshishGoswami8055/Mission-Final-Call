@@ -1,0 +1,14 @@
+{
+  "name": "cds-journey-ota",
+  "private": true,
+  "type": "module",
+  "description": "CDS Journey OTA — personal CDS/OTA study workspace",
+  "scripts": {
+    "demo:env": "node scripts/setup-demo-env.js",
+    "demo:env:force": "node scripts/setup-demo-env.js --force"
+  },
+  "engines": {
+    "node": ">=20",
+    "npm": ">=10"
+  }
+}

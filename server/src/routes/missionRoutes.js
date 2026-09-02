@@ -9,6 +9,7 @@ import {
   getReadingToday,
   getTodayMission,
   getVideoStreak,
+  backfillVideoStreak,
   heartbeatVideoSession,
   logSession,
   pauseReading,
@@ -54,6 +55,7 @@ router.get("/mock/history", getMockHistory);
 router.get("/analytics/overview", getAnalyticsOverview);
 router.get("/analytics/intelligence", getIntelligenceReport);
 router.get("/streak/video", getVideoStreak);
+router.post("/streak/backfill", backfillVideoStreak);
 router.post("/session/heartbeat", heartbeatVideoSession);
 router.post("/session/log", logSession);
 

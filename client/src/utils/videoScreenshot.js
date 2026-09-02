@@ -61,10 +61,20 @@ export const applyVideoCrossOrigin = (video, src = "", mode = "auto") => {
 
 export const applyVideoSource = (video, src, appliedRef, crossOriginMode = "auto") => {
   if (!video || !src || appliedRef.current === src) return false;
+  const shouldResume = !video.paused && !video.ended;
   applyVideoCrossOrigin(video, src, crossOriginMode);
   appliedRef.current = src;
   video.src = src;
   video.load();
+  if (shouldResume) {
+    const resume = () => {
+      video.removeEventListener("loadeddata", resume);
+      video.removeEventListener("canplay", resume);
+      void video.play().catch(() => {});
+    };
+    video.addEventListener("loadeddata", resume, { once: true });
+    video.addEventListener("canplay", resume, { once: true });
+  }
   return true;
 };
 
@@ -145,8 +155,13 @@ export const seekVideoTo = (video, targetSeconds, { tolerance = 2, maxAttempts =
       video.addEventListener("canplay", onCanPlay, { once: true });
       window.setTimeout(() => {
         video.removeEventListener("canplay", onCanPlay);
-        if (!settled) trySeek();
-      }, 4000);
+        if (settled) return;
+        if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+          trySeek();
+          return;
+        }
+        finish(false);
+      }, 8000);
     };
 
     if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
@@ -157,14 +172,20 @@ export const seekVideoTo = (video, targetSeconds, { tolerance = 2, maxAttempts =
   });
 
 /** Reload element and restore playback time once metadata is available again. */
-export const reloadVideoPreservingTime = (video, targetSeconds) => {
+export const reloadVideoPreservingTime = (video, targetSeconds, { shouldPlay } = {}) => {
   if (!video) return;
   const resumeAt = Number.isFinite(targetSeconds) && targetSeconds > 0 ? targetSeconds : 0;
+  const resumePlay = shouldPlay ?? (!video.paused && !video.ended);
   const onMeta = () => {
     video.removeEventListener("loadedmetadata", onMeta);
+    const finish = () => {
+      if (resumePlay) void video.play().catch(() => {});
+    };
     if (resumeAt > 0) {
-      void seekVideoTo(video, resumeAt);
+      void seekVideoTo(video, resumeAt).then(finish);
+      return;
     }
+    finish();
   };
   video.addEventListener("loadedmetadata", onMeta, { once: true });
   video.load();

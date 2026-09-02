@@ -14,6 +14,7 @@ import {
 } from "../services/cloudinaryUploadService.js";
 import { destroyPaperAssets } from "../services/paperCleanupService.js";
 import { extractQuestionsFromPaper } from "../services/paperExtractService.js";
+import { logStudySession } from "../services/studyHistoryService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -374,7 +375,16 @@ export const togglePaperProgress = async (req, res) => {
 
   if (existing) {
     existing.attempted = !existing.attempted;
-    if (existing.attempted) existing.attemptedAt = new Date();
+    if (existing.attempted) {
+      existing.attemptedAt = new Date();
+      await logStudySession({
+        userId: req.user._id,
+        type: "mock",
+        durationMinutes: 60,
+        paperId: paper._id,
+        meta: { title: paper.title, source: "paper-progress" },
+      });
+    }
     await existing.save();
     return res.json({ attempted: existing.attempted });
   }
@@ -384,6 +394,13 @@ export const togglePaperProgress = async (req, res) => {
     paperId: paper._id,
     attempted: true,
     attemptedAt: new Date(),
+  });
+  await logStudySession({
+    userId: req.user._id,
+    type: "mock",
+    durationMinutes: 60,
+    paperId: paper._id,
+    meta: { title: paper.title, source: "paper-progress" },
   });
   res.json({ attempted: true });
 };

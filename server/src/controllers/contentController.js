@@ -1078,8 +1078,8 @@ export const streamContentCachePlay = async (req, res) => {
       req,
       res,
       absolutePath: cached.absolutePath,
-      contentType: cached.mimeType,
-      fileName: cached.fileName,
+      contentType: cached.mimeType || "video/mp4",
+      fileName: String(cached.fileName || "video.mp4").replace(/\.bin$/i, ".mp4"),
       asAttachment: false,
     });
   } catch (error) {

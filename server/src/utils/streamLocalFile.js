@@ -49,7 +49,8 @@ export const streamLocalFile = ({
     return res.status(404).json({ message: "File not found" });
   }
 
-  const totalSize = fs.statSync(absolutePath).size;
+  const stat = fs.statSync(absolutePath);
+  const totalSize = stat.size;
   const range = parseRangeHeader(req.headers.range, totalSize);
   if (range.invalid) {
     applyCorsHeaders(req, res);
@@ -63,6 +64,8 @@ export const streamLocalFile = ({
 
   res.setHeader("Accept-Ranges", "bytes");
   res.setHeader("Content-Type", contentType);
+  res.setHeader("ETag", `"${totalSize}-${Math.floor(stat.mtimeMs)}"`);
+  res.setHeader("Last-Modified", stat.mtime.toUTCString());
   if (fileName) {
     const disposition = asAttachment ? "attachment" : "inline";
     res.setHeader("Content-Disposition", `${disposition}; filename="${fileName.replace(/"/g, "")}"`);

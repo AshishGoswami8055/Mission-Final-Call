@@ -8,11 +8,23 @@ import {
   getYouTubeStatus,
   isYouTubeConfigured,
 } from "../services/youtubeUploadService.js";
+import {
+  isAdminEnvSyncEnabled,
+  isAdminSignupAllowed,
+  normalizeAdminEmail,
+  publicAdmin,
+  validateAdminPassword,
+} from "../utils/adminAuth.js";
 
 const generateToken = (id) =>
   jwt.sign({ id }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN || "1d",
   });
+
+const authPayload = (admin) => ({
+  token: generateToken(admin._id),
+  admin: publicAdmin(admin),
+});
 
 export const loginAdmin = async (req, res) => {
   const { email, password } = req.body;
@@ -31,14 +43,63 @@ export const loginAdmin = async (req, res) => {
     return res.status(401).json({ message: "Invalid credentials" });
   }
 
-  return res.json({
-    token: generateToken(admin._id),
-    admin: {
-      id: admin._id,
-      email: admin.email,
-      name: admin.name,
-    },
-  });
+  return res.json(authPayload(admin));
+};
+
+export const registerAdmin = async (req, res) => {
+  if (!isAdminSignupAllowed()) {
+    return res.status(403).json({
+      message: "Account creation is disabled. Ask the workspace owner to set ALLOW_ADMIN_SIGNUP=1.",
+    });
+  }
+
+  const email = normalizeAdminEmail(req.body?.email);
+  const password = String(req.body?.password || "");
+  const name = String(req.body?.name || "").trim() || "Admin";
+  const passwordError = validateAdminPassword(password);
+
+  if (!email) {
+    return res.status(400).json({ message: "Email and password are required" });
+  }
+  if (passwordError) {
+    return res.status(400).json({ message: passwordError });
+  }
+
+  try {
+    const hash = await bcrypt.hash(password, 10);
+    const admin = await Admin.create({ email, password: hash, name });
+    return res.status(201).json(authPayload(admin));
+  } catch (err) {
+    if (err?.code === 11000) {
+      return res.status(409).json({ message: "An account with this email already exists. Sign in instead." });
+    }
+    return res.status(500).json({ message: err.message || "Could not create account" });
+  }
+};
+
+export const updateOwnPassword = async (req, res) => {
+  const currentPassword = String(req.body?.currentPassword || "");
+  const nextPassword = String(req.body?.password || "");
+  const passwordError = validateAdminPassword(nextPassword);
+  if (!currentPassword) {
+    return res.status(400).json({ message: "Current password is required" });
+  }
+  if (passwordError) {
+    return res.status(400).json({ message: passwordError });
+  }
+
+  const admin = await Admin.findById(req.user._id);
+  if (!admin) {
+    return res.status(401).json({ message: "Invalid token user" });
+  }
+  const matches = await bcrypt.compare(currentPassword, admin.password);
+  if (!matches) {
+    return res.status(401).json({ message: "Current password is incorrect" });
+  }
+
+  admin.password = await bcrypt.hash(nextPassword, 10);
+  await admin.save();
+  return res.json({ message: "Password updated", admin: publicAdmin(admin) });
 };
 
 export const me = async (req, res) => {
@@ -127,23 +188,33 @@ export const youTubeDisconnect = async (req, res) => {
 };
 
 export const ensureDefaultAdmin = async () => {
-  const defaultEmail = process.env.ADMIN_EMAIL;
-  const defaultPassword = process.env.ADMIN_PASSWORD;
-  const defaultName = process.env.ADMIN_NAME || "Course Admin";
+  const defaultEmail = normalizeAdminEmail(process.env.ADMIN_EMAIL);
+  const defaultPassword = String(process.env.ADMIN_PASSWORD || "");
+  const defaultName = String(process.env.ADMIN_NAME || "").trim() || "Course Admin";
+  const placeholder = !defaultEmail || defaultEmail.includes("your.email@") || defaultEmail === "demo@cdsjourney.local";
 
-  if (!defaultEmail || !defaultPassword) {
-    console.warn("ADMIN_EMAIL/ADMIN_PASSWORD not set, skipping default admin seed");
+  if (placeholder || !defaultPassword || defaultPassword === "CHANGE_ME") {
+    if (!isAdminSignupAllowed()) {
+      console.warn("ADMIN_EMAIL/ADMIN_PASSWORD not set, skipping default admin seed");
+    }
     return;
   }
 
-  const existing = await Admin.findOne({ email: defaultEmail.toLowerCase().trim() });
-  if (existing) return;
+  const existing = await Admin.findOne({ email: defaultEmail });
+  if (existing) {
+    if (!isAdminEnvSyncEnabled()) return;
+    existing.password = await bcrypt.hash(defaultPassword, 10);
+    existing.name = defaultName;
+    await existing.save();
+    console.log(`[auth] Synced password/name for ${defaultEmail} from env`);
+    return;
+  }
 
   const hash = await bcrypt.hash(defaultPassword, 10);
   await Admin.create({
-    email: defaultEmail.toLowerCase().trim(),
+    email: defaultEmail,
     password: hash,
     name: defaultName,
   });
-  console.log("Default admin account created");
+  console.log(`[auth] Admin account created for ${defaultEmail}`);
 };

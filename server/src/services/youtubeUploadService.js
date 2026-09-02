@@ -5,12 +5,12 @@ import OAuthCredentials from "../models/OAuthCredentials.js";
 /**
  * YouTube Data API v3 — direct uploader for personal/admin use.
  *
- * Setup (one-time, in Google Cloud Console — see SETUP_YOUTUBE.md):
+ * Setup (one-time, in Google Cloud Console — see server/SETUP_YOUTUBE.md):
  *   1. Create / pick a project.
  *   2. Enable "YouTube Data API v3".
  *   3. OAuth consent screen → External, add your email as Test User, scope = ".../auth/youtube.upload".
  *   4. Credentials → "OAuth 2.0 Client ID" → Application type "Web application".
- *   5. Authorized redirect URI: http://localhost:5000/api/auth/youtube/callback
+ *   5. Authorized redirect URI: http://localhost:5001/api/auth/youtube/callback
  *   6. Put in server/.env:
  *        GOOGLE_CLIENT_ID=...
  *        GOOGLE_CLIENT_SECRET=...

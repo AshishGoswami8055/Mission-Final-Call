@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import api from "../api/client";
 import { requestYoutubeTrackProgress } from "../utils/youtubeExternalTrack";
+import { getTodayDateKey } from "../utils/dateKey";
 import { VIDEO_STREAK_GOAL_MINUTES } from "../constants/streak";
 import { useAuth } from "./AuthContext";
 
@@ -16,9 +17,10 @@ const STORAGE_KEYS = {
 };
 
 const HISTORY_MAX = 50;
-const LIVE_STALE_MS = 25_000;
-const STREAK_POLL_MS = 10_000;
-const getTodayKey = () => new Date().toDateString();
+const LIVE_STALE_MS = 15_000;
+const STREAK_POLL_MS = 5_000;
+const EXTENSION_PROGRESS_POLL_MS = 5_000;
+const getTodayKey = () => getTodayDateKey();
 
 export const formatFocusDuration = (totalMinutes, { live = false } = {}) => {
   const totalSec = Math.max(0, Math.floor(Number(totalMinutes) * 60));
@@ -131,12 +133,18 @@ export function StudyProvider({ children }) {
 
   const applyLiveYoutubeProgress = useCallback((payload) => {
     if (!payload) return;
+    const playedMs = Math.max(0, Number(payload.playedMs) || 0);
+    if (!payload.videoId && playedMs <= 0) {
+      setLiveYoutubeTrack(null);
+      return;
+    }
     setLiveYoutubeTrack({
-      playedMs: Math.max(0, Number(payload.playedMs) || 0),
+      playedMs,
       syncedMinutes: Math.max(0, Number(payload.syncedMinutes) || 0),
       isPlaying: Boolean(payload.isPlaying),
       title: String(payload.title || ""),
       videoId: String(payload.videoId || ""),
+      lastProgressAt: Number(payload.lastProgressAt) || Date.now(),
       receivedAt: Date.now(),
     });
   }, []);
@@ -221,18 +229,22 @@ export function StudyProvider({ children }) {
 
   const serverTodayVideoMinutes = videoStreakStatus?.todayVideoMinutes ?? 0;
 
-  const liveYoutubePartialMinutes = useMemo(() => {
+  /** Live extension stopwatch total (wall-clock). Take max vs server — never double-add. */
+  const liveYoutubeTotalMinutes = useMemo(() => {
     if (!liveYoutubeTrack) return 0;
     let playedMs = liveYoutubeTrack.playedMs;
+    // Extrapolate only from when we received the message (playedMs is already absolute then).
     if (liveYoutubeTrack.isPlaying) {
-      playedMs += Date.now() - liveYoutubeTrack.receivedAt;
+      playedMs += Math.max(0, Date.now() - liveYoutubeTrack.receivedAt);
     }
-    const unsyncedMs = Math.max(0, playedMs - liveYoutubeTrack.syncedMinutes * 60_000);
-    return unsyncedMs / 60_000;
+    return playedMs / 60_000;
   }, [liveYoutubeTrack, liveUiTick]);
 
-  const effectiveTodayVideoMinutes =
-    Math.max(todayMinutes, serverTodayVideoMinutes) + liveYoutubePartialMinutes;
+  const effectiveTodayVideoMinutes = Math.max(
+    todayMinutes,
+    serverTodayVideoMinutes,
+    liveYoutubeTotalMinutes
+  );
   const focusMinutes = effectiveTodayVideoMinutes;
   const liveYoutubeActive = Boolean(liveYoutubeTrack);
   const liveYoutubePlaying = Boolean(liveYoutubeTrack?.isPlaying);
@@ -299,7 +311,7 @@ export function StudyProvider({ children }) {
     };
 
     pollExtension();
-    const interval = window.setInterval(pollExtension, STREAK_POLL_MS);
+    const interval = window.setInterval(pollExtension, EXTENSION_PROGRESS_POLL_MS);
     return () => window.clearInterval(interval);
   }, [isAuthenticated]);
 
@@ -336,16 +348,17 @@ export function StudyProvider({ children }) {
         return;
       }
 
+      if (event.data.type === "CDS_YT_TRACK_TICK") {
+        // Server already reflected in streak refresh / live max — avoid double-adding minutes.
+        if (event.data.streak) applyVideoStreakStatus(event.data.streak);
+        else void refreshVideoStreak();
+        return;
+      }
+
       if (event.data.type === "CDS_YT_TRACK_STOPPED") {
         setLiveYoutubeTrack(null);
         void refreshVideoStreak();
         return;
-      }
-
-      if (event.data.type === "CDS_YT_TRACK_TICK") {
-        const mins = Number(event.data.minutes) || 0;
-        if (mins > 0) addStudyMinutes(mins, event.data.subjectId || null);
-        if (event.data.streak) applyVideoStreakStatus(event.data.streak);
       }
     };
 

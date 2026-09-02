@@ -4,8 +4,10 @@ client/dist/
 .env
 .env.*
 !.env.example
+!**/.env.example
 client/.env
 server/.env
+server/data/local-media-storage.json
 server/cloudflare/config.yml
 server/cloudflare/logs/*
 !server/cloudflare/logs/.gitkeep

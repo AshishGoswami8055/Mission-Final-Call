@@ -48,6 +48,8 @@ const CdsPlyrPlayer = ({
   scrubPreviewEnabled = false,
   videoPreload = "auto",
   crossOriginMode = "auto",
+  onSeeking,
+  onSeeked,
 }) => {
   const hostRef = useRef(null);
   const plyrRef = useRef(null);
@@ -72,6 +74,8 @@ const CdsPlyrPlayer = ({
     onPause,
     onEnded,
     onStalled,
+    onSeeking,
+    onSeeked,
   });
 
   const stallRecoveryEnabledRef = useRef(stallRecoveryEnabled);
@@ -102,6 +106,8 @@ const CdsPlyrPlayer = ({
       onPause,
       onEnded,
       onStalled,
+      onSeeking,
+      onSeeked,
     };
   });
 
@@ -202,6 +208,11 @@ const CdsPlyrPlayer = ({
         eventRefs.current.onPause?.();
       },
       ended: () => eventRefs.current.onEnded?.(),
+      seeking: () => eventRefs.current.onSeeking?.(),
+      seeked: () => {
+        touchProgress(video);
+        eventRefs.current.onSeeked?.();
+      },
       waiting: () => {
         touchProgress(video);
         eventRefs.current.onStalled?.({ retries: stallRetriesRef.current, waiting: true });
@@ -339,7 +350,13 @@ const CdsPlyrPlayer = ({
         scrubPreviewHandleRef.current = attachTimelineScrubPreview({
           rootEl: container,
           src: srcRef.current,
-          getDuration: () => player?.duration || 0,
+          getDuration: () => {
+            const fromPlayer = Number(player?.duration);
+            if (Number.isFinite(fromPlayer) && fromPlayer > 0) return fromPlayer;
+            const fromVideo = Number(player?.media?.duration);
+            if (Number.isFinite(fromVideo) && fromVideo > 0) return fromVideo;
+            return 0;
+          },
         });
       };
       scrubPreviewSetupRef.current = setupScrubPreview;
@@ -381,6 +398,7 @@ const CdsPlyrPlayer = ({
     if (applyVideoSource(video, src, appliedSrcRef, crossOriginModeRef.current)) {
       touchProgress(video);
     }
+    scrubPreviewSetupRef.current?.();
   }, [src, ready, touchProgress, crossOriginMode]);
 
   return (
